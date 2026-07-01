@@ -100,6 +100,9 @@ table.mt-table { width:100%; border-collapse:separate; border-spacing:0; min-wid
 .mt-num.loss { background:#f6d3cb; color:#8c241a; }
 .mt-num.extra { background:#eee7fb; color:#5b3f8d; }
 .mt-cell-note { font-size:9px; color:var(--muted-2); line-height:1.2; }
+.mt-status-stack { display:flex; flex-direction:column; gap:5px; min-width:130px; }
+.mt-status-line { display:flex; align-items:center; flex-wrap:wrap; gap:4px; font-size:9.5px; color:var(--muted-3); line-height:1.2; }
+.mt-status-pct { color:var(--muted-2); font-weight:800; }
 .mt-drawer { position:fixed; right:0; top:0; bottom:0; width:min(760px, 94vw); background:var(--surface); border-left:1px solid var(--ink); box-shadow:-8px 0 30px rgba(31,31,29,.18); z-index:80; display:flex; flex-direction:column; }
 .mt-drawer-head { background:var(--ink); color:var(--bg); padding:16px; display:flex; justify-content:space-between; gap:12px; }
 .mt-drawer-body { padding:16px; overflow:auto; }
@@ -127,9 +130,44 @@ table.mt-table { width:100%; border-collapse:separate; border-spacing:0; min-wid
 .mt-edit-panel-head { padding:12px; background:#fff7ea; border-bottom:1px solid var(--line-3); }
 .mt-entry-date { border:2px solid var(--accent); background:white; font-weight:800; }
 
+
+.mt-dash-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:10px; margin-bottom:12px; }
+.mt-dash-card { padding:12px; border:1px solid var(--line-2); background:var(--surface); border-radius:14px; cursor:pointer; transition:transform .08s ease, border-color .08s ease, background .08s ease; min-height:92px; }
+.mt-dash-card:hover { transform:translateY(-1px); border-color:var(--accent); background:#fffaf1; }
+.mt-dash-card .label { font-size:9.5px; color:var(--muted-2); text-transform:uppercase; letter-spacing:.45px; font-weight:800; }
+.mt-dash-card .value { margin-top:6px; font-family:'Archivo',sans-serif; font-size:23px; font-weight:800; line-height:1; }
+.mt-dash-card .note { margin-top:6px; font-size:10px; color:var(--muted-3); line-height:1.35; }
+.mt-mini-board { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-top:12px; }
+.mt-table tr.drillable td { cursor:pointer; }
+.mt-table tr.drillable:hover td { background:#fff4e3; }
+.mt-drill-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.mt-drill-meta { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+
+.mt-filter-row { display:flex; align-items:center; gap:7px; flex-wrap:wrap; background:var(--toolbar-bg); border:1px solid var(--toolbar-line); border-radius:10px; padding:8px; margin-bottom:10px; }
+.mt-filter-group { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding-right:8px; border-right:1px solid var(--line-2); }
+.mt-filter-group:last-child { border-right:0; }
+.mt-quick-chip { border:1px solid var(--line-2); background:var(--surface); color:var(--muted-4); border-radius:999px; padding:6px 10px; font-size:10px; font-weight:800; cursor:pointer; min-height:30px; }
+.mt-quick-chip.active { background:var(--ink); color:var(--bg); border-color:var(--ink); }
+.mt-sort-th { cursor:pointer; user-select:none; }
+.mt-sort-th:hover { background:#34302a !important; }
+.mt-subrow td { background:#fffaf1 !important; }
+.mt-size-strip { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+.mt-size-box { border:1px solid var(--line-2); background:white; border-radius:8px; padding:6px 8px; min-width:78px; }
+.mt-size-box b { display:block; font-size:10px; }
+.mt-size-box span { display:block; color:var(--muted-2); font-size:9px; margin-top:2px; }
+.mt-page-filter-note { font-size:10px; color:var(--muted-2); margin-left:auto; }
+.mt-summary-strip { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; margin-bottom:10px; }
+.mt-summary-tile { border:1px solid var(--line-2); background:var(--surface); border-radius:12px; padding:10px; cursor:pointer; text-align:left; }
+.mt-summary-tile:hover { border-color:var(--accent); background:#fffaf1; }
+.mt-summary-tile.active { outline:2px solid var(--accent); background:#fff7ea; }
+.mt-summary-tile .label { font-size:9px; text-transform:uppercase; color:var(--muted-2); font-weight:800; letter-spacing:.3px; }
+.mt-summary-tile .value { font-family:'Archivo',sans-serif; font-weight:800; font-size:20px; margin-top:5px; }
+.mt-month-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:12px; }
+
 @media print { .mt-top,.mt-toolbar,.no-print,.mt-tabs { display:none !important; } .mt-page{padding:0;} .mt-card,.mt-table-wrap{border:0; box-shadow:none;} .mt-table th{background:#111 !important; color:#fff !important;} }
+@media (max-width:1180px){ .mt-dash-grid{grid-template-columns:repeat(3,minmax(0,1fr));} .mt-mini-board{grid-template-columns:1fr;} .mt-summary-strip,.mt-month-grid{grid-template-columns:repeat(2,minmax(0,1fr));} }
 @media (max-width:980px){ .mt-grid{grid-template-columns:repeat(2,minmax(0,1fr));} .mt-two{grid-template-columns:1fr;} }
-@media (max-width:620px){ .mt-grid{grid-template-columns:1fr;} .mt-page{padding:14px 12px 28px;} .mt-header{padding:15px 12px 10px;} .mt-tabs{padding-left:12px; padding-right:12px;} }
+@media (max-width:620px){ .mt-grid{grid-template-columns:1fr;} .mt-dash-grid,.mt-summary-strip,.mt-month-grid{grid-template-columns:1fr;} .mt-page{padding:14px 12px 28px;} .mt-header{padding:15px 12px 10px;} .mt-tabs{padding-left:12px; padding-right:12px;} }
 `;
 
 const SIZE_SETS = {
@@ -182,6 +220,7 @@ function backdateRisk(entryDate){
 function entryTypeForField(field){ return field === "received" ? "receive" : field === "output" ? "good_output" : field === "issued" ? "issue" : field; }
 function stageLabel(k){ return STAGE_BY_KEY[k]?.label || k; }
 function stageOwner(k){ return STAGE_BY_KEY[k]?.owner || "Production Owner"; }
+function hodAndCoordinator(k){ return `${stageOwner(k)} + Production Coordinator`; }
 function sizesFor(row){ return SIZE_SETS[row.size_set] || SIZE_SETS.alpha; }
 function buildRouteFromToggles(row){
   const route = ["cutting"];
@@ -211,8 +250,7 @@ function receivingPct(feed, received){ return feed > 0 ? Math.round((received * 
 function ownerForIssuedNotReceived(stageKey, feed, received){
   const bal = Math.max(0, feed - received);
   if (!bal) return "—";
-  const pct = receivingPct(feed, received);
-  return pct >= 95 ? `${stageOwner(stageKey)} + Production Coordinator` : stageOwner(stageKey);
+  return hodAndCoordinator(stageKey);
 }
 function cellBreakup(row, stageKey){
   const route = routeFor(row);
@@ -241,13 +279,13 @@ function issueBuckets(row){
     const stageLoss = loss(st);
     if (key === "cutting") {
       const overCut = Math.max(0, n(st.output) - n(row.order_qty));
-      if (overCut) buckets.push({ type:"extra_cut", status:"Extra Cut", qty:overCut, owner:"Cutting HOD", support:"Production Coordinator", stage:key, tone:"purple", action:"Extra cut allowed; check tolerance", idle:n(st.idle) });
+      if (overCut) buckets.push({ type:"extra_cut", status:"Extra Cut", qty:overCut, owner:hodAndCoordinator(key), support:"Production Manager escalation if over tolerance", stage:key, tone:"purple", action:"Extra cut allowed; check tolerance", idle:n(st.idle) });
     } else {
       const feed = stageFeed(row, key);
       const totalReceived = n(st.received) + stageLoss;
       const totalJump = Math.max(0, totalReceived - feed);
       if (totalJump > 0) {
-        buckets.push({ type:"reconcile", status:"Reconcile", qty:totalJump, owner:"Production Manager", support:`${stageOwner(key)} + Production Coordinator`, stage:key, tone:"late", action:`${stageLabel(key)} total is above issued quantity. Adjustment required.`, idle:n(st.idle) });
+        buckets.push({ type:"reconcile", status:"Reconcile", qty:totalJump, owner:hodAndCoordinator(key), support:"Production Manager escalation / approval only", stage:key, tone:"late", action:`${stageLabel(key)} total is above issued quantity. Adjustment required.`, idle:n(st.idle) });
       }
       const issuedNotReceived = Math.max(0, feed - n(st.received) - stageLoss);
       if (issuedNotReceived > 0) {
@@ -258,15 +296,15 @@ function issueBuckets(row){
       const nextKey = route[i + 1];
       const completedNotIssued = Math.max(0, n(st.output) - n(st.issued) - stageLoss);
       if (completedNotIssued > 0) {
-        buckets.push({ type:"completed_not_issued", status:`Ready for ${stageLabel(nextKey)}`, qty:completedNotIssued, owner:"Production Coordinator", support:stageOwner(key), stage:key, toStage:nextKey, tone:"info", action:`Issue completed stock to ${stageLabel(nextKey)}`, idle:n(st.idle) });
+        buckets.push({ type:"completed_not_issued", status:`Ready for ${stageLabel(nextKey)}`, qty:completedNotIssued, owner:`Production Coordinator + ${stageOwner(key)}`, support:"Coordinator closes / HOD supports movement", stage:key, toStage:nextKey, tone:"info", action:`Issue completed stock to ${stageLabel(nextKey)}`, idle:n(st.idle) });
       }
     }
     const receivedNotProcessed = Math.max(0, n(st.received) - n(st.output) - stageLoss);
     if (key !== "cutting" && receivedNotProcessed > 0) {
-      buckets.push({ type:"received_not_processed", status:`With ${stageLabel(key)}`, qty:receivedNotProcessed, owner:stageOwner(key), support:"Production Head if overdue", stage:key, tone:n(st.idle) >= 7 ? "warn" : "info", action:`${stageLabel(key)} to complete/process and issue forward`, idle:n(st.idle) });
+      buckets.push({ type:"received_not_processed", status:`With ${stageLabel(key)}`, qty:receivedNotProcessed, owner:hodAndCoordinator(key), support:"Production Manager escalation if overdue", stage:key, tone:n(st.idle) >= 7 ? "warn" : "info", action:`${stageLabel(key)} to complete/process and issue forward`, idle:n(st.idle) });
     }
     if (stageLoss > 0) {
-      buckets.push({ type:"ram", status:`R/A/M in ${stageLabel(key)}`, qty:stageLoss, owner:key === "checking" ? "Checking HOD" : stageOwner(key), support:"Production Coordinator", stage:key, tone:"late", action:"Close reject / alter / missing breakup", idle:n(st.idle) });
+      buckets.push({ type:"ram", status:`R/A/M in ${stageLabel(key)}`, qty:stageLoss, owner:key === "checking" ? "Checking HOD + Production Coordinator" : hodAndCoordinator(key), support:"Production Manager escalation if overdue", stage:key, tone:"late", action:"Close reject / alter / missing breakup", idle:n(st.idle) });
     }
   }
   return buckets.sort((a,b)=> (b.qty * Math.max(1,b.idle||1)) - (a.qty * Math.max(1,a.idle||1)) || b.qty-a.qty);
@@ -278,7 +316,93 @@ function rowStatus(row){
   if (!main) return { status:"Closed / Balanced", owner:"—", qty:0, idle:0, tone:"ok", action:"No open production issue", stage:"dispatch" };
   return { status:main.status, owner:main.owner, qty:main.qty, idle:main.idle||0, tone:main.tone, action:main.action, stage:main.stage, support:main.support };
 }
+function bucketDenominator(row, bucket){
+  if (!bucket) return accountableTotal(row) || n(row.order_qty) || 1;
+  if (bucket.type === "extra_cut") return n(row.order_qty) || 1;
+  if (bucket.type === "completed_not_issued") return n(sdata(row, bucket.stage).output) || accountableTotal(row) || 1;
+  if (bucket.type === "received_not_processed") return n(sdata(row, bucket.stage).received) || stageFeed(row, bucket.stage) || accountableTotal(row) || 1;
+  return stageFeed(row, bucket.stage) || accountableTotal(row) || n(row.order_qty) || 1;
+}
+function bucketPct(row, bucket){
+  const denom = bucketDenominator(row, bucket);
+  return denom > 0 ? Math.round((n(bucket.qty) * 1000) / denom) / 10 : 0;
+}
+function statusBreakdown(row){
+  const all = issueBuckets(row).filter(b => b.type !== "extra_cut" || b.qty > (n(row.order_qty) * .05));
+  const reconcile = all.find(b => b.type === "reconcile");
+  const current = all.find(b => b.type !== "reconcile");
+  const rest = all.filter(b => b !== reconcile && b !== current).slice(0, 1);
+  return [reconcile, current, ...rest].filter(Boolean);
+}
+function shortStatusLabel(bucket){
+  if (!bucket) return "Closed / Balanced";
+  return bucket.status.replace("Pending ", "Pending ").replace(" Receipt", " Receipt");
+}
+function statusText(row){
+  const parts = statusBreakdown(row);
+  if (!parts.length) return "Closed / Balanced";
+  return parts.map(b => `${shortStatusLabel(b)} ${fmt(b.qty)} (${bucketPct(row,b)}%)`).join(" | ");
+}
+function StatusCell({ row }){
+  const parts = statusBreakdown(row);
+  if (!parts.length) return <div className="mt-status-stack"><span className="mt-chip mt-ok">Closed / Balanced</span><div className="mt-status-line">No open production issue</div></div>;
+  return <div className="mt-status-stack">
+    {parts.map((b, idx) => <div className="mt-status-line" key={`${b.type}-${b.stage}-${idx}`}>
+      <span className={`mt-chip ${statusClass(b.tone)}`}>{shortStatusLabel(b)}</span>
+      <b>{fmt(b.qty)}</b>
+      <span className="mt-status-pct">{bucketPct(row,b)}%</span>
+    </div>)}
+  </div>;
+}
 function statusClass(tone){ return tone === "late" ? "mt-late" : tone === "warn" ? "mt-warn" : tone === "ok" ? "mt-ok" : tone === "purple" ? "mt-purple" : tone === "info" ? "mt-info" : "mt-muted"; }
+
+function uniqueList(values){ return Array.from(new Set(values.filter(Boolean))).sort((a,b)=>String(a).localeCompare(String(b))); }
+function ownerNamesFromBucket(bucket){ return String(bucket?.owner || "").split("+").map(x=>x.trim()).filter(Boolean); }
+function rowOwnerNames(row){ return uniqueList(issueBuckets(row).flatMap(ownerNamesFromBucket)); }
+function routeType(row){ const p=!!row.print_required, e=!!row.embroidery_required; return p && e ? "Print + Emb" : p ? "Print" : e ? "Embroidery" : "Plain"; }
+function bucketTypeLabel(type){
+  return ({ issued_not_received:"Pending Receipt", completed_not_issued:"Ready for Next Dept", received_not_processed:"With Department", ram:"Reject / Alter / Missing", reconcile:"Reconcile", extra_cut:"Extra Cut" })[type] || type;
+}
+function typeFromStatusFilter(status){
+  if (status === "ready") return "completed_not_issued";
+  if (status === "pending_receipt") return "issued_not_received";
+  if (status === "with_dept") return "received_not_processed";
+  if (status === "reconcile") return "reconcile";
+  if (status === "ram") return "ram";
+  return "";
+}
+function rowMatchesBucketFilter(row, issueType){
+  if (!issueType || issueType === "all") return true;
+  if (issueType === "closed") return issueBuckets(row).filter(b=>b.type!=="extra_cut").length === 0;
+  return issueBuckets(row).some(b=>b.type === issueType);
+}
+function compareValue(row, key){
+  const rs = rowStatus(row);
+  if (key === "style") return row.style_no || "";
+  if (key === "buyer") return row.buyer || "";
+  if (key === "status") return rs.status || "";
+  if (key === "owner") return rs.owner || "";
+  if (key === "open") return n(rs.qty);
+  if (key === "idle") return n(rs.idle);
+  if (key === "route") return routeType(row);
+  if (key === "currentDept") return stageLabel(rs.stage);
+  return row.style_no || "";
+}
+function SortTh({ label, sortKey, sort, setSort, sticky=false }){
+  const active = sort.key === sortKey;
+  const dir = active && sort.dir === "asc" ? "▲" : active ? "▼" : "";
+  return <th className={`${sticky ? "mt-sticky " : ""}mt-sort-th`} onClick={()=>setSort(s=>s.key===sortKey ? { key:sortKey, dir:s.dir==="asc"?"desc":"asc" } : { key:sortKey, dir:"asc" })}>{label} {dir}</th>;
+}
+function SizeBreakupStrip({ row, stage }){
+  if (!row || !stage) return null;
+  const rec = Object.fromEntries(sizeMatrix(row, stage, stage === "cutting" ? "received" : "received").map(x=>[x.size,x.qty]));
+  const output = Object.fromEntries(sizeMatrix(row, stage, "output").map(x=>[x.size,x.qty]));
+  const issued = Object.fromEntries(sizeMatrix(row, stage, "issued").map(x=>[x.size,x.qty]));
+  return <div className="mt-size-strip">
+    <span className="mt-chip mt-info">{stageLabel(stage)} size breakup</span>
+    {sizesFor(row).map(size=><div className="mt-size-box" key={size}><b>{size}</b><span>Rec {fmt(rec[size]||0)}</span><span>Out {fmt(output[size]||0)}</span><span>Iss {fmt(issued[size]||0)}</span></div>)}
+  </div>;
+}
 function distribute(total, sizes){
   const weights = sizes.map((_,i)=> (i===0 || i===sizes.length-1) ? 1 : 2);
   const totalW = weights.reduce((a,b)=>a+b,0);
@@ -413,43 +537,187 @@ function StageCell({ row, stageKey, onOpen }){
   </td>;
 }
 
-function Dashboard({ rows }){
-  const buckets = rows.flatMap(issueBuckets);
-  const openQty = buckets.filter(b=>b.type!=="extra_cut").reduce((a,b)=>a+n(b.qty),0);
+function bucketRowsForDrill(rows, predicate){
+  const allSizes = allReportSizes(rows);
+  return rows.flatMap(row => issueBuckets(row).filter(predicate).map(bucket => horizontalBucketRow(row, bucket, allSizes)));
+}
+function stageRowsForDrill(rows, stageKey){
+  const allSizes = allReportSizes(rows);
+  return rows.filter(row => routeFor(row).includes(stageKey)).map(row => horizontalStageRow(row, stageKey, allSizes));
+}
+function ownerRowsDetailed(rows, owner){
+  const allSizes = allReportSizes(rows);
+  return rows.flatMap(row => issueBuckets(row).filter(bucket => String(bucket.owner || "").split("+").map(x=>x.trim()).includes(owner)).map(bucket => horizontalBucketRow(row, bucket, allSizes)));
+}
+function styleRowsForDrill(rows, predicate){
+  return rows.filter(predicate).map(row => {
+    const rs = rowStatus(row);
+    return {
+      Order: row.order_no,
+      Style: row.style_no,
+      Buyer: row.buyer,
+      Colour: row.colour,
+      Component: row.component,
+      Status: rs.status,
+      Status_Breakup: statusText(row),
+      Owner: rs.owner,
+      Open_Qty: rs.qty,
+      Idle_Days: rs.idle,
+      Route: routeFor(row).map(stageLabel).join(" > "),
+      Action: rs.action,
+    };
+  });
+}
+function dashboardDrillRows(rows, drill){
+  if (!drill) return [];
+  if (drill.kind === "all_styles") return styleRowsForDrill(rows, () => true);
+  if (drill.kind === "open_qty") return bucketRowsForDrill(rows, b => b.type !== "extra_cut");
+  if (drill.kind === "reconcile") return bucketRowsForDrill(rows, b => b.type === "reconcile");
+  if (drill.kind === "issued_not_received") return bucketRowsForDrill(rows, b => b.type === "issued_not_received");
+  if (drill.kind === "completed_not_issued") return bucketRowsForDrill(rows, b => b.type === "completed_not_issued");
+  if (drill.kind === "received_not_processed") return bucketRowsForDrill(rows, b => b.type === "received_not_processed");
+  if (drill.kind === "ram") return bucketRowsForDrill(rows, b => b.type === "ram");
+  if (drill.kind === "coordinator") return bucketRowsForDrill(rows, b => String(b.owner || "").includes("Production Coordinator"));
+  if (drill.kind === "stage") return stageRowsForDrill(rows, drill.stage);
+  if (drill.kind === "stage_open") return bucketRowsForDrill(rows, b => b.stage === drill.stage && b.type !== "extra_cut");
+  if (drill.kind === "issue_type") return bucketRowsForDrill(rows, b => b.type === drill.type);
+  if (drill.kind === "owner") return ownerRowsDetailed(rows, drill.owner);
+  if (drill.kind === "critical") return bucketRowsForDrill(rows, b => b.type !== "extra_cut").slice(0, 50);
+  return [];
+}
+function DrillKpi({ label, value, note, tone, onClick }){
+  return <button type="button" className="mt-dash-card" onClick={onClick} style={{textAlign:"left"}}>
+    <div className="label">{label}</div>
+    <div className="value">{value}</div>
+    <div className="note">{note}</div>
+    {tone && <div style={{marginTop:8}}><span className={`mt-chip ${statusClass(tone)}`}>Drill</span></div>}
+  </button>;
+}
+function Dashboard({ rows, onDrill }){
+  const buckets = rows.flatMap(row => issueBuckets(row).map(bucket => ({ ...bucket, row })));
+  const openBuckets = buckets.filter(b=>b.type!=="extra_cut");
+  const openQty = openBuckets.reduce((a,b)=>a+n(b.qty),0);
   const reconcile = buckets.filter(b=>b.type==="reconcile").reduce((a,b)=>a+n(b.qty),0);
-  const tail = buckets.filter(b=>String(b.owner).includes("Production Coordinator")).reduce((a,b)=>a+n(b.qty),0);
-  const oldest = buckets.reduce((a,b)=>Math.max(a,n(b.idle)),0);
+  const issuedNotReceived = buckets.filter(b=>b.type==="issued_not_received").reduce((a,b)=>a+n(b.qty),0);
+  const completedNotIssued = buckets.filter(b=>b.type==="completed_not_issued").reduce((a,b)=>a+n(b.qty),0);
+  const receivedNotProcessed = buckets.filter(b=>b.type==="received_not_processed").reduce((a,b)=>a+n(b.qty),0);
+  const ram = buckets.filter(b=>b.type==="ram").reduce((a,b)=>a+n(b.qty),0);
+  const coordinator = buckets.filter(b=>String(b.owner).includes("Production Coordinator")).reduce((a,b)=>a+n(b.qty),0);
   const ownerRows = ownerRowsFromBuckets(buckets);
+  const issueRows = [
+    { Type:"Issued Not Received", Qty:issuedNotReceived, Styles:new Set(buckets.filter(b=>b.type==="issued_not_received").map(b=>b.row.id)).size, Drill:{kind:"issued_not_received", title:"Issued Not Received"} },
+    { Type:"Completed Not Issued", Qty:completedNotIssued, Styles:new Set(buckets.filter(b=>b.type==="completed_not_issued").map(b=>b.row.id)).size, Drill:{kind:"completed_not_issued", title:"Completed Not Issued"} },
+    { Type:"Received Not Processed", Qty:receivedNotProcessed, Styles:new Set(buckets.filter(b=>b.type==="received_not_processed").map(b=>b.row.id)).size, Drill:{kind:"received_not_processed", title:"Received Not Processed"} },
+    { Type:"Reject / Alter / Missing", Qty:ram, Styles:new Set(buckets.filter(b=>b.type==="ram").map(b=>b.row.id)).size, Drill:{kind:"ram", title:"Reject / Alter / Missing"} },
+    { Type:"Reconcile", Qty:reconcile, Styles:new Set(buckets.filter(b=>b.type==="reconcile").map(b=>b.row.id)).size, Drill:{kind:"reconcile", title:"Reconcile / Total Jump"} },
+  ].filter(r=>n(r.Qty)>0 || r.Type === "Issued Not Received");
+  const deptRows = STAGES.map(stage => {
+    const active = rows.filter(row=>routeFor(row).includes(stage.key));
+    const received = active.reduce((a,row)=>a+cellBreakup(row, stage.key).received,0);
+    const open = active.reduce((a,row)=>a+cellBreakup(row, stage.key).open,0);
+    const stageRam = active.reduce((a,row)=>a+cellBreakup(row, stage.key).ram,0);
+    const over = active.reduce((a,row)=>a+cellBreakup(row, stage.key).extra,0);
+    const owners = new Set(buckets.filter(b=>b.stage===stage.key && b.type!=="extra_cut").flatMap(b=>String(b.owner).split("+").map(x=>x.trim()).filter(Boolean)));
+    return { Dept:stage.label, Styles:active.length, Done_Received:received, Open:open, RAM:stageRam, Reconcile:over, Owners:Array.from(owners).slice(0,3).join(", ") || stage.owner, stage:stage.key };
+  });
+  const criticalRows = openBuckets.sort((a,b)=>(n(b.qty)*Math.max(1,n(b.idle))) - (n(a.qty)*Math.max(1,n(a.idle)))).slice(0,10).map(b=>({ Style:b.row.style_no, Colour:b.row.colour, Status:b.status, Stage:stageLabel(b.stage), Qty:b.qty, Percent:`${bucketPct(b.row,b)}%`, Owner:b.owner, Idle:`${b.idle||0}d`, Action:b.action }));
   return <>
-    <div className="mt-grid" style={{marginBottom:12}}>
-      <Kpi label="Active Styles" value={rows.length} note="Demo rows from current production thinking" />
-      <Kpi label="Open Production Qty" value={fmt(openQty)} note="All owner chase buckets excluding extra cut" tone={openQty?"warn":"ok"}/>
-      <Kpi label="Reconcile / Total Jump" value={fmt(reconcile)} note="Downstream total jump blocked unless approved" tone={reconcile?"late":"ok"}/>
-      <Kpi label="Coordinator Tail / Handover" value={fmt(tail)} note="Coordinator appears only where rule needs it" tone={tail?"info":"ok"}/>
+    <div className="mt-dash-grid">
+      <DrillKpi label="Active Styles" value={rows.length} note="Click to see all visible styles." tone="info" onClick={()=>onDrill?.({kind:"all_styles", title:"Active Styles"})}/>
+      <DrillKpi label="Open Production Qty" value={fmt(openQty)} note="All live WIP buckets excluding extra cut." tone={openQty?"warn":"ok"} onClick={()=>onDrill?.({kind:"open_qty", title:"Open Production Qty"})}/>
+      <DrillKpi label="Issued Not Received" value={fmt(issuedNotReceived)} note="Receiving HOD chase; 95%+ adds coordinator." tone={issuedNotReceived?"warn":"ok"} onClick={()=>onDrill?.({kind:"issued_not_received", title:"Issued Not Received"})}/>
+      <DrillKpi label="Completed Not Issued" value={fmt(completedNotIssued)} note="Coordinator to move completed stock forward." tone={completedNotIssued?"info":"ok"} onClick={()=>onDrill?.({kind:"completed_not_issued", title:"Completed Not Issued"})}/>
+      <DrillKpi label="With Dept / Not Processed" value={fmt(receivedNotProcessed)} note="Received by department, pending output/issue." tone={receivedNotProcessed?"info":"ok"} onClick={()=>onDrill?.({kind:"received_not_processed", title:"Received Not Processed"})}/>
+      <DrillKpi label="Reconcile / Total Jump" value={fmt(reconcile)} note="Blocked unless approved adjustment exists." tone={reconcile?"late":"ok"} onClick={()=>onDrill?.({kind:"reconcile", title:"Reconcile / Total Jump"})}/>
     </div>
-    <div className="mt-two">
-      <SimpleTable title="Top Owner Chase" sub="One row per owner; click Who to Chase for full style list." rows={ownerRows.slice(0,8)} empty="No owner chase." />
-      <SimpleTable title="Critical WIP" sub="Highest pending quantity / aging buckets." rows={buckets.filter(b=>b.type!=="extra_cut").slice(0,8).map(b=>({ Status:b.status, Stage:stageLabel(b.stage), Qty:b.qty, Owner:b.owner, Idle:`${b.idle||0}d`, Action:b.action }))} empty="No open WIP." />
+    <div className="mt-mini-board">
+      <SimpleTable title="Department WIP Board" sub="Each department row is drillable. Shows done/received, open, R/A/M and reconcile." rows={deptRows.map(({stage,...r})=>r)} empty="No department WIP." onRowClick={(r)=>{ const match = deptRows.find(x=>x.Dept===r.Dept); onDrill?.({kind:"stage", stage:match?.stage, title:`${r.Dept} WIP`}); }}/>
+      <SimpleTable title="Issue Type Board" sub="Use this to see why production is open: receipt gap, not issued, not processed, R/A/M, reconcile." rows={issueRows.map(({Drill,...r})=>r)} empty="No open issues." onRowClick={(r)=>{ const match = issueRows.find(x=>x.Type===r.Type); onDrill?.(match?.Drill); }}/>
+      <SimpleTable title="Owner Chase Board" sub="Owner rows are drillable. Closure owner remains Production Coordinator; Production Manager is WIP/escalation only." rows={ownerRows.slice(0,8)} empty="No owner chase." onRowClick={(r)=>onDrill?.({kind:"owner", owner:r.Owner, title:`Owner Chase — ${r.Owner}`})}/>
+    </div>
+    <div style={{marginTop:12}}>
+      <SimpleTable title="Critical Production Buckets" sub="Drillable by KPI above; sorted by qty × idle days." rows={criticalRows} empty="No critical WIP." />
     </div>
   </>;
 }
+function DashboardDrillDrawer({ drill, rows, onClose }){
+  if (!drill) return null;
+  const detailRows = dashboardDrillRows(rows, drill);
+  const totalQty = detailRows.reduce((a,r)=>a+n(r.Total_Open ?? r.Open_Qty ?? r.Open ?? r.Gap ?? r.Total ?? r.Qty),0);
+  return <div className="mt-drawer">
+    <div className="mt-drawer-head"><div><h2 style={{margin:"0 0 4px"}}>{drill.title || "Dashboard Drilldown"}</h2><div className="mt-sub">Every dashboard number opens to its underlying horizontal style/size rows.</div></div><button className="mt-btn" onClick={onClose}><X size={15}/>Close</button></div>
+    <div className="mt-drawer-body">
+      <div className="mt-drill-head"><div><h3 className="mt-panel-title">Drilldown Detail</h3><div className="mt-panel-sub">Rows: {detailRows.length}. Total open / relevant qty: {fmt(totalQty)}.</div><div className="mt-drill-meta"><span className="mt-chip mt-info">Horizontal format</span><span className="mt-chip mt-muted">Filter-respecting</span><span className="mt-chip mt-muted">Exportable from Reports</span></div></div></div>
+      <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{(detailRows[0] ? Object.keys(detailRows[0]) : ["Note"]).map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{detailRows.length ? detailRows.map((r,i)=><tr key={i}>{Object.keys(detailRows[0]).map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] ?? "")}</td>)}</tr>) : <tr><td style={{padding:18}}>No rows for this drilldown.</td></tr>}</tbody></table></div>
+    </div>
+  </div>;
+}
 
 function WipStatus({ rows, onOpen }){
+  const [localSearch,setLocalSearch] = useState("");
+  const [dept,setDept] = useState("all");
+  const [issue,setIssue] = useState("all");
+  const [owner,setOwner] = useState("all");
+  const [route,setRoute] = useState("all");
+  const [sizeBreak,setSizeBreak] = useState(false);
+  const [sort,setSort] = useState({ key:"open", dir:"desc" });
+  const owners = ["all", ...uniqueList(rows.flatMap(rowOwnerNames))];
+  const searchText = localSearch.trim().toLowerCase();
+  const filtered = rows.filter(row=>{
+    const routeOk = route === "all" || routeType(row) === route;
+    const deptOk = dept === "all" || routeFor(row).includes(dept);
+    const issueOk = rowMatchesBucketFilter(row, issue);
+    const ownerOk = owner === "all" || rowOwnerNames(row).includes(owner);
+    const text = [row.order_no,row.style_no,row.buyer,row.colour,row.component,statusText(row),rowStatus(row).owner,routeType(row)].join(" ").toLowerCase();
+    const searchOk = !searchText || text.includes(searchText);
+    return routeOk && deptOk && issueOk && ownerOk && searchOk;
+  }).sort((a,b)=>{
+    const av = compareValue(a, sort.key), bv = compareValue(b, sort.key);
+    const res = typeof av === "number" || typeof bv === "number" ? n(av)-n(bv) : String(av).localeCompare(String(bv));
+    return sort.dir === "asc" ? res : -res;
+  });
+  const allBuckets = rows.flatMap(row=>issueBuckets(row).map(bucket=>({row,bucket}))).filter(x=>x.bucket.type!=="extra_cut");
+  const summary = [
+    { key:"all", label:"All", value:rows.length, note:"visible styles" },
+    { key:"completed_not_issued", label:"Ready for Next Dept", value:allBuckets.filter(x=>x.bucket.type==="completed_not_issued").reduce((a,x)=>a+n(x.bucket.qty),0), note:"completed not issued" },
+    { key:"issued_not_received", label:"Pending Receipt", value:allBuckets.filter(x=>x.bucket.type==="issued_not_received").reduce((a,x)=>a+n(x.bucket.qty),0), note:"issued but not received" },
+    { key:"received_not_processed", label:"With Department", value:allBuckets.filter(x=>x.bucket.type==="received_not_processed").reduce((a,x)=>a+n(x.bucket.qty),0), note:"received not processed" },
+    { key:"reconcile", label:"Reconcile", value:allBuckets.filter(x=>x.bucket.type==="reconcile").reduce((a,x)=>a+n(x.bucket.qty),0), note:"total jump / mismatch" },
+  ];
+  const selectedDeptForSize = dept === "all" ? null : dept;
   return <div className="mt-card">
-    <div className="mt-section"><h3 className="mt-panel-title">Live WIP Status</h3><div className="mt-panel-sub">Clean main view. Department cells show max 3 numbers: received/done · open · R/A/M. Details open on click.</div></div>
-    <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style</th><th>Status</th><th>Owner</th><th>Route</th>{STAGES.map(s=><th key={s.key}>{s.short}</th>)}<th>Next Action</th></tr></thead><tbody>
-      {rows.map(row => { const rs = rowStatus(row); return <tr key={row.id}>
-        <td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? <span className="mt-chip mt-purple"><Layers size={11}/>Set {row.set_id}</span> : null}</div></div></td>
-        <td><span className={`mt-chip ${statusClass(rs.tone)}`}>{rs.status}</span><div className="mt-small">{fmt(rs.qty)} · {rs.idle}d</div></td>
-        <td><b>{rs.owner}</b>{rs.support ? <div className="mt-small">Support: {rs.support}</div> : null}</td>
-        <td>{routeFor(row).map(k=><span key={k} className="mt-chip mt-muted" style={{margin:"0 3px 3px 0"}}>{STAGE_BY_KEY[k].short}</span>)}</td>
-        {STAGES.map(s=><StageCell key={s.key} row={row} stageKey={s.key} onOpen={onOpen}/>) }
-        <td>{rs.action}</td>
-      </tr>;})}
+    <div className="mt-section"><h3 className="mt-panel-title">Live WIP Status</h3><div className="mt-panel-sub">Page-specific WIP filters, sortable columns, quick status buckets, and optional size breakup. Main department cells stay simple: received/done · open · R/A/M.</div></div>
+    <div className="mt-section no-print">
+      <div className="mt-summary-strip">{summary.map(s=><button key={s.key} className={`mt-summary-tile ${issue===s.key || (s.key==="all"&&issue==="all") ? "active" : ""}`} onClick={()=>setIssue(s.key)}><div className="label">{s.label}</div><div className="value">{typeof s.value === "number" && s.key!=="all" ? fmt(s.value) : s.value}</div><div className="mt-small">{s.note}</div></button>)}</div>
+      <div className="mt-filter-row">
+        <div className="mt-filter-group"><span className="mt-toolbar-label">WIP Search</span><Search size={14}/><input className="mt-input" value={localSearch} onChange={e=>setLocalSearch(e.target.value)} placeholder="style / order / status / owner" style={{minWidth:230}}/></div>
+        <div className="mt-filter-group"><span className="mt-toolbar-label">Dept</span><select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}><option value="all">All departments</option>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select></div>
+        <div className="mt-filter-group"><span className="mt-toolbar-label">Issue</span><select className="mt-select" value={issue} onChange={e=>setIssue(e.target.value)}><option value="all">All open/closed</option><option value="completed_not_issued">Ready for next dept</option><option value="issued_not_received">Pending receipt</option><option value="received_not_processed">With department</option><option value="ram">R/A/M</option><option value="reconcile">Reconcile</option><option value="closed">Closed / balanced</option></select></div>
+        <div className="mt-filter-group"><span className="mt-toolbar-label">Owner</span><select className="mt-select" value={owner} onChange={e=>setOwner(e.target.value)}>{owners.map(o=><option key={o} value={o}>{o === "all" ? "All owners" : o}</option>)}</select></div>
+        <div className="mt-filter-group"><span className="mt-toolbar-label">Route</span><select className="mt-select" value={route} onChange={e=>setRoute(e.target.value)}><option value="all">All routes</option><option>Plain</option><option>Print</option><option>Embroidery</option><option>Print + Emb</option></select></div>
+        <button className={`mt-btn ${sizeBreak?"primary":"ghost"}`} onClick={()=>setSizeBreak(v=>!v)}><Layers size={14}/>Size breakup</button>
+        <button className="mt-btn ghost" onClick={()=>{setLocalSearch("");setDept("all");setIssue("all");setOwner("all");setRoute("all");setSort({key:"open",dir:"desc"});}}>Reset</button>
+        <span className="mt-page-filter-note">{filtered.length} rows · WIP filters are page-specific</span>
+      </div>
+    </div>
+    <div className="mt-table-wrap"><table className="mt-table"><thead><tr><SortTh sticky label="Style" sortKey="style" sort={sort} setSort={setSort}/><SortTh label="Status / Current" sortKey="status" sort={sort} setSort={setSort}/><SortTh label="Owner" sortKey="owner" sort={sort} setSort={setSort}/><SortTh label="Route" sortKey="route" sort={sort} setSort={setSort}/>{STAGES.map(s=><th key={s.key}>{s.short}</th>)}<SortTh label="Open" sortKey="open" sort={sort} setSort={setSort}/><SortTh label="Idle" sortKey="idle" sort={sort} setSort={setSort}/><th>Next Action</th></tr></thead><tbody>
+      {filtered.map(row => { const rs = rowStatus(row); const sizeStage = selectedDeptForSize || rs.stage; return <React.Fragment key={row.id}>
+        <tr>
+          <td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? <span className="mt-chip mt-purple"><Layers size={11}/>Set {row.set_id}</span> : null}</div></div></td>
+          <td><StatusCell row={row}/><div className="mt-small">Idle {rs.idle}d</div></td>
+          <td><b>{rs.owner}</b>{rs.support ? <div className="mt-small">Support: {rs.support}</div> : null}</td>
+          <td><span className="mt-chip mt-info">{routeType(row)}</span><div style={{marginTop:4}}>{routeFor(row).map(k=><span key={k} className="mt-chip mt-muted" style={{margin:"0 3px 3px 0"}}>{STAGE_BY_KEY[k].short}</span>)}</div></td>
+          {STAGES.map(s=><StageCell key={s.key} row={row} stageKey={s.key} onOpen={onOpen}/>) }
+          <td><b>{fmt(rs.qty)}</b></td><td>{rs.idle}d</td><td>{rs.action}</td>
+        </tr>
+        {sizeBreak && <tr className="mt-subrow"><td colSpan={STAGES.length + 8}><SizeBreakupStrip row={row} stage={sizeStage}/></td></tr>}
+      </React.Fragment>;})}
+      {!filtered.length && <tr><td colSpan={STAGES.length + 8} style={{padding:18}}>No rows match current WIP filters.</td></tr>}
     </tbody></table></div>
     <div className="mt-section"><span className="mt-chip mt-ok">Green = received/done</span> <span className="mt-chip mt-warn">Yellow = open balance</span> <span className="mt-chip mt-late">Red = rejection/alter/missing</span> <span className="mt-chip mt-purple">Purple = extra/override marker</span></div>
   </div>;
 }
+
 
 function ownerRowsFromBuckets(buckets){
   const map = new Map();
@@ -468,12 +736,50 @@ function ownerRowsFromBuckets(buckets){
   return Array.from(map.values()).map(x=>({ Owner:x.Owner, OpenStyles:x.OpenStyles.size, OpenQty:x.OpenQty, OldestIdle:`${x.OldestIdle}d`, Critical:x.Critical, MainReason:x.MainReason })).sort((a,b)=>n(b.OpenQty)-n(a.OpenQty));
 }
 function WhoToChase({ rows }){
-  const buckets = rows.flatMap(row => issueBuckets(row).map(b=>({ ...b, row })) ).filter(b=>b.type!=="extra_cut" || b.qty>0);
+  const [selectedOwner, setSelectedOwner] = useState(null);
+  const [q, setQ] = useState("");
+  const [issue, setIssue] = useState("all");
+  const [dept, setDept] = useState("all");
+  const search = q.trim().toLowerCase();
+  const baseBuckets = rows.flatMap(row => issueBuckets(row).map(b=>({ ...b, row })) ).filter(b=>b.type!=="extra_cut" || b.qty>0);
+  const buckets = baseBuckets.filter(b=>{
+    const okIssue = issue === "all" || b.type === issue;
+    const okDept = dept === "all" || b.stage === dept;
+    const hay = [b.owner,b.status,b.action,b.row.style_no,b.row.order_no,b.row.buyer,b.row.colour,b.row.component,stageLabel(b.stage)].join(" ").toLowerCase();
+    const okSearch = !search || hay.includes(search);
+    return okIssue && okDept && okSearch;
+  });
   const ownerRows = ownerRowsFromBuckets(buckets);
-  return <div className="mt-two">
-    <SimpleTable title="Owner Chase Summary" sub="Individual owner chase is calculated from issue type, receiving %, and stage owner." rows={ownerRows} empty="No owner chase." />
-    <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Owner Chase Detail</h3><div className="mt-panel-sub">One production issue bucket can create one or more owner rows.</div></div><div className="mt-table-wrap"><table className="mt-table"><thead><tr><th>Owner</th><th>Style</th><th>Status</th><th>Stage</th><th>Qty</th><th>Idle</th><th>Action</th></tr></thead><tbody>{buckets.flatMap(b=>String(b.owner).split("+").map(owner=><tr key={`${b.row.id}-${b.type}-${owner}`}><td><b>{owner.trim()}</b></td><td>{b.row.style_no}<div className="mt-small">{b.row.colour} · {b.row.component}</div></td><td><span className={`mt-chip ${statusClass(b.tone)}`}>{b.status}</span></td><td>{stageLabel(b.stage)}</td><td>{fmt(b.qty)}</td><td>{b.idle || 0}d</td><td>{b.action}</td></tr>))}</tbody></table></div></div>
-  </div>;
+  const ownersToShow = selectedOwner ? [selectedOwner] : ownerRows.map(r=>r.Owner);
+  const detailBuckets = buckets.flatMap(b=>String(b.owner).split("+").map(owner=>({ ...b, ownerName:owner.trim() }))).filter(b=>ownersToShow.includes(b.ownerName));
+  return <>
+    <div className="mt-card no-print" style={{marginBottom:12}}>
+      <div className="mt-section">
+        <div className="mt-filter-row">
+          <span className="mt-toolbar-label">Owner Chase Filters</span>
+          <Search size={14}/><input className="mt-input" value={q} onChange={e=>setQ(e.target.value)} placeholder="owner / style / status / action" style={{minWidth:250}}/>
+          <select className="mt-select" value={issue} onChange={e=>{setIssue(e.target.value); setSelectedOwner(null);}}>
+            <option value="all">All issue types</option>
+            <option value="issued_not_received">Pending Receipt</option>
+            <option value="completed_not_issued">Ready / Not Issued</option>
+            <option value="received_not_processed">With Department</option>
+            <option value="ram">Reject / Alter / Missing</option>
+            <option value="reconcile">Reconcile</option>
+          </select>
+          <select className="mt-select" value={dept} onChange={e=>{setDept(e.target.value); setSelectedOwner(null);}}>
+            <option value="all">All departments</option>
+            {STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
+          </select>
+          {selectedOwner && <button className="mt-btn ghost" onClick={()=>setSelectedOwner(null)}>Show all owners</button>}
+          <span className="mt-page-filter-note">{ownerRows.length} owners · {detailBuckets.length} chase rows</span>
+        </div>
+      </div>
+    </div>
+    <div className="mt-two">
+      <SimpleTable title="Owner Chase Summary" sub="Click an owner to drill the detail list. Production Coordinator + Department HOD can both appear on the same issue when needed." rows={ownerRows} empty="No owner chase." onRowClick={(r)=>setSelectedOwner(r.Owner)} />
+      <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Owner Chase Detail {selectedOwner ? `— ${selectedOwner}` : "— All Owners"}</h3><div className="mt-panel-sub">Individual owner chase is calculated from issue type, receiving %, and stage owner. Closure follow-up stays with Production Coordinator; Production Manager is escalation/WIP approval only.</div></div><div className="mt-table-wrap"><table className="mt-table"><thead><tr><th>Owner</th><th>Style</th><th>Status</th><th>Stage</th><th>Qty</th><th>%</th><th>Idle</th><th>Action</th></tr></thead><tbody>{detailBuckets.length ? detailBuckets.map((b,idx)=><tr key={`${b.row.id}-${b.type}-${b.ownerName}-${idx}`}><td><b>{b.ownerName}</b></td><td>{b.row.style_no}<div className="mt-small">{b.row.order_no} · {b.row.colour} · {b.row.component}</div></td><td><span className={`mt-chip ${statusClass(b.tone)}`}>{b.status}</span></td><td>{stageLabel(b.stage)}</td><td>{fmt(b.qty)}</td><td>{bucketPct(b.row,b)}%</td><td>{b.idle || 0}d</td><td>{b.action}</td></tr>) : <tr><td colSpan="8" style={{padding:18}}>No chase rows for current filters.</td></tr>}</tbody></table></div></div>
+    </div>
+  </>;
 }
 
 function cumulativeAllowedTotal(row, stage, field){
@@ -733,7 +1039,7 @@ function buildReportSheets(rows, ledger){
       Component: row.component,
       Set_ID: row.set_id || "",
       Photo_URL: row.photo_url || "",
-      Current_Status: rs.status,
+      Current_Status: rs.status, Status_Breakup: statusText(row),
       Current_Owner: rs.owner,
       Open_Qty: rs.qty,
       Idle_Days: rs.idle,
@@ -817,6 +1123,74 @@ function buildReportSheets(rows, ledger){
     ledgerRows,
   };
 }
+function MonthlyComparison({ rows }){
+  const [month,setMonth] = useState(today().slice(0,7));
+  const [buyer,setBuyer] = useState("All");
+  const [focus,setFocus] = useState("all");
+  const [route,setRoute] = useState("all");
+  const [sizeBreak,setSizeBreak] = useState(true);
+  const buyers = ["All", ...uniqueList(rows.map(r=>r.buyer))];
+  const allSizes = allReportSizes(rows);
+  const baseRows = rows.filter(row => (buyer === "All" || row.buyer === buyer) && (route === "all" || routeType(row) === route));
+  const summary = {
+    stitched: baseRows.reduce((a,row)=>a+cellBreakup(row,"stitching").received,0),
+    packed: baseRows.reduce((a,row)=>a+cellBreakup(row,"packing").received,0),
+    dispatched: baseRows.reduce((a,row)=>a+cellBreakup(row,"dispatch").received,0),
+    afterStitch: baseRows.reduce((a,row)=>a+Math.max(0, cellBreakup(row,"stitching").received - cellBreakup(row,"packing").received),0),
+    packedNotDispatch: baseRows.reduce((a,row)=>a+Math.max(0, cellBreakup(row,"packing").received - cellBreakup(row,"dispatch").received),0),
+    reconcile: baseRows.flatMap(issueBuckets).filter(b=>b.type==="reconcile").reduce((a,b)=>a+n(b.qty),0),
+  };
+  const tiles = [
+    { key:"all", label:"All Month Styles", value:baseRows.length, note:"comparison rows" },
+    { key:"stitched", label:"Stitching Receiving", value:summary.stitched, note:"main monthly comparison base" },
+    { key:"after_stitch", label:"Still After Stitching", value:summary.afterStitch, note:"stitched but not packed" },
+    { key:"packed_pending", label:"Packed Not Dispatched", value:summary.packedNotDispatch, note:"dispatch follow-up" },
+    { key:"reconcile", label:"Reconcile", value:summary.reconcile, note:"mismatch / blocked" },
+  ];
+  const filtered = baseRows.filter(row=>{
+    if (focus === "all" || focus === "stitched") return true;
+    if (focus === "after_stitch") return Math.max(0, cellBreakup(row,"stitching").received - cellBreakup(row,"packing").received) > 0;
+    if (focus === "packed_pending") return Math.max(0, cellBreakup(row,"packing").received - cellBreakup(row,"dispatch").received) > 0;
+    if (focus === "reconcile") return issueBuckets(row).some(b=>b.type==="reconcile");
+    return true;
+  });
+  const tableRows = filtered.map(row=>{
+    const rs = rowStatus(row);
+    const sizes = Object.fromEntries(sizeMatrix(row,"stitching","received").map(x=>[x.size,x.qty]));
+    const core = {
+      Month: month,
+      Buyer: row.buyer,
+      Order: row.order_no,
+      Style: row.style_no,
+      Colour: row.colour,
+      Component: row.component,
+      Route: routeType(row),
+      Status: rs.status,
+      Owner: rs.owner,
+    };
+    const sizeCols = sizeBreak ? withHorizontalSizes(row, sizes, allSizes) : {};
+    return {
+      ...core,
+      ...sizeCols,
+      Stitched_Received: cellBreakup(row,"stitching").received,
+      Packed: cellBreakup(row,"packing").received,
+      Dispatched: cellBreakup(row,"dispatch").received,
+      Balance_After_Stitch: Math.max(0, cellBreakup(row,"stitching").received - cellBreakup(row,"packing").received),
+      Packed_Not_Dispatched: Math.max(0, cellBreakup(row,"packing").received - cellBreakup(row,"dispatch").received),
+      Open_Qty: rs.qty,
+      Next_Action: rs.action,
+    };
+  });
+  return <div className="mt-card">
+    <div className="mt-section"><h3 className="mt-panel-title">Monthly Comparison — Stitching Receiving</h3><div className="mt-panel-sub">Separate monthly report tab. Default comparison is against Stitching Receiving for the selected month; every summary tile filters/drills the table below. Future live data will use production_entries.entry_date.</div></div>
+    <div className="mt-section no-print">
+      <div className="mt-filter-row"><span className="mt-toolbar-label">Month</span><input className="mt-input" type="month" value={month} onChange={e=>setMonth(e.target.value)}/><span className="mt-toolbar-label">Buyer</span><select className="mt-select" value={buyer} onChange={e=>setBuyer(e.target.value)}>{buyers.map(b=><option key={b}>{b}</option>)}</select><span className="mt-toolbar-label">Route</span><select className="mt-select" value={route} onChange={e=>setRoute(e.target.value)}><option value="all">All routes</option><option>Plain</option><option>Print</option><option>Embroidery</option><option>Print + Emb</option></select><button className={`mt-btn ${sizeBreak?"primary":"ghost"}`} onClick={()=>setSizeBreak(v=>!v)}><Layers size={14}/>Horizontal sizes</button><span className="mt-page-filter-note">{tableRows.length} rows</span></div>
+      <div className="mt-summary-strip">{tiles.map(t=><button key={t.key} className={`mt-summary-tile ${focus===t.key?"active":""}`} onClick={()=>setFocus(t.key)}><div className="label">{t.label}</div><div className="value">{typeof t.value === "number" && t.key!=="all" ? fmt(t.value) : t.value}</div><div className="mt-small">{t.note}</div></button>)}</div>
+    </div>
+    <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{(tableRows[0] ? Object.keys(tableRows[0]) : ["Note"]).map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{tableRows.length ? tableRows.map((r,i)=><tr key={i}>{Object.keys(tableRows[0]).map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] ?? "")}</td>)}</tr>) : <tr><td style={{padding:18}}>No monthly rows for this filter.</td></tr>}</tbody></table></div>
+  </div>;
+}
+
 function Reports({ rows, ledger }){
   const pack = buildReportSheets(rows, ledger);
   function exportDailyPack(){
@@ -890,9 +1264,9 @@ function PrintableHodSheet({ rows }){
   return <div className="mt-card"><div className="mt-section no-print"><h3 className="mt-panel-title">Printable Department Head WIP</h3><div className="mt-panel-sub">Daily HOD sheet in horizontal size format. One row per style/component; sizes across columns.</div><div style={{marginTop:10}}><select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select> <button className="mt-btn" onClick={()=>window.print()}><Printer size={14}/>Print</button></div></div><div className="mt-section mt-print-sheet"><h3 style={{marginTop:0}}>{stageLabel(dept)} WIP Sheet — {today()}</h3><table className="mt-table" style={{minWidth:980}}><thead><tr><th>Order</th><th>Style</th><th>Colour</th><th>Component</th><th>Status</th>{allSizes.map(size=><th key={size}>{size}</th>)}<th>Total</th><th>Open</th><th>R/A/M</th><th>Idle</th><th>Owner</th><th>Action</th></tr></thead><tbody>{deptRows.map(row=>{ const st=sdata(row,dept); const c=cellBreakup(row,dept); const rs=rowStatus(row); const sizeQty=Object.fromEntries(sizeMatrix(row,dept,"received").map(x=>[x.size,x.qty])); return <tr key={row.id}><td>{row.order_no}</td><td><b>{row.style_no}</b></td><td>{row.colour}</td><td>{row.component}</td><td>{rs.status}</td>{allSizes.map(size=><td key={size}>{fmt(sizeQty[size] || 0)}</td>)}<td><b>{fmt(c.received)}</b></td><td>{fmt(c.open)}</td><td>{fmt(c.ram)}</td><td>{n(st.idle)}d</td><td>{rs.owner}</td><td>{rs.action}</td></tr>; })}</tbody></table></div></div>;
 }
 
-function SimpleTable({ title, sub, rows, empty }){
+function SimpleTable({ title, sub, rows, empty, onRowClick }){
   const cols = rows.length ? Object.keys(rows[0]) : [];
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{sub}</div></div><div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{rows.length ? rows.map((r,i)=><tr key={i}>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] ?? "")}</td>)}</tr>) : <tr><td style={{padding:18}}>{empty}</td></tr>}</tbody></table></div></div>;
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{sub}</div></div><div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{rows.length ? rows.map((r,i)=><tr key={i} className={onRowClick ? "drillable" : ""} onClick={()=>onRowClick?.(r)}>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] ?? "")}</td>)}</tr>) : <tr><td style={{padding:18}}>{empty}</td></tr>}</tbody></table></div></div>;
 }
 
 function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose }){
@@ -936,7 +1310,23 @@ function PhotoManager({ rows, setRows }){
 }
 
 function SettingsView(){
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included in V5 logic</b><ul className="mt-small"><li>Option A cumulative size-wise entry</li><li>Print / embroidery route toggles</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Issued-not-received owner = receiving HOD</li><li>95% tail balance adds Production Coordinator</li><li>Individual owner chase</li><li>Style closure owner = Production Coordinator; Production Manager only WIP/escalation</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Editable WIP cells create entries instead of raw overwrite</li><li>Entry date / backdated audit logic with reason and approval status</li><li>Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-info"><Lock size={12}/> Future RLS</span> <span className="mt-small">Keep this as a development app. We tighten RLS before real users and live factory data.</span></div></div>;
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included in V5 logic</b><ul className="mt-small"><li>Option A cumulative size-wise entry</li><li>Print / embroidery route toggles</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Issued-not-received owner = receiving HOD</li><li>95% tail balance adds Production Coordinator</li><li>Individual owner chase: Production Coordinator + Department HOD shown together for open WIP</li><li>Style closure owner = Production Coordinator; Production Manager only WIP/escalation</li><li>WIP table page-specific filters, sorting, quick status buckets, and size-breakup toggle</li><li>Monthly comparison tab against Stitching Receiving with drillable summary filters</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Editable WIP cells create entries instead of raw overwrite</li><li>Entry date / backdated audit logic with reason and approval status</li><li>Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-info"><Lock size={12}/> Future RLS</span> <span className="mt-small">Keep this as a development app. We tighten RLS before real users and live factory data.</span></div></div>;
+}
+
+
+function PageFilters({ tab, query, setQuery, buyer, setBuyer, buyers, visibleRows }){
+  if (["wip","entry","owners","monthly"].includes(tab)) return null;
+  const title = tab === "dashboard" ? "Dashboard Filters" : tab === "routes" ? "Route Page Filters" : tab === "photos" ? "Photo Page Filters" : tab === "reports" ? "Report Scope" : "Page Filters";
+  const placeholder = tab === "photos" ? "Search style / photo / buyer" : "Search style / order / buyer / colour";
+  return <div className="mt-toolbar no-print" style={{marginBottom:12}}>
+    <span className="mt-toolbar-label">{title}</span>
+    <Search size={14}/>
+    <input className="mt-input" value={query} onChange={e=>setQuery(e.target.value)} placeholder={placeholder} style={{minWidth:260}}/>
+    <select className="mt-select" value={buyer} onChange={e=>setBuyer(e.target.value)}>{buyers.map(b=><option key={b}>{b}</option>)}</select>
+    {tab === "dashboard" && <span className="mt-chip mt-info">All cards drillable</span>}
+    {tab === "reports" && <span className="mt-chip mt-info">Horizontal Excel exports</span>}
+    <span className="mt-chip mt-muted">{visibleRows.length} rows</span>
+  </div>;
 }
 
 export default function App(){
@@ -946,6 +1336,7 @@ export default function App(){
   const [query,setQuery] = useState("");
   const [buyer,setBuyer] = useState("All");
   const [drawer,setDrawer] = useState(null);
+  const [dashboardDrill,setDashboardDrill] = useState(null);
   const [notice,setNotice] = useState(null);
   const buyers = ["All", ...Array.from(new Set(rows.map(r=>r.buyer).filter(Boolean))).sort()];
   const visibleRows = useMemo(()=>rows.filter(r=>{
@@ -983,21 +1374,23 @@ export default function App(){
     ]);
   }
   const tabs = [
-    ["dashboard","Dashboard",BarChart3], ["wip","Live WIP",Warehouse], ["entry","DPR Entry",ClipboardList], ["owners","Who to Chase",Users], ["routes","Routes",Filter], ["photos","Photos",ImageIcon], ["reports","Reports",FileSpreadsheet], ["settings","Settings",Settings]
+    ["dashboard","Dashboard",BarChart3], ["wip","Live WIP",Warehouse], ["entry","DPR Entry",ClipboardList], ["owners","Who to Chase",Users], ["monthly","Monthly",FileSpreadsheet], ["routes","Routes",Filter], ["photos","Photos",ImageIcon], ["reports","Reports",FileSpreadsheet], ["settings","Settings",Settings]
   ];
-  return <div className="mt-app" data-theme="paper"><style>{FONT + CSS}</style><div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>V5.2</span></div><div className="mt-sub">Excel-speed cumulative size-wise entry · editable WIP cells · backdated audit · owner chase · horizontal reports · Supabase-ready.</div></div><div className="mt-actions"><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase}><Upload size={14}/>Seed Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
+  return <div className="mt-app" data-theme="paper"><style>{FONT + CSS}</style><div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>V5.6</span></div><div className="mt-sub">Excel-speed cumulative size-wise entry · editable WIP cells · backdated audit · page-specific filters · WIP sheet filters · monthly comparison · owner chase · horizontal reports · Supabase-ready.</div></div><div className="mt-actions"><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase}><Upload size={14}/>Seed Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
-      <div className="mt-toolbar no-print" style={{marginBottom:12}}><span className="mt-toolbar-label">Filters</span><Search size={14}/><input className="mt-input" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search style / order / buyer / colour" style={{minWidth:260}}/><select className="mt-select" value={buyer} onChange={e=>setBuyer(e.target.value)}>{buyers.map(b=><option key={b}>{b}</option>)}</select><span className="mt-chip mt-muted">{visibleRows.length} rows</span></div>
-      {tab === "dashboard" && <Dashboard rows={visibleRows}/>} 
+      <PageFilters tab={tab} query={query} setQuery={setQuery} buyer={buyer} setBuyer={setBuyer} buyers={buyers} visibleRows={visibleRows}/>
+      {tab === "dashboard" && <Dashboard rows={visibleRows} onDrill={setDashboardDrill}/>} 
       {tab === "wip" && <WipStatus rows={visibleRows} onOpen={(row,stage)=>setDrawer({row,stage})}/>} 
       {tab === "entry" && <QuickEntry rows={visibleRows} setRows={setRows} ledger={ledger} setLedger={setLedger}/>} 
       {tab === "owners" && <WhoToChase rows={visibleRows}/>} 
+      {tab === "monthly" && <MonthlyComparison rows={visibleRows}/>} 
       {tab === "routes" && <ProcessRoutes rows={visibleRows} setRows={setRows}/>} 
       {tab === "photos" && <PhotoManager rows={visibleRows} setRows={setRows}/>} 
       {tab === "reports" && <Reports rows={visibleRows} ledger={ledger}/>} 
       {tab === "settings" && <SettingsView/>}
     </div>
     {drawer && <DetailDrawer row={drawer.row} rows={rows} setRows={setRows} ledger={ledger} setLedger={setLedger} stageKey={drawer.stage} onClose={()=>setDrawer(null)}/>} 
+    {dashboardDrill && <DashboardDrillDrawer drill={dashboardDrill} rows={visibleRows} onClose={()=>setDashboardDrill(null)}/>} 
   </div>;
 }
