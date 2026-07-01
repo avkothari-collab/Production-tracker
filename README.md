@@ -1,4 +1,4 @@
-# Production DPR & WIP Control
+# Production DPR & WIP Control — V4
 
 Separate Vercel-ready React app for the Production module, designed to later plug into the bigger ERP next to Merch Tracker.
 
@@ -6,49 +6,50 @@ Separate Vercel-ready React app for the Production module, designed to later plu
 
 - Merch Tracker style paper UI
 - Supabase client setup
-- Supabase SQL schema and RLS development policies
-- Dashboard
-- Live WIP Status
-- DPR Entry ledger screen
-- Issued / Not Received
-- Reconcile Center
-- Department Aging
-- Closure Control
-- Reports / Excel export
-- Future ERP reference fields: production_file_id, bom_id, shared order/style/colour/component keys
-
-## Install
-
-```bash
-npm install
-npm run dev
-```
+- Style-wise print / embroidery route toggles
+- Live WIP with simple department cells: Done / Open / R-A-M
+- Editable WIP cell: click department cell, edit size-wise cumulative values, save as ledger entry
+- Horizontal size-wise DPR quick entry
+- Entry date selector and backdated-entry audit
+- Backdated reason required for older entries
+- Downstream total-jump block after cutting
+- Cutting over allowed with warning/tolerance
+- Owner chase with 95% receiving rule adding Production Coordinator
+- Daily printable department-head WIP sheet
+- Excel exports, with xlsx loaded only when export is clicked
+- Style photo URL support with lazy-loaded thumbnails for slow internet
+- ERP-ready reference fields for future Style Master / BOM / Procurement / Merch Tracker linking
 
 ## Supabase setup
 
-1. Create a Supabase project or use the ERP Supabase project.
-2. Open Supabase SQL Editor.
-3. Run `supabase/production_schema.sql`.
-4. Copy `.env.example` to `.env.local`.
-5. Add:
+If this is a fresh project, run:
 
-```bash
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key
+```sql
+supabase/production_schema.sql
 ```
 
-6. Restart dev server.
-7. In the app, click **Seed Supabase** to save the current demo production rows.
+If you already ran V3, run only:
 
-## Vercel deploy
+```sql
+supabase/production_schema_patch_v4_backdated_audit.sql
+```
 
-1. Push this folder to GitHub.
-2. Import the GitHub repo into Vercel.
-3. Add environment variables in Vercel Project Settings:
-   - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
-4. Deploy.
+This patch keeps all objects in `production_*` tables and does not touch Merch Tracker tables.
 
-## Current limitation
+## Backdated ERP rule
 
-This is v1 shell + Supabase foundation. It does not yet import the full Excel workbook automatically. The SQL and UI are structured so we can map your Production Master Excel into `production_orders` and `production_entries` next.
+Every transaction has two dates:
+
+- `entry_date` = operational date used for WIP/stock/production logic
+- `created_at` = actual system audit timestamp
+
+Future procurement/stores/production stock logic must validate available quantity as of `entry_date`, not today's balance, then recalculate forward.
+
+## Vercel env variables
+
+Use the same Supabase project as Merch Tracker, but separate production tables:
+
+```env
+VITE_SUPABASE_URL=your_project_url
+VITE_SUPABASE_ANON_KEY=your_publishable_key
+```
