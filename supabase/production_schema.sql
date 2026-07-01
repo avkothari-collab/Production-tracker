@@ -1,6 +1,12 @@
--- Production DPR & WIP Control schema
--- Run in Supabase SQL Editor. Development-safe v1: authenticated users can read/write.
--- Later we tighten RLS by production permission role and department.
+-- ============================================================
+-- PRODUCTION DPR & WIP CONTROL — SCHEMA V3
+-- For: same Supabase project as Merch Tracker
+-- Scope: creates only production_* tables + production indexes/policies
+-- Safe to rerun: uses create table/index if not exists and drops only production dev policies/triggers
+-- Note: this is development RLS; tighten before real users/business data.
+-- V3 adds style photo URL support and keeps production_* tables separate from Merch Tracker.
+-- ============================================================
+
 
 create extension if not exists pgcrypto;
 
@@ -10,6 +16,8 @@ create table if not exists public.production_orders (
   style_no text not null,
   buyer text,
   brand text,
+  photo_url text,
+  photo_thumb_url text,
   colour text not null default '',
   component text not null default '',
   set_id text,
@@ -32,6 +40,11 @@ create table if not exists public.production_orders (
   updated_at timestamptz not null default now(),
   unique(order_no, style_no, colour, component)
 );
+
+
+-- Safe upgrade columns for projects that already ran V1/V2 schema.
+alter table public.production_orders add column if not exists photo_url text;
+alter table public.production_orders add column if not exists photo_thumb_url text;
 
 create table if not exists public.production_order_sizes (
   id uuid primary key default gen_random_uuid(),
@@ -97,8 +110,7 @@ create table if not exists public.production_daily_plan (
   plan_source text default 'weekly_rolling',
   remarks text,
   created_by uuid references auth.users(id) on delete set null,
-  created_at timestamptz not null default now(),
-  unique(plan_date, order_no, style_no, colour, component, stage, coalesce(line_no,''))
+  created_at timestamptz not null default now()
 );
 
 create table if not exists public.production_department_closure (
@@ -201,6 +213,8 @@ create index if not exists idx_production_entries_key on public.production_entri
 create index if not exists idx_production_entries_date_stage on public.production_entries(entry_date, stage, entry_type);
 create index if not exists idx_production_closure_key on public.production_department_closure(order_no, style_no, colour, component, stage);
 create index if not exists idx_production_challans_key on public.production_challans(order_no, style_no, colour, component);
+create unique index if not exists idx_production_daily_plan_unique
+  on public.production_daily_plan(plan_date, order_no, style_no, colour, component, stage, (coalesce(line_no, '')));
 
 -- Development RLS. Use authenticated login. Tighten later for role/department access.
 alter table public.production_orders enable row level security;
