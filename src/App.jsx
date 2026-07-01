@@ -183,13 +183,18 @@ function entryTypeForField(field){ return field === "received" ? "receive" : fie
 function stageLabel(k){ return STAGE_BY_KEY[k]?.label || k; }
 function stageOwner(k){ return STAGE_BY_KEY[k]?.owner || "Production Owner"; }
 function sizesFor(row){ return SIZE_SETS[row.size_set] || SIZE_SETS.alpha; }
-function routeFor(row){
-  if (Array.isArray(row.route) && row.route.length) return row.route;
+function buildRouteFromToggles(row){
   const route = ["cutting"];
-  if (row.print_required) route.push("printing");
-  if (row.embroidery_required) route.push("embroidery");
+  if (!!row.print_required) route.push("printing");
+  if (!!row.embroidery_required) route.push("embroidery");
   route.push("stitching","checking","iron","packing","dispatch");
   return route;
+}
+function routeFor(row){
+  // Route toggles must always control the active route.
+  // Earlier V5 stored `route` on each row, so routeFor returned that old cached array
+  // and Print/Emb buttons looked changed but the route/WIP columns did not update.
+  return buildRouteFromToggles(row || {});
 }
 function blankStage(){ return { received:0, output:0, issued:0, reject:0, alter:0, missing:0, party:"", idle:0 }; }
 function sdata(row, key){ return { ...blankStage(), ...(row.stages?.[key] || {}) }; }
@@ -980,7 +985,7 @@ export default function App(){
   const tabs = [
     ["dashboard","Dashboard",BarChart3], ["wip","Live WIP",Warehouse], ["entry","DPR Entry",ClipboardList], ["owners","Who to Chase",Users], ["routes","Routes",Filter], ["photos","Photos",ImageIcon], ["reports","Reports",FileSpreadsheet], ["settings","Settings",Settings]
   ];
-  return <div className="mt-app" data-theme="paper"><style>{FONT + CSS}</style><div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>V5.1</span></div><div className="mt-sub">Excel-speed cumulative size-wise entry · editable WIP cells · backdated audit · owner chase · horizontal reports · Supabase-ready.</div></div><div className="mt-actions"><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase}><Upload size={14}/>Seed Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
+  return <div className="mt-app" data-theme="paper"><style>{FONT + CSS}</style><div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>V5.2</span></div><div className="mt-sub">Excel-speed cumulative size-wise entry · editable WIP cells · backdated audit · owner chase · horizontal reports · Supabase-ready.</div></div><div className="mt-actions"><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase}><Upload size={14}/>Seed Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
       <div className="mt-toolbar no-print" style={{marginBottom:12}}><span className="mt-toolbar-label">Filters</span><Search size={14}/><input className="mt-input" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search style / order / buyer / colour" style={{minWidth:260}}/><select className="mt-select" value={buyer} onChange={e=>setBuyer(e.target.value)}>{buyers.map(b=><option key={b}>{b}</option>)}</select><span className="mt-chip mt-muted">{visibleRows.length} rows</span></div>
