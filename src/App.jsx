@@ -1153,6 +1153,301 @@ function StageCell({ row, stageKey, onOpen }){
   </td>;
 }
 
+
+
+// V7.5.8 restored shared report/drilldown helpers.
+// These were accidentally dropped during the open-first sheet refactor. Keeping them
+// together avoids hidden runtime ReferenceErrors in dashboards/reports/monthly tabs.
+function sheetCell(row, stageKey){
+  const c = cellBreakup(row, stageKey);
+  if (c.skipped) return "SKIP";
+  const suffix = c.extra ? ` / +${fmt(c.extra)}` : "";
+  return `${fmt(c.received)} / ${fmt(c.open)} / ${fmt(c.ram)}R${suffix}`;
+}
+function allReportSizes(rows){
+  const preferred = ["XS","S","M","L","XL","XXL","2-3Y","3-4Y","4-5Y","5-6Y","7-8Y","9-10Y","30","32","34","36","38"];
+  const seen = new Set((rows || []).flatMap(sizesFor));
+  return preferred.filter(s => seen.has(s)).concat(Array.from(seen).filter(s => !preferred.includes(s)).sort());
+}
+function withHorizontalSizes(row, qtyBySize, allSizes){
+  return Object.fromEntries((allSizes || []).map(size => [size, n(qtyBySize?.[size]) || 0]));
+}
+function actualSizeSource(row, stageKey, field){
+  return !!row?.size_stage?.[stageKey]?.[field];
+}
+function sizeQtyMap(row, stageKey, field){
+  return Object.fromEntries(sizeMatrix(row, stageKey, field).map(x => [x.size, n(x.qty)]));
+}
+function addSizeMaps(...maps){
+  const out = {};
+  maps.forEach(map => Object.entries(map || {}).forEach(([k,v]) => { out[k] = n(out[k]) + n(v); }));
+  return out;
+}
+function subtractSizeMaps(a, b){
+  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
+  const out = {};
+  keys.forEach(k => { out[k] = Math.max(0, n(a?.[k]) - n(b?.[k])); });
+  return out;
+}
+function sizeMapTotal(map){ return Object.values(map || {}).reduce((a,v)=>a+n(v),0); }
+function sizeMapForBucket(row, bucket){
+  const stage = bucket.stage;
+  const route = routeFor(row);
+  const idx = route.indexOf(stage);
+  let map = {};
+  if (bucket.type === "completed_not_issued") {
+    map = subtractSizeMaps(sizeQtyMap(row, stage, "output"), sizeQtyMap(row, stage, "issued"));
+  } else if (bucket.type === "received_not_processed") {
+    const feedMap = stageFeedBySize(row, stage);
+    const accounted = addSizeMaps(sizeQtyMap(row, stage, "output"), sizeQtyMap(row, stage, "reject"), sizeQtyMap(row, stage, "alter"), sizeQtyMap(row, stage, "missing"));
+    map = subtractSizeMaps(feedMap, accounted);
+  } else if (bucket.type === "ram") {
+    map = addSizeMaps(sizeQtyMap(row, stage, "reject"), sizeQtyMap(row, stage, "alter"), sizeQtyMap(row, stage, "missing"));
+  } else if (bucket.type === "reconcile") {
+    const feed = idx > 0 ? stageFeedBySize(row, stage) : distribute(n(row.order_qty), sizesFor(row));
+    const accounted = addSizeMaps(sizeQtyMap(row, stage, "output"), sizeQtyMap(row, stage, "reject"), sizeQtyMap(row, stage, "alter"), sizeQtyMap(row, stage, "missing"));
+    map = subtractSizeMaps(accounted, feed);
+  } else if (bucket.type === "extra_cut") {
+    map = subtractSizeMaps(sizeQtyMap(row, "cutting", "output"), distribute(n(row.order_qty), sizesFor(row)));
+  } else if (bucket.type === "dispatch_hold") {
+    map = distribute(n(bucket.qty), sizesFor(row));
+  }
+  const total = sizeMapTotal(map);
+  if (!total && n(bucket.qty) > 0) map = distribute(n(bucket.qty), sizesFor(row));
+  return map;
+}
+function sizeTruthLabel(row, bucket){
+  const stage = bucket?.stage;
+  if (!stage) return "—";
+  const fields = bucket.type === "ram" ? ["reject","alter","missing"]
+    : bucket.type === "completed_not_issued" ? ["output","issued"]
+    : bucket.type === "received_not_processed" ? ["output","reject","alter","missing"]
+    : ["output","issued","reject","alter","missing"];
+  return fields.some(f => actualSizeSource(row, stage, f)) ? "Actual size ledger" : "Derived until size entries exist";
+}
+function horizontalStageRow(row, stageKey, allSizes){
+  const c = cellBreakup(row, stageKey);
+  const st = sdata(row, stageKey);
+  const field = stageKey === "cutting" ? "output" : "output";
+  const sizeQty = Object.fromEntries(sizeMatrix(row, stageKey, field).map(x => [x.size, x.qty]));
+  const rs = rowStatus(row);
+  return {
+    Order: row.order_no,
+    Style: row.style_no,
+    Buyer: row.buyer,
+    Colour: row.colour,
+    Component: row.component,
+    Set_ID: row.set_id || "",
+    Dept_Stage: stageLabel(stageKey),
+    Status: rs.status,
+    Owner: rs.owner,
+    Action: rs.action,
+    ...withHorizontalSizes(row, sizeQty, allSizes),
+    Total_Done_Output: n(st.output),
+    Issued_Forward: n(st.issued),
+    Open: c.open,
+    Reject: n(st.reject),
+    Alter: n(st.alter),
+    Missing: n(st.missing),
+    RAM_Total: c.ram,
+    Idle_Days: n(st.idle),
+    Feed_Qty: stageKey === "cutting" ? n(row.order_qty) : stageFeed(row, stageKey),
+    Cell_View: sheetCell(row, stageKey),
+  };
+}
+function horizontalBucketRow(row, bucket, allSizes){
+  const qtyBySize = sizeMapForBucket(row, bucket);
+  return {
+    Dept_Stage: stageLabel(bucket.stage),
+    Issue_Type: bucketTypeLabel(bucket.type),
+    Status: bucket.status,
+    Order: row.order_no,
+    Style: row.style_no,
+    Buyer: row.buyer,
+    Colour: row.colour,
+    Component: row.component,
+    Set_ID: row.set_id || "",
+    ...withHorizontalSizes(row, qtyBySize, allSizes),
+    Total_Qty: n(bucket.qty),
+    Percent: `${bucketPct(row,bucket)}%`,
+    Idle_Days: n(bucket.idle),
+    Idle_Bucket: agingBucket(n(bucket.idle)),
+    Owner: bucket.owner,
+    Support: bucket.support || "",
+    Action: bucket.action,
+    Size_Source: sizeTruthLabel(row, bucket),
+  };
+}
+function findRowForLedger(rows, entry){
+  return (rows || []).find(row =>
+    String(row.order_no || "") === String(entry.order_no || entry.order || "") &&
+    String(row.style_no || "") === String(entry.style_no || entry.style || "") &&
+    String(row.colour || "") === String(entry.colour || "") &&
+    String(row.component || "") === String(entry.component || "")
+  ) || null;
+}
+function ledgerHorizontalRows(rows, ledgerRows, start, end){
+  const periodRows = (ledgerRows || []).filter(x => inDateRange(x.entry_date || x.entryDate || x.date, start, end));
+  if (!periodRows.length) {
+    return [{ Message:`No production activity entries found for ${start === end ? start : `${start} to ${end}`}. Daily/weekly/monthly dashboards use activity entry_date, not when the entry was typed.` }];
+  }
+  const allSizes = allReportSizes(rows);
+  const map = new Map();
+  periodRows.forEach(entry => {
+    const row = findRowForLedger(rows, entry) || {};
+    const key = [entry.entry_date || entry.entryDate || entry.date, entry.stage, entry.entry_type || entry.entryType || "", entry.order_no || entry.order, entry.style_no || entry.style, entry.colour, entry.component, entry.entry_source || entry.source || ""].join("|");
+    const old = map.get(key) || {
+      Entry_Date: entry.entry_date || entry.entryDate || entry.date || "",
+      Stage: stageLabel(entry.stage),
+      Entry_Type: entry.entry_type || entry.entryType || "",
+      Order: entry.order_no || entry.order || row.order_no || "",
+      Style: entry.style_no || entry.style || row.style_no || "",
+      Buyer: entry.buyer || row.buyer || "",
+      Colour: entry.colour || row.colour || "",
+      Component: entry.component || row.component || "",
+      Source: entry.entry_source || entry.source || "",
+      Backdated: entry.is_backdated || entry.isBackdated ? "Yes" : "No",
+      Reason: entry.backdate_reason || entry.reason || "",
+      Approval: entry.approval_status || entry.approval || "",
+      Created_At: entry.created_at || entry.createdAt || "",
+      _sizes:{},
+      Total_Qty:0,
+    };
+    const size = entry.size || "NO_SIZE";
+    old._sizes[size] = n(old._sizes[size]) + n(entry.qty ?? entry.delta);
+    old.Total_Qty += n(entry.qty ?? entry.delta);
+    map.set(key, old);
+  });
+  return Array.from(map.values()).map(r => {
+    const sizeCols = withHorizontalSizes({}, r._sizes, allSizes);
+    const {_sizes, ...core} = r;
+    return { ...core, ...sizeCols, Total_Qty: core.Total_Qty };
+  }).sort((a,b)=>String(a.Entry_Date).localeCompare(String(b.Entry_Date)) || String(a.Stage).localeCompare(String(b.Stage)) || String(a.Style).localeCompare(String(b.Style)));
+}
+function buildReportSheets(rows, ledger){
+  const allSizes = allReportSizes(rows);
+  const allBuckets = (rows || []).flatMap(row => issueBuckets(row).map(bucket => ({ row, bucket })));
+  const activeStageRows = STAGES.flatMap(stage => (rows || []).filter(row => routeFor(row).includes(stage.key)).map(row => horizontalStageRow(row, stage.key, allSizes)));
+  const deptSheets = STAGES.map(stage => ({
+    name: `${stage.short} WIP`,
+    rows: (rows || []).filter(row => routeFor(row).includes(stage.key)).map(row => horizontalStageRow(row, stage.key, allSizes)),
+  }));
+  const factorySummary = STAGES.map(stage => {
+    const stageRows = (rows || []).filter(row => routeFor(row).includes(stage.key));
+    const done = stageRows.reduce((a,row)=>a+n(sdata(row, stage.key).output),0);
+    const issued = stageRows.reduce((a,row)=>a+n(sdata(row, stage.key).issued),0);
+    const open = stageRows.reduce((a,row)=>a+cellBreakup(row, stage.key).open,0);
+    const ram = stageRows.reduce((a,row)=>a+cellBreakup(row, stage.key).ram,0);
+    const reconcile = stageRows.reduce((a,row)=>a+Math.max(0, cellBreakup(row, stage.key).extra),0);
+    return { Dept: stage.label, Styles: stageRows.length, Done_Output: done, Issued_Forward: issued, Open: open, RAM_Total: ram, Reconcile_Over: reconcile, Main_Owner: stage.owner };
+  });
+  const wipStatus = (rows || []).map(row => {
+    const rs = rowStatus(row);
+    const stageCols = Object.fromEntries(STAGES.map(stage => [stage.short, routeFor(row).includes(stage.key) ? sheetCell(row, stage.key) : "SKIP"]));
+    return {
+      Order: row.order_no,
+      Style: row.style_no,
+      Buyer: row.buyer,
+      Colour: row.colour,
+      Component: row.component,
+      Set_ID: row.set_id || "",
+      Photo_URL: row.photo_url || "",
+      Current_Status: rs.status,
+      Status_Breakup: statusText(row),
+      Current_Owner: rs.owner,
+      Open_Qty: rs.qty,
+      Idle_Days: rs.idle,
+      Next_Action: rs.action,
+      Route: routeFor(row).map(stageLabel).join(" > "),
+      ...stageCols,
+    };
+  });
+  const bucketSheet = (type) => allBuckets.filter(x => x.bucket.type === type).map(x => horizontalBucketRow(x.row, x.bucket, allSizes));
+  const ramRows = allBuckets.filter(x => x.bucket.type === "ram").map(x => horizontalBucketRow(x.row, x.bucket, allSizes));
+  const ownerRows = allBuckets.filter(x => x.bucket.type !== "extra_cut").map(x => horizontalBucketRow(x.row, x.bucket, allSizes));
+  const processRows = STAGES.filter(s => ["printing","embroidery"].includes(s.key)).flatMap(stage => (rows || []).filter(row => routeFor(row).includes(stage.key)).map(row => horizontalStageRow(row, stage.key, allSizes)));
+  const partyRows = STAGES.flatMap(stage => (rows || []).filter(row => routeFor(row).includes(stage.key) && sdata(row, stage.key).party).map(row => ({
+    Party: sdata(row, stage.key).party,
+    Process: stage.label,
+    ...horizontalStageRow(row, stage.key, allSizes),
+  })));
+  const dispatchRows = (rows || []).map(row => horizontalStageRow(row, "dispatch", allSizes));
+  const monthlyRows = (rows || []).map(row => {
+    const rs = rowStatus(row);
+    return {
+      Month: today().slice(0,7),
+      Buyer: row.buyer,
+      Order: row.order_no,
+      Style: row.style_no,
+      Colour: row.colour,
+      Component: row.component,
+      ...withHorizontalSizes(row, Object.fromEntries(sizeMatrix(row, "stitching", "output").map(x=>[x.size,x.qty])), allSizes),
+      Stitched_Total: n(sdata(row,"stitching").output),
+      Packed_Total: n(sdata(row,"packing").output),
+      Dispatched_Total: n(sdata(row,"dispatch").output),
+      Current_Status: rs.status,
+      Owner: rs.owner,
+      Open_Qty: rs.qty,
+    };
+  });
+  const ledgerRows = (ledger || []).map(x => ({
+    Entry_Date: x.entry_date || x.entryDate || "",
+    Created_At: x.created_at || x.createdAt || "",
+    Source: x.source || x.entry_source || "",
+    Order: x.order_no || x.order || "",
+    Style: x.style_no || x.style || "",
+    Colour: x.colour || "",
+    Component: x.component || "",
+    Stage: x.stage || "",
+    Size: x.size || "",
+    Old_Qty: x.old_qty ?? x.oldQty ?? "",
+    New_Qty: x.new_qty ?? x.newQty ?? "",
+    Delta: x.qty ?? x.delta ?? "",
+    Backdated: x.is_backdated ?? x.isBackdated ?? "",
+    Reason: x.backdate_reason || x.reason || "",
+    Approval: x.approval_status || x.approval || "",
+  }));
+  return {
+    allSizes,
+    factorySummary,
+    wipStatus,
+    activeStageRows,
+    deptSheets,
+    completedNotIssued: bucketSheet("completed_not_issued"),
+    receivedNotProcessed: bucketSheet("received_not_processed"),
+    reconcile: bucketSheet("reconcile"),
+    dispatchHold: bucketSheet("dispatch_hold"),
+    ramRows,
+    ownerRows,
+    lineEfficiencyRows: lineEfficiencyRows(rows, ledger),
+    bottleneckRows: flowBottleneckRows(rows, ledger),
+    agingRows: agingStuckRows(rows),
+    qualityRows: qualityLossRows(rows),
+    processRows,
+    partyRows,
+    closureRows: (rows || []).map(row => {
+      const rs = rowStatus(row);
+      return { Order:row.order_no, Style:row.style_no, Buyer:row.buyer, Colour:row.colour, Component:row.component, Status:rs.status, Closure_Owner:"Production Coordinator + Dept HOD", WIP_Owner:rs.owner, Open_Qty:rs.qty, Can_Close:rs.qty ? "No" : "Yes", Action: rs.qty ? `${rs.action} · Coordinator to close/follow up style` : "Coordinator can verify and close" };
+    }),
+    dispatchRows,
+    monthlyRows,
+    ledgerRows,
+  };
+}
+function ProcessRoutes({ rows, setRows }){
+  function toggle(rowId, key){
+    setRows(prev=>prev.map(r=>{
+      if (r.id !== rowId) return r;
+      const next = { ...r, [key]:!r[key] };
+      next.route = routeFor(next);
+      next.stages = { ...next.stages };
+      next.route.forEach(k=>{ if(!next.stages[k]) next.stages[k]=blankStage(); });
+      return next;
+    }));
+  }
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Style-wise Print / Embroidery Route Toggles</h3><div className="mt-panel-sub">Optional process stages. Validation follows the active route: Cutting → optional Print/Emb → Stitching → Checking → Packing → Dispatch.</div></div><div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style</th><th>Print Required</th><th>Embroidery Required</th><th>Active Route</th><th>Rule</th></tr></thead><tbody>{(rows||[]).map(row=><tr key={row.id}><td className="mt-sticky"><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.colour} · {row.component}</div></td><td><button className={`mt-btn ${row.print_required?"primary":"ghost"}`} onClick={()=>toggle(row.id,"print_required")}>{row.print_required?"Print ON":"Print OFF"}</button></td><td><button className={`mt-btn ${row.embroidery_required?"primary":"ghost"}`} onClick={()=>toggle(row.id,"embroidery_required")}>{row.embroidery_required?"Emb ON":"Emb OFF"}</button></td><td>{routeFor(row).map(k=><span className="mt-chip mt-muted" key={k} style={{marginRight:4}}>{STAGE_BY_KEY[k]?.short || k}</span>)}</td><td>Next stage checks use the previous active route stage.</td></tr>)}</tbody></table></div></div>;
+}
+
 function bucketRowsForDrill(rows, predicate){
   const allSizes = allReportSizes(rows);
   return rows.flatMap(row => issueBuckets(row).filter(predicate).map(bucket => horizontalBucketRow(row, bucket, allSizes)));
@@ -1202,6 +1497,38 @@ function orderSummaryRows(rows){
   });
   return Array.from(map.values()).map(x=>({ ...x, Oldest_Idle:`${x.Oldest_Idle}d` })).sort((a,b)=>n(b.Reconcile)-n(a.Reconcile)||n(b.Open_WIP)-n(a.Open_WIP)||String(a.Order).localeCompare(String(b.Order)));
 }
+
+function reconciliationBoardRows(rows){
+  return (rows || []).flatMap(row =>
+    issueBuckets(row)
+      .filter(bucket => bucket.type === "reconcile")
+      .map(bucket => {
+        const stage = bucket.stage;
+        const st = sdata(row, stage);
+        const feed = stage === "cutting" ? n(row.order_qty) : stageFeed(row, stage);
+        return {
+          stage,
+          type: bucket.type,
+          Dept: stageLabel(stage),
+          Order: row.order_no,
+          Style: row.style_no,
+          Buyer: row.buyer,
+          Colour: row.colour,
+          Component: row.component,
+          Reconcile_Type: bucket.status || "Reconcile",
+          Difference: n(bucket.qty),
+          Feed: feed,
+          Output: n(st.output),
+          Issued_Forward: n(st.issued),
+          RAM: loss(st),
+          Owner: bucket.owner || "Production Coordinator + Production Manager",
+          Idle_Days: `${n(bucket.idle)}d`,
+          Action: bucket.action || "Correct upstream entry or create approved adjustment",
+        };
+      })
+  ).sort((a,b)=>n(b.Difference)-n(a.Difference) || String(a.Dept).localeCompare(String(b.Dept)));
+}
+
 function dashboardDrillRows(rows, ledger, drill){
   if (!drill) return [];
   if (drill.kind === "period") return ledgerHorizontalRows(rows, ledger, drill.start, drill.end);
@@ -2333,7 +2660,7 @@ function SettingsView({ onChanged }){
       <div className="mt-toolbar" style={{alignItems:"flex-start"}}><span className="mt-toolbar-label">Stitching line names</span><textarea className="mt-input" style={{minWidth:260, minHeight:110}} value={linesText} onChange={e=>setLinesText(e.target.value)} placeholder={'STF-1\nSTF-2\nSTF-3'} /><button className="mt-btn primary" onClick={saveLines}>Save Lines</button><span className="mt-small">One line per row, or comma separated. Planning uses this list for line-wise stitching plans.</span></div>
     </div>
     <div className="mt-section"><h3 className="mt-panel-title">Bottleneck metric guide</h3><div className="mt-panel-sub">Daily Rate = recent 7-day average output from ledger for that department. Days Cover = queue/open WIP ÷ Daily Rate. Bottleneck Score = Queue WIP + 2×Reconcile Qty + R/A/M Qty, so impossible movements and quality loss rank higher than normal queue.</div></div>
-    <div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included through V7.5.5 logic</b><ul className="mt-small"><li>Size-wise day entry with previous/updated total cross-check</li><li>Print / embroidery route toggles</li><li>Standard route changed to Checking → Packing → Dispatch; Iron removed as a normal department</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Dispatch hold: no dispatch when reconcile exists or R/A/M exceeds configured order %</li><li>Editable stitching line names in Settings used by Planning</li><li>Issued-to-department means accepted/with department; no normal issued-not-received bucket</li><li>Completed-not-issued-forward owner = Production Coordinator + Production Manager</li><li>Individual owner chase: Department HOD owns work-not-completed; Coordinator + Production Manager own completed-not-issued-forward</li><li>Style closure owner = Production Coordinator + Dept HOD; Production Manager handles movement/escalation/approval</li><li>WIP table page-specific filters, sorting, quick status buckets, and size-breakup toggle</li><li>Dashboard uses current-bin WIP logic: once a quantity moves to the next stage, it leaves the previous department bin.</li><li>Dashboard includes daily / 4-4-5 weekly / calendar-month production numbers, department × issue-type board, owner activity breakup, and production meeting focus.</li><li>Department-first dashboard pack: plan-vs-achieved/line efficiency, bottleneck/flow, aging/stuck WIP, quality/loss rate, party/outsource pending.</li><li>Dashboard drilldowns now use dashboard-specific rows, subtotal summaries, real size-stage data where available, and a visible size-source indicator.</li><li>Monthly comparison tab against Stitching Receiving with drillable summary filters</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Open-first WIP sheet modes: Open Control, Order View, Department View, Issue View, and Full Matrix</li><li>Focused WIP cell drawer shows selected department only; DPR entry shows only open styles for selected department/field; entry cells show open, previous, available, new entry, remaining and updated total; reductions/corrections require approval workflow later</li><li>Entry date / backdated audit logic with next-day default, same-day confirmation, reason and approval status</li><li>Live idle recalculation from production ledger where activity exists</li><li>Set convergence: a set packs/ships only min(components); Sets board + WIP chip show packable sets and unmatched pieces</li><li>Backdated entries validate feed as-of the entry date from the ledger; locked (older) backdated entries require reason + explicit manager-approval confirmation and are stamped in the audit ledger</li><li>Single configurable cutting tolerance replaces the old 8%/5%/0% mismatch</li><li>Party/outsource pending is consistent with the WIP open bucket (feed − output − R/A/M); outsourced stages label the with-department bucket as Pending at party</li><li>R/A/M day-entry path and impossible sequence reconcile checks</li><li>Planning tab: stitching line-wise rolling plan, department day-wise plan, department-specific planning pool, manual future plan, changeover remaining-hours formula, plan-vs-achieved style adherence, and Review control room. Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-info"><Lock size={12}/> Future RLS</span> <span className="mt-small">Keep this as a development app. We tighten RLS before real users and live factory data.</span></div></div>;
+    <div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included through V7.5.8 logic</b><ul className="mt-small"><li>Size-wise day entry with previous/updated total cross-check</li><li>Print / embroidery route toggles</li><li>Standard route changed to Checking → Packing → Dispatch; Iron removed as a normal department</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Dispatch hold: no dispatch when reconcile exists or R/A/M exceeds configured order %</li><li>Editable stitching line names in Settings used by Planning</li><li>Issued-to-department means accepted/with department; no normal issued-not-received bucket</li><li>Completed-not-issued-forward owner = Production Coordinator + Production Manager</li><li>Individual owner chase: Department HOD owns work-not-completed; Coordinator + Production Manager own completed-not-issued-forward</li><li>Style closure owner = Production Coordinator + Dept HOD; Production Manager handles movement/escalation/approval</li><li>WIP table page-specific filters, sorting, quick status buckets, and size-breakup toggle</li><li>Dashboard uses current-bin WIP logic: once a quantity moves to the next stage, it leaves the previous department bin.</li><li>Dashboard includes daily / 4-4-5 weekly / calendar-month production numbers, department × issue-type board, owner activity breakup, and production meeting focus.</li><li>Department-first dashboard pack: plan-vs-achieved/line efficiency, bottleneck/flow, aging/stuck WIP, quality/loss rate, party/outsource pending.</li><li>Dashboard drilldowns now use dashboard-specific rows, subtotal summaries, real size-stage data where available, and a visible size-source indicator.</li><li>Monthly comparison tab against Stitching Receiving with drillable summary filters</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Open-first WIP sheet modes: Open Control, Order View, Department View, Issue View, and Full Matrix</li><li>Focused WIP cell drawer shows selected department only; DPR entry shows only open styles for selected department/field; entry cells show open, previous, available, new entry, remaining and updated total; reductions/corrections require approval workflow later</li><li>Entry date / backdated audit logic with next-day default, same-day confirmation, reason and approval status</li><li>Live idle recalculation from production ledger where activity exists</li><li>Set convergence: a set packs/ships only min(components); Sets board + WIP chip show packable sets and unmatched pieces</li><li>Backdated entries validate feed as-of the entry date from the ledger; locked (older) backdated entries require reason + explicit manager-approval confirmation and are stamped in the audit ledger</li><li>Single configurable cutting tolerance replaces the old 8%/5%/0% mismatch</li><li>Party/outsource pending is consistent with the WIP open bucket (feed − output − R/A/M); outsourced stages label the with-department bucket as Pending at party</li><li>R/A/M day-entry path and impossible sequence reconcile checks</li><li>Planning tab: stitching line-wise rolling plan, department day-wise plan, department-specific planning pool, manual future plan, changeover remaining-hours formula, plan-vs-achieved style adherence, and Review control room. Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-info"><Lock size={12}/> Future RLS</span> <span className="mt-small">Keep this as a development app. We tighten RLS before real users and live factory data.</span></div></div>;
 }
 
 function withLiveIdle(rows, ledger=[], referenceDate=today()){
@@ -2428,7 +2755,7 @@ export default function App(){
   const tabs = [
     ["dashboard","Dashboard",BarChart3], ["planning","Planning",ClipboardList], ["wip","Live WIP",Warehouse], ["entry","DPR Entry",ClipboardList], ["review","Review",ShieldCheck], ["owners","Who to Chase",Users], ["monthly","Monthly",FileSpreadsheet], ["routes","Routes",Filter], ["photos","Photos",ImageIcon], ["reports","Reports",FileSpreadsheet], ["settings","Settings",Settings]
   ];
-  return <div className="mt-app" data-theme="paper" data-settings-tick={settingsTick}><style>{FONT + CSS}</style><div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>V7.5.5</span></div><div className="mt-sub">Open-first WIP sheet · safe size-wise day entry · contextual dashboards · planning adherence · closure control · photo thumbnails · audit-table ready.</div></div><div className="mt-actions"><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase}><Upload size={14}/>Seed Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
+  return <div className="mt-app" data-theme="paper" data-settings-tick={settingsTick}><style>{FONT + CSS}</style><div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>V7.5.8</span></div><div className="mt-sub">Open-first WIP sheet · safe size-wise day entry · contextual dashboards · planning adherence · closure control · photo thumbnails · audit-table ready.</div></div><div className="mt-actions"><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase}><Upload size={14}/>Seed Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
       <PageFilters tab={tab} query={query} setQuery={setQuery} buyer={buyer} setBuyer={setBuyer} buyers={buyers} order={order} setOrder={setOrder} orders={orders} visibleRows={visibleRows}/>
