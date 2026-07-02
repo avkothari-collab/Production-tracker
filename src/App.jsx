@@ -167,6 +167,36 @@ table.mt-table { width:100%; border-collapse:separate; border-spacing:0; min-wid
 .mt-summary-tile .value { font-family:'Archivo',sans-serif; font-weight:800; font-size:20px; margin-top:5px; }
 .mt-month-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:12px; }
 
+.mt-context-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-bottom:12px; }
+.mt-context-card { background:var(--surface); border:1px solid var(--line-2); border-radius:14px; padding:12px; min-height:160px; }
+.mt-context-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:8px; }
+.mt-context-title { font-family:'Archivo',sans-serif; font-weight:800; font-size:14px; margin:0; }
+.mt-context-sub { font-size:10px; color:var(--muted-2); line-height:1.35; margin-top:2px; }
+.mt-bar-row { display:grid; grid-template-columns:112px 1fr 68px; align-items:center; gap:8px; margin:7px 0; font-size:10px; }
+.mt-bar-track { height:10px; border-radius:999px; background:#efe9df; border:1px solid var(--line-3); overflow:hidden; }
+.mt-bar-fill { height:100%; background:var(--accent); border-radius:999px; }
+.mt-donut-wrap { display:flex; align-items:center; gap:12px; }
+.mt-donut { width:112px; height:112px; border-radius:50%; border:1px solid var(--line-2); flex:0 0 auto; }
+.mt-legend { display:grid; gap:6px; font-size:10px; min-width:0; flex:1; }
+.mt-legend-row { display:flex; align-items:center; justify-content:space-between; gap:10px; border-bottom:1px dashed var(--line-3); padding-bottom:4px; }
+.mt-dot { width:9px; height:9px; border-radius:50%; display:inline-block; margin-right:5px; flex:0 0 auto; }
+.mt-toggle-row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin:10px 0 12px; }
+.mt-toggle-row .active { background:var(--ink); color:var(--bg); }
+.mt-focus-panel { border:1px solid var(--line-2); border-radius:14px; background:#fffaf1; padding:12px; margin-bottom:12px; }
+.mt-compact-hero { display:grid; grid-template-columns:1.3fr repeat(4,minmax(0,1fr)); gap:10px; align-items:stretch; }
+.mt-context-strip { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+details.mt-fold { border:1px solid var(--line-2); border-radius:14px; background:var(--surface); margin-top:12px; overflow:hidden; }
+details.mt-fold > summary { cursor:pointer; padding:12px 14px; font-family:'Archivo',sans-serif; font-weight:800; background:#fff7ea; }
+details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
+.mt-entry-highlight { border:2px solid var(--accent); background:#fff7ea; border-radius:14px; padding:10px; margin-bottom:10px; }
+.mt-entry-highlight strong { font-family:'Archivo',sans-serif; font-size:14px; }
+.mt-open-pill { border:1px solid var(--line-2); border-radius:10px; background:#fffaf1; padding:7px 9px; display:inline-flex; flex-direction:column; gap:2px; min-width:96px; }
+.mt-open-pill b { font-family:'Archivo',sans-serif; font-size:15px; }
+.mt-open-pill span { font-size:9px; color:var(--muted-2); font-weight:800; text-transform:uppercase; letter-spacing:.25px; }
+@media (max-width:1180px){ .mt-context-grid{grid-template-columns:1fr 1fr;} .mt-compact-hero{grid-template-columns:1fr 1fr;} }
+@media (max-width:720px){ .mt-context-grid,.mt-compact-hero{grid-template-columns:1fr;} .mt-bar-row{grid-template-columns:84px 1fr 54px;} }
+
+
 @media print { .mt-top,.mt-toolbar,.no-print,.mt-tabs { display:none !important; } .mt-page{padding:0;} .mt-card,.mt-table-wrap{border:0; box-shadow:none;} .mt-table th{background:#111 !important; color:#fff !important;} }
 @media (max-width:1180px){ .mt-dash-grid{grid-template-columns:repeat(3,minmax(0,1fr));} .mt-mini-board{grid-template-columns:1fr;} .mt-summary-strip,.mt-month-grid{grid-template-columns:repeat(2,minmax(0,1fr));} }
 @media (max-width:980px){ .mt-grid{grid-template-columns:repeat(2,minmax(0,1fr));} .mt-two{grid-template-columns:1fr;} }
@@ -185,12 +215,11 @@ const STAGES = [
   { key: "embroidery", label: "Embroidery", short: "Emb", owner: "Embroidery HOD" },
   { key: "stitching", label: "Stitching", short: "Stitch", owner: "Stitching HOD" },
   { key: "checking", label: "Checking", short: "Check", owner: "Checking HOD" },
-  { key: "iron", label: "Iron", short: "Iron", owner: "Finishing HOD" },
   { key: "packing", label: "Packing", short: "Pack", owner: "Packing HOD" },
   { key: "dispatch", label: "Dispatch", short: "Disp", owner: "Dispatch HOD" },
 ];
 const STAGE_BY_KEY = Object.fromEntries(STAGES.map((s) => [s.key, s]));
-const BASE_ROUTE = ["cutting", "stitching", "checking", "iron", "packing", "dispatch"];
+const BASE_ROUTE = ["cutting", "stitching", "checking", "packing", "dispatch"];
 
 function n(v){ return Number(v || 0) || 0; }
 function fmt(v){ return n(v).toLocaleString("en-IN"); }
@@ -242,12 +271,110 @@ function entryTypeForField(field){
   if (field === "issued") return "issue";
   if (field === "reject") return "reject";
   if (field === "alter") return "alter_issue";
+  if (field === "alter_clear") return "alter_clear";
   if (field === "missing") return "missing";
   return field;
 }
-function fieldLabel(field){
-  return ({received:"Receive", output:"Completed/output", issued:"Issued forward", reject:"Reject", alter:"Alter", missing:"Missing"})[field] || field;
+const ENTRY_FIELDS = [
+  { key:"output", label:"Completed / Output", help:"Good quantity completed by the selected department." },
+  { key:"issued", label:"Dept Issue Forward", help:"Good quantity handed to the next active department." },
+  { key:"received", label:"Dept Receive", help:"Optional/manual receive entry; normally issue to department already means accepted." },
+  { key:"reject", label:"Rejection", help:"Rejected/lost quantity by size." },
+  { key:"missing", label:"Missing", help:"Missing/untraceable quantity by size." },
+  { key:"alter", label:"Alter Defect", help:"Alter/repair quantity raised by size." },
+  { key:"alter_clear", label:"Alter Clear", help:"Alter quantity repaired and returned to good output." },
+];
+function fieldLabel(field){ return ENTRY_FIELDS.find(f=>f.key===field)?.label || field; }
+function fieldHelp(field){ return ENTRY_FIELDS.find(f=>f.key===field)?.help || ""; }
+
+function stageFeedBySize(row, stageKey){
+  const sizes = sizesFor(row);
+  if (stageKey === "cutting") return distribute(n(row.order_qty), sizes);
+  const route = routeFor(row);
+  const idx = route.indexOf(stageKey);
+  if (idx <= 0) return distribute(n(row.order_qty), sizes);
+  const prevStage = route[idx - 1];
+  return Object.fromEntries(sizeMatrix(row, prevStage, "issued").map(x=>[x.size, n(x.qty)]));
 }
+function stageRamBySize(row, stageKey){
+  const reject = Object.fromEntries(sizeMatrix(row, stageKey, "reject").map(x=>[x.size,n(x.qty)]));
+  const alter = Object.fromEntries(sizeMatrix(row, stageKey, "alter").map(x=>[x.size,n(x.qty)]));
+  const missing = Object.fromEntries(sizeMatrix(row, stageKey, "missing").map(x=>[x.size,n(x.qty)]));
+  return Object.fromEntries(sizesFor(row).map(size=>[size, n(reject[size])+n(alter[size])+n(missing[size])]));
+}
+function entryFieldContext(row, stage, field){
+  const st = sdata(row, stage);
+  const route = routeFor(row);
+  const idx = route.indexOf(stage);
+  const prevStage = idx > 0 ? route[idx-1] : null;
+  const nextStage = idx >= 0 && idx < route.length-1 ? route[idx+1] : null;
+  const feed = stage === "cutting" ? n(row.order_qty) : stageFeed(row, stage);
+  const ram = loss(st);
+  if (field === "received") {
+    const available = stage === "cutting" ? n(row.order_qty) : feed;
+    return {
+      mode:"receive",
+      available, previous:n(st.received), open:Math.max(0, available - n(st.received)), updatedLabel:"Updated received",
+      availableLabel: stage === "cutting" ? "Order quantity" : `Available from ${stageLabel(prevStage)}`,
+      previousLabel:`Already received in ${stageLabel(stage)}`, openLabel:"Open to receive",
+      note: stage === "cutting" ? "Cutting usually uses Completed / Output, not receive." : `Receive balance from ${stageLabel(prevStage)} into ${stageLabel(stage)}.`
+    };
+  }
+  if (field === "issued") {
+    return {
+      mode:"issue", available:n(st.output), previous:n(st.issued), open:Math.max(0, n(st.output) - n(st.issued)), updatedLabel:"Updated issued",
+      availableLabel:`Completed in ${stageLabel(stage)}`, previousLabel:`Already issued ${nextStage ? `to ${stageLabel(nextStage)}` : "forward"}`, openLabel:`Open in ${stageLabel(stage)} / ready to issue`,
+      note: nextStage ? `Issue completed quantity from ${stageLabel(stage)} to ${stageLabel(nextStage)}.` : `Issue/dispatch completed quantity from ${stageLabel(stage)}.`
+    };
+  }
+  if (field === "output") {
+    const available = stage === "cutting" ? n(row.order_qty) : feed;
+    return {
+      mode:"output", available, previous:n(st.output), open:Math.max(0, available - n(st.output) - ram), updatedLabel:"Updated output",
+      availableLabel: stage === "cutting" ? "Order qty to cut" : `With ${stageLabel(stage)} / feed`,
+      previousLabel:`Already completed in ${stageLabel(stage)}`, openLabel:`Open work in ${stageLabel(stage)}`,
+      note: stage === "cutting" ? "Enter new cut quantity by size." : `Complete the open work currently with ${stageLabel(stage)}.`
+    };
+  }
+  if (["reject","missing","alter"].includes(field)) {
+    const available = stage === "cutting" ? n(row.order_qty) : feed;
+    const openWork = Math.max(0, available - n(st.output) - ram);
+    return {
+      mode:"ram", available, previous:n(st[field]), open:openWork, updatedLabel:`Updated ${fieldLabel(field)}`,
+      availableLabel: stage === "cutting" ? "Order/cut accountable qty" : `With ${stageLabel(stage)} / feed`,
+      previousLabel:`Already ${fieldLabel(field)}`, openLabel:"Open balance available to explain",
+      note:`Use ${fieldLabel(field)} to explain open balance by size. This affects R/A/M and closure.`
+    };
+  }
+  if (field === "alter_clear") {
+    return {
+      mode:"alter_clear", available:n(st.alter), previous:n(st.output), open:n(st.alter), updatedLabel:"Updated good output",
+      availableLabel:"Pending alter to clear", previousLabel:"Current good output", openLabel:"Alter still pending",
+      note:"Alter Clear moves repaired pieces back into good output and reduces pending alter."
+    };
+  }
+  return { available:0, previous:0, open:0, availableLabel:"Available", previousLabel:"Already entered", openLabel:"Open", updatedLabel:"Updated", note:"" };
+}
+function entryFieldSizeContext(row, stage, field, size){
+  const feedMap = stageFeedBySize(row, stage);
+  const feed = n(feedMap[size]);
+  const st = sdata(row, stage);
+  const output = n(sizeMatrix(row,stage,"output").find(x=>x.size===size)?.qty);
+  const issued = n(sizeMatrix(row,stage,"issued").find(x=>x.size===size)?.qty);
+  const received = n(sizeMatrix(row,stage,"received").find(x=>x.size===size)?.qty);
+  const reject = n(sizeMatrix(row,stage,"reject").find(x=>x.size===size)?.qty);
+  const alter = n(sizeMatrix(row,stage,"alter").find(x=>x.size===size)?.qty);
+  const missing = n(sizeMatrix(row,stage,"missing").find(x=>x.size===size)?.qty);
+  const ram = reject + alter + missing;
+  if (field === "received") return { available:feed, previous:received, open:Math.max(0, feed-received) };
+  if (field === "issued") return { available:output, previous:issued, open:Math.max(0, output-issued) };
+  if (field === "output") return { available: stage === "cutting" ? n(distribute(n(row.order_qty), sizesFor(row))[size]) : feed, previous:output, open:Math.max(0, (stage === "cutting" ? n(distribute(n(row.order_qty), sizesFor(row))[size]) : feed)-output-ram) };
+  if (["reject","missing","alter"].includes(field)) return { available:feed, previous: n({reject,missing,alter}[field]), open:Math.max(0, feed-output-ram) };
+  if (field === "alter_clear") return { available:alter, previous:output, open:alter };
+  return { available:0, previous:0, open:0 };
+}
+function entryOpenQty(row, stage, field){ return n(entryFieldContext(row, stage, field).open); }
+function sizeOpenTotalForField(row, stage, field){ return sizesFor(row).reduce((a,size)=>a+n(entryFieldSizeContext(row,stage,field,size).open),0); }
 function stageLabel(k){ return STAGE_BY_KEY[k]?.label || k; }
 function stageOwner(k){ return STAGE_BY_KEY[k]?.owner || "Production Owner"; }
 function hodAndCoordinator(k){ return `${stageOwner(k)} + Production Coordinator`; }
@@ -256,7 +383,7 @@ function buildRouteFromToggles(row){
   const route = ["cutting"];
   if (!!row.print_required) route.push("printing");
   if (!!row.embroidery_required) route.push("embroidery");
-  route.push("stitching","checking","iron","packing","dispatch");
+  route.push("stitching","checking","packing","dispatch");
   return route;
 }
 function routeFor(row){
@@ -282,8 +409,17 @@ function receivingPct(feed, received){ return feed > 0 ? Math.round((received * 
 function coordinationOwner(){ return "Production Coordinator + Production Manager"; }
 
 // ---- Configurable production rules (single source of truth) ----
-const PROD_SETTINGS = { cuttingTolerancePct: 5 };
+function loadLineNames(){
+  try {
+    const saved = JSON.parse(localStorage.getItem("production_line_names") || "[]");
+    if (Array.isArray(saved) && saved.length) return saved.map(x=>String(x).trim()).filter(Boolean);
+  } catch {}
+  return ["STF-1","STF-2","STF-3","STF-4","STF-5","STF-6"];
+}
+const PROD_SETTINGS = { cuttingTolerancePct: 5, dispatchRamHoldPct: 2, lineNames: loadLineNames() };
 function cuttingToleranceFrac(){ return Math.max(0, n(PROD_SETTINGS.cuttingTolerancePct)) / 100; }
+function dispatchRamHoldFrac(){ return Math.max(0, n(PROD_SETTINGS.dispatchRamHoldPct)) / 100; }
+function productionLineNames(){ return Array.isArray(PROD_SETTINGS.lineNames) && PROD_SETTINGS.lineNames.length ? PROD_SETTINGS.lineNames : ["STF-1"]; }
 
 // ---- Set convergence: a set can only pack/dispatch min(components) ----
 function setSiblings(row, rows){ return row?.set_id ? (rows||[]).filter(r=>r.set_id===row.set_id) : (row?[row]:[]); }
@@ -349,6 +485,31 @@ function cellBreakup(row, stageKey){
   return { skipped:false, received:done, open, ram, extra:over, note: over ? `Over ${fmt(over)}` : `Feed ${fmt(feed)}` };
 }
 
+function rawReconcileQty(row){
+  return routeFor(row).reduce((total,key)=>{
+    if (key === "cutting") return total;
+    const st = sdata(row,key);
+    const feed = stageFeed(row,key);
+    const stageLoss = loss(st);
+    const totalJump = Math.max(0, n(st.output) + stageLoss - feed);
+    const issuedOverOutput = Math.max(0, n(st.issued) - n(st.output));
+    return total + totalJump + issuedOverOutput;
+  },0);
+}
+function totalRamQty(row){
+  return routeFor(row).reduce((a,key)=>a+loss(sdata(row,key)),0);
+}
+function dispatchHoldInfo(row){
+  const route = routeFor(row);
+  if (!route.includes("dispatch")) return { blocked:false, reasons:[], reconcileQty:0, ramQty:0, ramLimit:0 };
+  const reconcileQty = rawReconcileQty(row);
+  const ramQty = totalRamQty(row);
+  const ramLimit = n(row.order_qty) * dispatchRamHoldFrac();
+  const reasons = [];
+  if (reconcileQty > 0) reasons.push(`reconcile pending ${fmt(reconcileQty)}`);
+  if (ramQty > ramLimit) reasons.push(`R/A/M ${fmt(ramQty)} above ${n(PROD_SETTINGS.dispatchRamHoldPct)}% order limit (${fmt(ramLimit)})`);
+  return { blocked:reasons.length>0, reasons, reconcileQty, ramQty, ramLimit };
+}
 function issueBuckets(row){
   const route = routeFor(row);
   const buckets = [];
@@ -388,6 +549,21 @@ function issueBuckets(row){
       buckets.push({ type:"ram", status:`R/A/M in ${stageLabel(key)}`, qty:stageLoss, owner:hodAndCoordinator(key), support:"Production Manager escalation if overdue", stage:key, tone:"late", action:"Close reject / alter / missing breakup and reason", idle });
     }
   }
+  const dispatchHold = dispatchHoldInfo(row);
+  if (dispatchHold.blocked) {
+    const st = sdata(row,"dispatch");
+    buckets.push({
+      type:"dispatch_hold",
+      status:"Dispatch Hold",
+      qty:Math.max(dispatchHold.reconcileQty, dispatchHold.ramQty, 1),
+      owner:coordinationOwner(),
+      support:"Dispatch HOD support; Production Manager approval/escalation",
+      stage:"dispatch",
+      tone:"late",
+      action:`Do not dispatch until ${dispatchHold.reasons.join(" and ")}.`,
+      idle:n(st.idle),
+    });
+  }
   return buckets.sort((a,b)=> (b.qty * Math.max(1,b.idle||1)) - (a.qty * Math.max(1,a.idle||1)) || b.qty-a.qty);
 }
 function rowStatus(row){
@@ -409,7 +585,7 @@ function bucketPct(row, bucket){
   return denom > 0 ? Math.round((n(bucket.qty) * 1000) / denom) / 10 : 0;
 }
 function statusBreakdown(row){
-  const all = issueBuckets(row).filter(b => b.type !== "extra_cut" || b.qty > (n(row.order_qty) * .05));
+  const all = issueBuckets(row).filter(b => b.type !== "extra_cut" || b.qty > (n(row.order_qty) * cuttingToleranceFrac()));
   const reconcile = all.find(b => b.type === "reconcile");
   const current = all.find(b => b.type !== "reconcile");
   const rest = all.filter(b => b !== reconcile && b !== current).slice(0, 1);
@@ -947,6 +1123,24 @@ function styleRowsForDrill(rows, predicate){
     };
   });
 }
+function orderSummaryRows(rows){
+  const map = new Map();
+  (rows||[]).forEach(row => {
+    const key = row.order_no || "NO ORDER";
+    const rs = rowStatus(row);
+    const old = map.get(key) || { Order:key, Buyer:row.buyer || "", Styles:0, Order_Qty:0, Open_WIP:0, Ready_Not_Issued:0, RAM:0, Reconcile:0, Oldest_Idle:0, Critical:0 };
+    old.Styles += 1;
+    old.Order_Qty += n(row.order_qty);
+    old.Open_WIP += n(rs.qty);
+    old.RAM += totalRamQty(row);
+    old.Reconcile += rawReconcileQty(row);
+    old.Oldest_Idle = Math.max(old.Oldest_Idle, n(rs.idle));
+    old.Critical += rs.tone === "late" ? 1 : 0;
+    routeFor(row).forEach(stage => { const b=cellBreakup(row,stage); old.Ready_Not_Issued += Math.max(0, n(sdata(row,stage).output)-n(sdata(row,stage).issued)); });
+    map.set(key, old);
+  });
+  return Array.from(map.values()).map(x=>({ ...x, Oldest_Idle:`${x.Oldest_Idle}d` })).sort((a,b)=>n(b.Reconcile)-n(a.Reconcile)||n(b.Open_WIP)-n(a.Open_WIP)||String(a.Order).localeCompare(String(b.Order)));
+}
 function dashboardDrillRows(rows, ledger, drill){
   if (!drill) return [];
   if (drill.kind === "period") return ledgerHorizontalRows(rows, ledger, drill.start, drill.end);
@@ -956,8 +1150,9 @@ function dashboardDrillRows(rows, ledger, drill){
   if (drill.kind === "quality_loss") return qualityLossRows(rows);
   if (drill.kind === "party_pending") return partyPendingRows(rows);
   if (drill.kind === "sets") return setConvergenceRows(rows);
+  if (drill.kind === "order") return styleRowsForDrill(rows, row => String(row.order_no||"") === String(drill.order||""));
   if (drill.kind === "all_styles") return styleRowsForDrill(rows, () => true);
-  if (drill.kind === "open_qty") return bucketRowsForDrill(rows, b => b.type !== "extra_cut");
+  if (drill.kind === "open_qty") return bucketRowsForDrill(rows, b => b.type !== "extra_cut" && b.type !== "dispatch_hold");
   if (drill.kind === "reconcile") return bucketRowsForDrill(rows, b => b.type === "reconcile");
     if (drill.kind === "completed_not_issued") return bucketRowsForDrill(rows, b => b.type === "completed_not_issued");
   if (drill.kind === "received_not_processed") return bucketRowsForDrill(rows, b => b.type === "received_not_processed");
@@ -981,13 +1176,24 @@ function DrillKpi({ label, value, note, tone, onClick }){
     {tone && <div style={{marginTop:8}}><span className={`mt-chip ${statusClass(tone)}`}>Drill</span></div>}
   </button>;
 }
+function MiniBarCard({ title, sub, rows, labelKey="label", valueKey="value", onRowClick }){
+  const max = Math.max(1, ...rows.map(r=>n(r[valueKey])));
+  return <div className="mt-context-card"><div className="mt-context-head"><div><h3 className="mt-context-title">{title}</h3><div className="mt-context-sub">{sub}</div></div><span className="mt-chip mt-muted">Top {Math.min(rows.length,8)}</span></div>{rows.length ? rows.slice(0,8).map((r,i)=><div key={i} className="mt-bar-row" onClick={()=>onRowClick?.(r)} style={{cursor:onRowClick?"pointer":"default"}}><div title={String(r[labelKey])}>{String(r[labelKey]).slice(0,18)}</div><div className="mt-bar-track"><div className="mt-bar-fill" style={{width:`${Math.max(2,(n(r[valueKey])*100)/max)}%`}} /></div><b>{fmt(r[valueKey])}</b></div>) : <div className="mt-small">No data in current filter.</div>}</div>;
+}
+function DonutCard({ title, sub, rows, labelKey="label", valueKey="value", onRowClick }){
+  const colors=["#c96f16","#f0c36d","#d96f5f","#9b84d9","#2563a6","#1f6f54"];
+  const total = rows.reduce((a,r)=>a+n(r[valueKey]),0);
+  let acc = 0;
+  const gradient = total ? rows.map((r,i)=>{ const start=acc; const deg=(n(r[valueKey])*360)/total; acc += deg; return `${colors[i%colors.length]} ${start}deg ${acc}deg`; }).join(", ") : "#efe9df 0deg 360deg";
+  return <div className="mt-context-card"><div className="mt-context-head"><div><h3 className="mt-context-title">{title}</h3><div className="mt-context-sub">{sub}</div></div><span className="mt-chip mt-info">{fmt(total)}</span></div><div className="mt-donut-wrap"><div className="mt-donut" style={{background:`conic-gradient(${gradient})`}}/><div className="mt-legend">{rows.slice(0,6).map((r,i)=><div key={i} className="mt-legend-row" onClick={()=>onRowClick?.(r)} style={{cursor:onRowClick?"pointer":"default"}}><span><span className="mt-dot" style={{background:colors[i%colors.length]}}/> {String(r[labelKey]).slice(0,20)}</span><b>{fmt(r[valueKey])}</b></div>)}</div></div></div>;
+}
 function Dashboard({ rows, ledger=[], onDrill }){
   const activityDate = latestActivityDate(ledger);
   const [selectedDate, setSelectedDate] = useState(activityDate);
   useEffect(()=>{ setSelectedDate(d => d || activityDate); }, [activityDate]);
   const cal = productionCalendar445(selectedDate || activityDate);
   const buckets = rows.flatMap(row => issueBuckets(row).map(bucket => ({ ...bucket, row })));
-  const openBuckets = buckets.filter(b=>b.type!=="extra_cut");
+  const openBuckets = buckets.filter(b=>b.type!=="extra_cut" && b.type!=="dispatch_hold");
   const openQty = openBuckets.reduce((a,b)=>a+n(b.qty),0);
   const reconcile = buckets.filter(b=>b.type==="reconcile").reduce((a,b)=>a+n(b.qty),0);
   const completedNotIssued = buckets.filter(b=>b.type==="completed_not_issued").reduce((a,b)=>a+n(b.qty),0);
@@ -1006,7 +1212,17 @@ function Dashboard({ rows, ledger=[], onDrill }){
   const partyRows = partyPendingRows(rows);
   const setRows = setConvergenceRows(rows);
   const setsUnmatched = setRows.reduce((a,r)=>a+n(r.Unmatched),0);
+  const orderRows = orderSummaryRows(rows);
+  const [dashView, setDashView] = useState("summary");
+  const issueMixRows = [
+    { Issue:"With Dept", Qty:receivedNotProcessed, kind:"received_not_processed" },
+    { Issue:"Ready / Not Issued", Qty:completedNotIssued, kind:"completed_not_issued" },
+    { Issue:"R/A/M", Qty:ram, kind:"ram" },
+    { Issue:"Reconcile", Qty:reconcile, kind:"reconcile" },
+  ].filter(x=>x.Qty>0);
+  const deptChartRows = deptRows.map(r=>({ Dept:r.Dept, Qty:n(r.Total_Qty || r.Open_Qty || r.Qty), stage:r.stage })).filter(r=>r.Qty>0);
   return <>
+    <div className="mt-card" style={{marginBottom:12}}><div className="mt-section"><div className="mt-drill-head"><div><h3 className="mt-panel-title">Dashboard Mode</h3><div className="mt-panel-sub">Summary first, chart second, style rows only in drilldown. Use Table mode only when you want deep data.</div></div><div className="mt-toggle-row"><button className={`mt-btn ${dashView==="summary"?"active":""}`} onClick={()=>setDashView("summary")}>Summary</button><button className={`mt-btn ${dashView==="charts"?"active":""}`} onClick={()=>setDashView("charts")}>Charts</button><button className={`mt-btn ${dashView==="tables"?"active":""}`} onClick={()=>setDashView("tables")}>Tables</button></div></div></div></div>
     <div className="mt-dash-grid">
       <DrillKpi label="Active Styles" value={rows.length} note="All styles in current dashboard filter." tone="info" onClick={()=>onDrill?.({kind:"all_styles", title:"Active Styles"})}/>
       <DrillKpi label="Total Open WIP" value={fmt(openQty)} note="Current bins only; issued to dept means accepted/with dept." tone={openQty?"warn":"ok"} onClick={()=>onDrill?.({kind:"open_qty", title:"Total Open WIP — Current Bins"})}/>
@@ -1015,13 +1231,20 @@ function Dashboard({ rows, ledger=[], onDrill }){
       <DrillKpi label="Sets Unmatched" value={fmt(setsUnmatched)} note="Set pieces packed on one component with no partner component yet. A set ships only min(components)." tone={setsUnmatched?"warn":"ok"} onClick={()=>onDrill?.({kind:"sets", title:"Sets Convergence"})}/>
       <DrillKpi label="Reconcile / Blocked" value={fmt(reconcile)} note="Total jump or impossible movement; manager approval only." tone={reconcile?"late":"ok"} onClick={()=>onDrill?.({kind:"reconcile", title:"Reconcile / Blocked"})}/>
     </div>
+    {dashView !== "tables" && <div className="mt-context-grid">
+      <MiniBarCard title="Top risky orders" sub="Order-wise open/reconcile pressure before style drilldown." rows={orderRows.map(r=>({ Order:r.Order, Qty:n(r.Open_WIP)+n(r.Reconcile)*2+n(r.RAM), Raw:r })).filter(r=>r.Qty>0)} labelKey="Order" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"order", order:r.Order, title:`Order Summary — ${r.Order}`})}/>
+      <MiniBarCard title="Department open load" sub="Open WIP by department. Click to drill style/size only when needed." rows={deptChartRows} labelKey="Dept" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"stage", stage:r.stage, title:`${r.Dept} Current WIP Bins`})}/>
+      <DonutCard title="Issue mix" sub="Part-to-whole split of current production issues." rows={issueMixRows} labelKey="Issue" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:r.kind, title:r.Issue})}/>
+    </div>}
+    <details className="mt-fold" open={dashView==="tables" || dashView==="summary"}><summary>Order-wise Production Summary</summary><SimpleTable title="Order-wise Production Summary" sub="Use this first when many styles are active. Orders group styles/components so dashboards stay manageable. Click any order to drill into its styles." rows={orderRows} empty="No orders in current dashboard scope." onRowClick={(r)=>onDrill?.({kind:"order", order:r.Order, title:`Order Summary — ${r.Order}`})}/></details>
     <div className="mt-card" style={{marginBottom:12}}>
       <div className="mt-section"><h3 className="mt-panel-title">Daily / 4-4-5 Weekly / Monthly Production Numbers</h3><div className="mt-panel-sub">Calendar opens to the latest activity date. Daily = selected date. Weekly = 4-4-5 production week, Monday–Saturday. Monthly = exact calendar month dates. Rows are drillable.</div><div className="mt-toolbar" style={{marginTop:10}}><span className="mt-toolbar-label">Activity date</span><input className="mt-input mt-entry-date" type="date" value={selectedDate || activityDate} onChange={e=>setSelectedDate(e.target.value)} /><span className="mt-chip mt-info">{cal.fullLabel}</span><span className="mt-chip mt-muted">Calendar month {fullMonthLabel(parseYmd(selectedDate || activityDate))}</span></div></div>
       <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th>Period</th><th>Date Range</th><th>Cutting</th><th>Stitching Receiving</th><th>Checking</th><th>Packing</th><th>Dispatch</th><th>R/A/M</th><th>Rows</th></tr></thead><tbody>{periodRows.map(r=><tr key={r.period} className="drillable" onClick={()=>onDrill?.({kind:"period", period:r.period, start:r.Start_Date, end:r.End_Date, title:`${r.Period} Activity Entries`})}><td><b>{r.Period}</b></td><td>{r.Date_Range}</td><td>{fmt(r.Cutting)}</td><td>{fmt(r.Stitching_Receiving)}</td><td>{fmt(r.Checking)}</td><td>{fmt(r.Packing)}</td><td>{fmt(r.Dispatch)}</td><td>{fmt(r.RAM)}</td><td>{r.Rows}</td></tr>)}</tbody></table></div>
     </div>
+    {dashView !== "charts" && <>
     <div className="mt-mini-board">
       <SimpleTable title="Plan vs Achieved / Line Efficiency" sub="Department-first production meeting spine. Uses ledger plan where present; otherwise achieved is shown and plan is marked pending." rows={lineRows.slice(0,12)} empty="No line output yet." onRowClick={()=>onDrill?.({kind:"line_efficiency", start:cal.weekStart, end:cal.weekEnd, title:`Line Efficiency — ${cal.fullLabel}`})}/>
-      <SimpleTable title="Bottleneck / Flow Board" sub="Dept-wise inflow/feed, output, issue-forward, queue WIP and days cover. Highest bottleneck score first." rows={bottleneckRows.map(({stage,...r})=>r).slice(0,12)} empty="No bottleneck rows." onRowClick={()=>onDrill?.({kind:"bottleneck", title:"Bottleneck / Flow Drilldown"})}/>
+      <SimpleTable title="Bottleneck / Flow Board" sub="Daily Rate = recent 7-day average output. Days Cover = Queue WIP ÷ Daily Rate. Bottleneck Score = Queue WIP + 2×Reconcile + R/A/M. Highest risk first." rows={bottleneckRows.map(({stage,...r})=>r).slice(0,12)} empty="No bottleneck rows." onRowClick={()=>onDrill?.({kind:"bottleneck", title:"Bottleneck / Flow Drilldown"})}/>
       <SimpleTable title="Aging / Stuck WIP" sub="Dept-wise WIP by aging bucket: 0–2d, 3–6d, 7–13d, 14d+. Uses live idle where ledger exists." rows={agingRows.map(({stage,...r})=>r).slice(0,12)} empty="No aged WIP." onRowClick={()=>onDrill?.({kind:"aging", title:"Aging / Stuck WIP"})}/>
     </div>
     <div className="mt-mini-board" style={{marginTop:12}}>
@@ -1031,7 +1254,7 @@ function Dashboard({ rows, ledger=[], onDrill }){
     </div>
     <div className="mt-mini-board" style={{marginTop:12}}>
       <SimpleTable title="Quality / Loss Rate" sub="Reject, alter, missing and loss-rate by department. Rows drill to R/A/M style-size detail." rows={qualityRows.map(({stage,...r})=>r).slice(0,12)} empty="No quality/loss rows." onRowClick={()=>onDrill?.({kind:"quality_loss", title:"Quality / Loss Drilldown"})}/>
-      <SimpleTable title="Party / Outsource Pending" sub="Print/emb/iron/pack outsourced WIP by party, process, pending qty and age." rows={partyRows.map(({stage,...r})=>r).slice(0,12)} empty="No party pending rows." onRowClick={()=>onDrill?.({kind:"party_pending", title:"Party / Outsource Pending"})}/>
+      <SimpleTable title="Party / Outsource Pending" sub="Print/emb/pack outsourced WIP by party, process, pending qty and age." rows={partyRows.map(({stage,...r})=>r).slice(0,12)} empty="No party pending rows." onRowClick={()=>onDrill?.({kind:"party_pending", title:"Party / Outsource Pending"})}/>
       <SimpleTable title="Reconciliation Dashboard" sub="Separate reconciliation board. Only impossible/blocked quantity movements appear here; rows drill to the exact style-size issue." rows={reconciliationRows.map(({stage,type,...r})=>r)} empty="No reconciliation blockers." onRowClick={(r)=>{ const match = reconciliationRows.find(x=>x.Dept===r.Dept && x.Reconcile_Type===r.Reconcile_Type); onDrill?.({kind:"dept_issue", stage:match?.stage, type:"reconcile", title:`Reconciliation — ${r.Dept}`}); }}/>
     </div>
     <div style={{marginTop:12}}>
@@ -1040,6 +1263,7 @@ function Dashboard({ rows, ledger=[], onDrill }){
     <div style={{marginTop:12}}>
       <SimpleTable title="Production Meeting Focus" sub="Meeting action list: blocker first, then biggest open qty × idle days. Every row drills to the useful style/size detail." rows={meetingRows} empty="No open meeting focus rows." onRowClick={()=>onDrill?.({kind:"meeting_focus", title:"Production Meeting Focus"})}/>
     </div>
+    </>}
   </>;
 }
 
@@ -1148,7 +1372,8 @@ function WipStatus({ rows, onOpen }){
       <div className="mt-filter-row">
         <div className="mt-filter-group"><span className="mt-toolbar-label">WIP Search</span><Search size={14}/><input className="mt-input" value={localSearch} onChange={e=>setLocalSearch(e.target.value)} placeholder="style / order / status / owner" style={{minWidth:230}}/></div>
         <div className="mt-filter-group"><span className="mt-toolbar-label">Dept</span><select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}><option value="all">All departments</option>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select></div>
-        <div className="mt-filter-group"><span className="mt-toolbar-label">Issue</span><select className="mt-select" value={issue} onChange={e=>setIssue(e.target.value)}><option value="all">All open/closed</option><option value="completed_not_issued">Ready for next dept</option><option value="received_not_processed">With department</option><option value="ram">R/A/M</option><option value="reconcile">Reconcile</option><option value="closed">Closed / balanced</option></select></div>
+        <div className="mt-filter-group"><span className="mt-toolbar-label">Issue</span><select className="mt-select" value={issue} onChange={e=>setIssue(e.target.value)}><option value="all">All open/closed</option><option value="completed_not_issued">Ready for next dept</option><option value="received_not_processed">With department</option><option value="ram">R/A/M</option><option value="reconcile">Reconcile</option>
+            <option value="dispatch_hold">Dispatch Hold</option><option value="closed">Closed / balanced</option></select></div>
         <div className="mt-filter-group"><span className="mt-toolbar-label">Owner</span><select className="mt-select" value={owner} onChange={e=>setOwner(e.target.value)}>{owners.map(o=><option key={o} value={o}>{o === "all" ? "All owners" : o}</option>)}</select></div>
         <div className="mt-filter-group"><span className="mt-toolbar-label">Route</span><select className="mt-select" value={route} onChange={e=>setRoute(e.target.value)}><option value="all">All routes</option><option>Plain</option><option>Print</option><option>Embroidery</option><option>Print + Emb</option></select></div>
         <button className={`mt-btn ${sizeBreak?"primary":"ghost"}`} onClick={()=>setSizeBreak(v=>!v)}><Layers size={14}/>Size breakup</button>
@@ -1221,6 +1446,7 @@ function WhoToChase({ rows }){
             <option value="received_not_processed">With Department</option>
             <option value="ram">Reject / Alter / Missing</option>
             <option value="reconcile">Reconcile</option>
+            <option value="dispatch_hold">Dispatch Hold</option>
           </select>
           <select className="mt-select" value={dept} onChange={e=>{setDept(e.target.value); setSelectedOwner(null);}}>
             <option value="all">All departments</option>
@@ -1258,13 +1484,15 @@ function stageTotalsAfterEdit(row, stage, field, newTotal, ledger=null, asOfDate
 function validateCumulativeEdit(row, stage, field, newTotal, ledger=null, asOfDate=null){
   const allowed = cumulativeAllowedTotal(row, stage, field, ledger, asOfDate);
   const t = stageTotalsAfterEdit(row, stage, field, newTotal, ledger, asOfDate);
-  const blocked = !!(t.totalJump || t.outputOverReceived || t.issuedOverOutput || (stage !== "cutting" && field === "received" && newTotal > allowed));
+  const dispatchHold = stage === "dispatch" && ["output","issued"].includes(field) ? dispatchHoldInfo(row) : { blocked:false, reasons:[] };
+  const blocked = !!(t.totalJump || t.outputOverReceived || t.issuedOverOutput || (stage !== "cutting" && field === "received" && newTotal > allowed) || dispatchHold.blocked);
   const messages = [];
   if (t.totalJump) messages.push(`Total jump +${fmt(t.totalJump)} above feed`);
   if (t.outputOverReceived) messages.push(`Output > received by ${fmt(t.outputOverReceived)}`);
   if (t.issuedOverOutput) messages.push(`Issued > output by ${fmt(t.issuedOverOutput)}`);
   if (stage !== "cutting" && field === "received" && newTotal > allowed) messages.push(`Received above issued feed`);
-  return { allowed, blocked, messages, ...t };
+  if (dispatchHold.blocked) messages.push(`Dispatch hold: ${dispatchHold.reasons.join("; ")}`);
+  return { allowed, blocked, messages, ...t, dispatchHold };
 }
 function confirmEntryChecks({ entryDate, changes, stage, field, reason }){
   const risk = backdateRisk(entryDate);
@@ -1272,7 +1500,7 @@ function confirmEntryChecks({ entryDate, changes, stage, field, reason }){
   const notes = [];
   if (risk.sameDay) notes.push("Same-day entry: factory rule says production entries are normally done next day. Confirm only if this is intentional.");
   if (risk.locked) notes.push("Older backdated entry: manager approval will be required and audit will record the actual created time.");
-  if (changes.some(c=>c.delta < 0)) notes.push("Negative delta/correction: this reduces a previously recorded cumulative value and should be intentional.");
+  if (changes.some(c=>c.delta < 0)) notes.push("Negative delta/correction: this reduces a previously recorded value and should go through approval.");
   if (["reject","alter","missing"].includes(field)) notes.push(`${fieldLabel(field)} entry: confirm the R/A/M quantity has been checked department-wise.`);
   if (risk.locked && !window.confirm(`MANAGER APPROVAL REQUIRED\n\nThis entry is backdated ${risk.days} days (${entryDate}). It is validated against stock/WIP as-of that date and is stamped manager-approval-required in the audit ledger.\n\nProceed only if this has been approved.`)) return false;
   if (!notes.length) return true;
@@ -1311,6 +1539,82 @@ function applyCumulativeSizeEdits({ rows, targetRows, stage, field, getVal }){
     return { ...row, stages, size_stage:{ ...(row.size_stage||{}), [stage]:{ ...(row.size_stage?.[stage]||{}), [field]:sizes } } };
   });
 }
+function getDailyEntryQty(getVal, row, size){
+  return n(getVal(row, size));
+}
+function dailySizeRows(row, stage, field, getVal){
+  return sizesFor(row).map(size => {
+    const entryQty = getDailyEntryQty(getVal, row, size);
+    if (!entryQty) return null;
+    const baseField = field === "alter_clear" ? "output" : field;
+    const oldQty = sizeMatrix(row, stage, baseField).find(x=>x.size===size)?.qty || 0;
+    return { row, size, oldQty, newQty:oldQty + entryQty, delta:entryQty, entryQty };
+  }).filter(Boolean);
+}
+function rowDailyEntryTotal(row, getVal){
+  return sizesFor(row).reduce((a,size)=>a+getDailyEntryQty(getVal,row,size),0);
+}
+function validateDailyEntry(row, stage, field, getVal, ledger=null, entryDate=null){
+  const entryTotal = rowDailyEntryTotal(row, getVal);
+  const messages = [];
+  if (!entryTotal) return { allowed:cumulativeAllowedTotal(row, stage, field === "alter_clear" ? "output" : field, ledger, entryDate), entryTotal:0, oldTotal:0, updatedTotal:0, blocked:false, messages, overCut:false };
+  if (field === "alter_clear") {
+    const oldAlterBySize = Object.fromEntries(sizeMatrix(row, stage, "alter").map(x=>[x.size,n(x.qty)]));
+    const overSizes = sizesFor(row).filter(size => getDailyEntryQty(getVal,row,size) > n(oldAlterBySize[size]));
+    const oldAlter = Object.values(oldAlterBySize).reduce((a,b)=>a+n(b),0);
+    const oldOutput = sizeMatrix(row, stage, "output").reduce((a,x)=>a+n(x.qty),0);
+    const updatedOutput = oldOutput + entryTotal;
+    const feed = stage === "cutting" ? n(row.order_qty) : stageFeed(row, stage);
+    const st = sdata(row, stage);
+    const updatedRam = n(st.reject) + Math.max(0, oldAlter - entryTotal) + n(st.missing);
+    if (overSizes.length) messages.push(`Alter clear above pending alter in size(s): ${overSizes.join(", ")}`);
+    if (stage !== "cutting" && updatedOutput + updatedRam > feed) messages.push(`Output + pending R/A/M would exceed feed by ${fmt(updatedOutput + updatedRam - feed)}`);
+    return { allowed:oldAlter, entryTotal, oldTotal:oldOutput, updatedTotal:updatedOutput, blocked:messages.length>0, messages, overCut:false, oldAlter, updatedAlter:Math.max(0, oldAlter-entryTotal) };
+  }
+  const oldTotal = sizeMatrix(row, stage, field).reduce((a,x)=>a+n(x.qty),0);
+  const updatedTotal = oldTotal + entryTotal;
+  const validation = validateCumulativeEdit(row, stage, field, updatedTotal, ledger, entryDate);
+  const overCut = stage === "cutting" && updatedTotal > n(row.order_qty);
+  return { ...validation, entryTotal, oldTotal, updatedTotal, blocked:validation.blocked, overCut };
+}
+function applyDailySizeEntries({ rows, targetRows, stage, field, getVal }){
+  const targetIds = new Set(targetRows.map(r=>r.id));
+  return rows.map(row => {
+    if (!targetIds.has(row.id)) return row;
+    const entries = Object.fromEntries(sizesFor(row).map(size=>[size, getDailyEntryQty(getVal,row,size)]));
+    const entryTotal = Object.values(entries).reduce((a,b)=>a+n(b),0);
+    if (!entryTotal) return row;
+    const stages = { ...(row.stages || {}) };
+    const prevStage = { ...blankStage(), ...sdata(row,stage) };
+    const nextStage = { ...prevStage };
+    const sizeStage = { ...(row.size_stage || {}) };
+    const stageSizes = { ...(sizeStage[stage] || {}) };
+    if (field === "alter_clear") {
+      const oldOutput = Object.fromEntries(sizeMatrix(row, stage, "output").map(x=>[x.size,n(x.qty)]));
+      const oldAlter = Object.fromEntries(sizeMatrix(row, stage, "alter").map(x=>[x.size,n(x.qty)]));
+      const newOutput = {}; const newAlter = {};
+      sizesFor(row).forEach(size => {
+        const qty = n(entries[size]);
+        newOutput[size] = n(oldOutput[size]) + qty;
+        newAlter[size] = Math.max(0, n(oldAlter[size]) - qty);
+      });
+      nextStage.output = Object.values(newOutput).reduce((a,b)=>a+n(b),0);
+      nextStage.alter = Object.values(newAlter).reduce((a,b)=>a+n(b),0);
+      stageSizes.output = newOutput;
+      stageSizes.alter = newAlter;
+    } else {
+      const oldMap = Object.fromEntries(sizeMatrix(row, stage, field).map(x=>[x.size,n(x.qty)]));
+      const newMap = {};
+      sizesFor(row).forEach(size => { newMap[size] = n(oldMap[size]) + n(entries[size]); });
+      nextStage[field] = Object.values(newMap).reduce((a,b)=>a+n(b),0);
+      if (stage !== "cutting" && field === "output") nextStage.received = Math.max(n(prevStage.received), stageFeed(row, stage));
+      stageSizes[field] = newMap;
+    }
+    stages[stage] = nextStage;
+    sizeStage[stage] = stageSizes;
+    return { ...row, stages, size_stage:sizeStage };
+  });
+}
 function buildLedgerRows({ changes, stage, field, entryDate, reason, source }){
   const risk = backdateRisk(entryDate);
   const created = new Date().toISOString();
@@ -1336,7 +1640,7 @@ function buildLedgerRows({ changes, stage, field, entryDate, reason, source }){
     changed_by:currentUserName(),
     entry_source:source,
     validation_scope:"size_wise_as_of_entry_date",
-    remarks:`${source}: cumulative size-cell edit. Entry date ${entryDate}; actual saved ${created.slice(0,10)} by ${currentUserName()}.`
+    remarks:`${source}: positive size-wise day entry. Entry date ${entryDate}; actual saved ${created.slice(0,10)} by ${currentUserName()}.`
   }));
 }
 async function saveLedgerToSupabase(newLedger, field){
@@ -1344,7 +1648,7 @@ async function saveLedgerToSupabase(newLedger, field){
   const payload = newLedger.map(({id, changed_by, ...x})=>({
     ...x,
     qty:n(x.qty),
-    good_qty:field==="output" ? n(x.qty) : 0,
+    good_qty:["output","alter_clear"].includes(field) ? n(x.qty) : 0,
     reject_qty:field==="reject" ? n(x.qty) : 0,
     alter_qty:field==="alter" ? n(x.qty) : 0,
     missing_qty:field==="missing" ? n(x.qty) : 0,
@@ -1353,7 +1657,7 @@ async function saveLedgerToSupabase(newLedger, field){
   const { error } = await supabase.from("production_entries").insert(payload);
   if(error) console.warn(error);
 }
-function SizeCumulativeEditor({ row, rows, setRows, ledger, setLedger, stage, initialField="received", source="wip_cell", onSaved }){
+function SizeCumulativeEditor({ row, rows, setRows, ledger, setLedger, stage, initialField="output", source="wip_cell", onSaved }){
   const [field, setField] = useState(initialField);
   const [entryDate, setEntryDate] = useState(defaultEntryDate(ledger));
   const [reason, setReason] = useState("");
@@ -1361,29 +1665,24 @@ function SizeCumulativeEditor({ row, rows, setRows, ledger, setLedger, stage, in
   useEffect(()=>setDraft({}), [row?.id, stage, field]);
   if (!row) return null;
   const sizes = sizesFor(row);
-  function getVal(_, size){
-    const key = `${row.id}|${size}`;
-    if (draft[key] !== undefined) return draft[key];
-    return sizeMatrix(row, stage, field).find(x=>x.size===size)?.qty || 0;
-  }
-  function setVal(size, value){ setDraft(d=>({ ...d, [`${row.id}|${size}`]:String(value).replace(/[^0-9]/g,"") })); }
-  const oldTotal = sizeMatrix(row, stage, field).reduce((a,x)=>a+n(x.qty),0);
-  const newTotal = sizes.reduce((a,size)=>a+n(getVal(row,size)),0);
-  const validation = validateCumulativeEdit(row, stage, field, newTotal, ledger, entryDate);
-  const allowed = validation.allowed;
-  const totalJump = validation.blocked;
-  const overCut = stage === "cutting" && newTotal > n(row.order_qty);
-  const changes = changedSizeRows(row, stage, field, getVal);
   const risk = backdateRisk(entryDate);
   const needsReason = risk.days > 1;
   const reasonMissing = needsReason && !reason.trim();
+  function getVal(_, size){
+    const key = `${row.id}|${size}`;
+    return draft[key] !== undefined ? draft[key] : "";
+  }
+  function setVal(size, value){ setDraft(d=>({ ...d, [`${row.id}|${size}`]:String(value).replace(/[^0-9]/g,"") })); }
+  const validation = validateDailyEntry(row, stage, field, getVal, ledger, entryDate);
+  const ctx = entryFieldContext(row, stage, field);
+  const changes = dailySizeRows(row, stage, field, getVal);
   function save(){
-    if (!changes.length) { alert("No size change to save."); return; }
+    if (!changes.length) { alert("No new size-wise quantity entered."); return; }
     if (reasonMissing) { alert("Backdated entry older than normal next-day needs a reason before save."); return; }
-    if (totalJump) { alert(`Blocked: ${validation.messages.join("; ") || "downstream total jump / impossible sequence"}. Correct upstream/opening stock or create approved adjustment first.`); return; }
+    if (validation.blocked) { alert(`Blocked: ${validation.messages.join("; ") || "impossible sequence"}. Correct upstream/opening stock or create approved adjustment first.`); return; }
     if (!confirmEntryChecks({ entryDate, changes, stage, field, reason })) return;
     const newLedger = buildLedgerRows({ changes, stage, field, entryDate, reason, source });
-    setRows(prev => applyCumulativeSizeEdits({ rows:prev, targetRows:[row], stage, field, getVal }));
+    setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:[row], stage, field, getVal }));
     setLedger(prev => [...newLedger, ...prev]);
     saveLedgerToSupabase(newLedger, field);
     setDraft({});
@@ -1391,407 +1690,60 @@ function SizeCumulativeEditor({ row, rows, setRows, ledger, setLedger, stage, in
   }
   return <div className="mt-edit-panel">
     <div className="mt-edit-panel-head">
-      <h3 className="mt-panel-title">Editable WIP Cell → Size-wise Cumulative Entry</h3>
-      <div className="mt-panel-sub">Editing here does not overwrite totals directly. It calculates the size-wise delta and writes production ledger rows using the selected entry date.</div>
+      <h3 className="mt-panel-title">Size-wise Day Entry</h3>
+      <div className="mt-panel-sub">Enter the quantity produced/moved on the selected date. The app adds this size-wise entry to existing totals and writes ledger rows.</div>
     </div>
     <div className="mt-section no-print"><div className="mt-backdate-box">
       <span className="mt-toolbar-label">Entry Date</span><input className="mt-input mt-entry-date" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} />
       <span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span>
-      <span className="mt-toolbar-label">Field</span><select className="mt-select" value={field} onChange={e=>setField(e.target.value)}><option value="received">Receive cumulative</option><option value="output">Completed/output cumulative</option><option value="issued">Issued forward cumulative</option><option value="reject">Reject cumulative</option><option value="alter">Alter cumulative</option><option value="missing">Missing cumulative</option></select>
+      <span className="mt-toolbar-label">Dept</span><span className="mt-chip mt-info">{stageLabel(stage)}</span>
+      <span className="mt-toolbar-label">Entry Field</span><select className="mt-select" value={field} onChange={e=>setField(e.target.value)}>{ENTRY_FIELDS.map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>
       {needsReason && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate reason required" style={{minWidth:250}} />}
-    </div>{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated date: validated against stock/WIP as-of this entry date and stamped manager-approval-required in the audit ledger. Requires an explicit approval confirmation before save.</div>}</div>
-    <div className="mt-section"><div className="mt-grid" style={{gridTemplateColumns:"repeat(4,minmax(0,1fr))"}}><Kpi label="Allowed as-of date" value={fmt(allowed)} note={stage === "cutting" ? "Cutting can overcut within tolerance" : "Checked against previous active route/stage"}/><Kpi label="Old cumulative" value={fmt(oldTotal)} note="Current value before edit"/><Kpi label="New cumulative" value={fmt(newTotal)} note={`Delta ${fmt(newTotal-oldTotal)}`} tone={totalJump?"late":overCut?"purple":changes.length?"warn":"ok"}/><Kpi label="Validation" value={totalJump?"Blocked":"OK"} note={totalJump ? (validation.messages.join("; ") || "Impossible sequence") : "Size-wise delta will be saved"} tone={totalJump?"late":"ok"}/></div></div>
-    <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th>Size</th><th>Previous</th><th>New Cumulative</th><th>Delta</th><th>Status</th></tr></thead><tbody>{sizes.map(size=>{ const oldQty=sizeMatrix(row,stage,field).find(x=>x.size===size)?.qty||0; const newQty=n(getVal(row,size)); const delta=newQty-oldQty; return <tr key={size}><td><b>{size}</b></td><td>{fmt(oldQty)}</td><td><input className={`mt-cell-input ${draft[`${row.id}|${size}`]!==undefined?"dirty":""} ${totalJump?"blocked":""}`} value={getVal(row,size)} onChange={e=>setVal(size,e.target.value)} /></td><td className={delta<0?"mt-delta-neg":"mt-delta-pos"}>{delta>0?"+":""}{fmt(delta)}</td><td>{delta ? <span className="mt-chip mt-warn">Changed</span> : <span className="mt-chip mt-muted">No change</span>}</td></tr>;})}</tbody></table></div>
-    <div className="mt-section no-print"><button className="mt-btn primary" onClick={save} disabled={!changes.length || totalJump || reasonMissing}><CheckCircle2 size={14}/>Save Size-wise Entry</button> <span className="mt-small">Qty check is applied size-wise and total-wise. Backdated entries store entry date + actual created time for audit.</span></div>
+    </div>{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated date: validated against stock/WIP as-of this entry date and stamped manager-approval-required in the audit ledger. Requires an explicit approval confirmation before save.</div>}
+    <div className="mt-speed-note" style={{marginTop:8}}><b>Active entry:</b> {row.order_no} · {row.style_no} · {row.colour} · {row.component} · <b>{stageLabel(stage)}</b> · <b>{fieldLabel(field)}</b>. {fieldHelp(field)} Positive day entries only. Reductions/corrections must use a separate approval flow.</div></div>
+    <div className="mt-section"><div className="mt-grid" style={{gridTemplateColumns:"repeat(4,minmax(0,1fr))"}}><Kpi label={ctx.availableLabel} value={fmt(ctx.available)} note={ctx.note}/><Kpi label={ctx.openLabel} value={fmt(ctx.open)} note="This is the useful balance before entry" tone={ctx.open?"warn":"ok"}/><Kpi label="New Entry" value={fmt(validation.entryTotal)} note="Qty entered for selected date" tone={validation.blocked?"late":validation.overCut?"purple":changes.length?"warn":"ok"}/><Kpi label={ctx.updatedLabel} value={fmt(validation.updatedTotal)} note={validation.blocked ? (validation.messages.join("; ") || "Blocked") : "After this entry is saved"} tone={validation.blocked?"late":"ok"}/></div></div>
+    <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th>Size</th><th>{ctx.openLabel}</th><th>{ctx.previousLabel}</th><th>New Entry</th><th>{ctx.updatedLabel}</th><th>Status</th></tr></thead><tbody>{sizes.map(size=>{ const szCtx=entryFieldSizeContext(row,stage,field,size); const baseField=field==="alter_clear"?"output":field; const prev=sizeMatrix(row,stage,baseField).find(x=>x.size===size)?.qty||0; const entry=n(getVal(row,size)); const updated=prev+entry; const alterPending=field==="alter_clear" ? (sizeMatrix(row,stage,"alter").find(x=>x.size===size)?.qty||0) : null; const blocked=field==="alter_clear" && entry>alterPending; return <tr key={size}><td><b>{size}</b></td><td><b>{fmt(szCtx.open)}</b><div className="mt-small">available {fmt(szCtx.available)}</div></td><td>{fmt(prev)}{field==="alter_clear" && <div className="mt-small">Alter pending {fmt(alterPending)}</div>}</td><td><input className={`mt-cell-input ${draft[`${row.id}|${size}`]!==undefined?"dirty":""} ${blocked||validation.blocked?"blocked":""}`} value={getVal(row,size)} onChange={e=>setVal(size,e.target.value)} placeholder="0" /></td><td><b>{fmt(updated)}</b>{field==="alter_clear" && <div className="mt-small">Alter after {fmt(Math.max(0, n(alterPending)-entry))}</div>}</td><td>{blocked ? <span className="mt-chip mt-late">Above alter pending</span> : entry ? <span className="mt-chip mt-warn">New +{fmt(entry)}</span> : <span className="mt-chip mt-muted">No entry</span>}</td></tr>;})}</tbody></table></div>
+    <div className="mt-section no-print"><button className="mt-btn primary" onClick={save} disabled={!changes.length || validation.blocked || reasonMissing}><CheckCircle2 size={14}/>Save Day Entry</button> <span className="mt-small">Size-wise entry is mandatory. The updated total is shown only for cross-check.</span></div>
   </div>;
 }
+
 function QuickEntry({ rows, setRows, ledger, setLedger }){
   const [stage, setStage] = useState("stitching");
-  const [field, setField] = useState("received");
+  const [field, setField] = useState("output");
   const [entryDate, setEntryDate] = useState(defaultEntryDate(ledger));
   const [reason, setReason] = useState("");
   const [draft, setDraft] = useState({});
-  const activeRows = rows.filter(r => routeFor(r).includes(stage));
+  const allStageRows = rows.filter(r => routeFor(r).includes(stage));
+  const activeRows = allStageRows.filter(r => entryOpenQty(r, stage, field) > 0);
   const risk = backdateRisk(entryDate);
+  const allSizes = Array.from(new Set(activeRows.flatMap(sizesFor)));
   function getVal(row, size){
     const key = `${row.id}|${size}`;
-    if (draft[key] !== undefined) return draft[key];
-    const matrix = sizeMatrix(row, stage, field);
-    return matrix.find(x=>x.size===size)?.qty || 0;
+    return draft[key] !== undefined ? draft[key] : "";
   }
-  function setVal(row, size, val){ setDraft(d => ({ ...d, [`${row.id}|${size}`]: val.replace(/[^0-9]/g,'') })); }
-  function rowNewTotal(row){ return sizesFor(row).reduce((a,s)=>a+n(getVal(row,s)),0); }
-  function rowOldTotal(row){ return sizeMatrix(row, stage, field).reduce((a,x)=>a+n(x.qty),0); }
-  function validate(row){
-    const total = rowNewTotal(row);
-    const old = rowOldTotal(row);
-    const validation = validateCumulativeEdit(row, stage, field, total, ledger, entryDate);
-    const overCut = stage === "cutting" && total > n(row.order_qty);
-    return { total, old, allowed:validation.allowed, totalJump:validation.blocked, messages:validation.messages, overCut, delta:total-old };
-  }
+  function setVal(row, size, val){ setDraft(d => ({ ...d, [`${row.id}|${size}`]: String(val).replace(/[^0-9]/g,"") })); }
+  function validate(row){ return validateDailyEntry(row, stage, field, getVal, ledger, entryDate); }
   function save(){
-    const changed = activeRows.flatMap(row => changedSizeRows(row, stage, field, getVal));
-    const blocked = activeRows.filter(r=>validate(r).totalJump);
+    const changed = activeRows.flatMap(row => dailySizeRows(row, stage, field, getVal));
+    const blocked = activeRows.filter(r=>validate(r).blocked);
     if (blocked.length) { alert(`Blocked: ${blocked.length} row(s) have impossible quantity sequence: ${blocked.map(r=>`${r.style_no}: ${validate(r).messages.join(", ")}`).slice(0,3).join(" | ")}. Correct upstream/opening stock or create approved adjustment first.`); return; }
     if (risk.days > 1 && !reason.trim()) { alert("Backdated entry older than normal next-day needs a reason before save."); return; }
-    if (!changed.length) { alert("No changed size cells to save."); return; }
+    if (!changed.length) { alert("No new size-wise quantity entered."); return; }
     if (!confirmEntryChecks({ entryDate, changes:changed, stage, field, reason })) return;
-    setRows(prev => applyCumulativeSizeEdits({ rows:prev, targetRows:activeRows, stage, field, getVal }));
+    setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:activeRows, stage, field, getVal }));
     const newLedger = buildLedgerRows({ changes:changed, stage, field, entryDate, reason, source:"dpr_quick_entry" });
     setLedger(prev => [...newLedger, ...prev]);
     saveLedgerToSupabase(newLedger, field);
     setDraft({});
   }
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">DPR Quick Entry — Horizontal Size Matrix</h3><div className="mt-panel-sub">Option A: user edits cumulative size cells like Excel. The app calculates delta and stores size-level ledger entries with selected entry date.</div></div>
-    <div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-toolbar-label">Entry Setup</span><input className="mt-input mt-entry-date" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /><span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span><select className="mt-select" value={stage} onChange={e=>{setStage(e.target.value); setDraft({});}}>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select><select className="mt-select" value={field} onChange={e=>{setField(e.target.value); setDraft({});}}><option value="received">Receive cumulative</option><option value="output">Completed/output cumulative</option><option value="issued">Issued forward cumulative</option><option value="reject">Reject cumulative</option><option value="alter">Alter cumulative</option><option value="missing">Missing cumulative</option></select>{risk.days>1 && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate reason required" style={{minWidth:240}}/>}<button className="mt-btn primary" onClick={save}><CheckCircle2 size={14}/>Save Changed Cells</button></div>{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated entries are validated as-of the selected date and stamped manager-approval-required; an explicit approval confirmation is required before save.</div>}</div>
-    <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style</th><th>Allowed</th><th>Old Total</th>{Array.from(new Set(activeRows.flatMap(sizesFor))).map(sz=><th key={sz}>{sz}</th>)}<th>New Total</th><th>Validation</th></tr></thead><tbody>{activeRows.map(row=>{ const sizes = sizesFor(row); const allSizes = Array.from(new Set(activeRows.flatMap(sizesFor))); const v=validate(row); return <tr key={row.id}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.colour} · {row.component}</div></div></div></td><td>{fmt(v.allowed)}</td><td>{fmt(v.old)}</td>{allSizes.map(sz=> sizes.includes(sz) ? <td key={sz}><input className={`mt-cell-input ${draft[`${row.id}|${sz}`]!==undefined?"dirty":""} ${v.totalJump?"blocked":""}`} value={getVal(row,sz)} onChange={e=>setVal(row,sz,e.target.value)} /></td> : <td key={sz} className="mt-small">—</td>)}<td><b>{fmt(v.total)}</b><div className="mt-small">Δ {fmt(v.delta)}</div></td><td>{v.totalJump ? <span className="mt-chip mt-late">Blocked total jump</span> : v.overCut ? <span className="mt-chip mt-purple">Extra cut warning</span> : v.delta ? <span className="mt-chip mt-warn">Changed</span> : <span className="mt-chip mt-ok">OK</span>}<div className="mt-small">{stage==="cutting"?"Cutting can overcut within tolerance":"Qty checked against previous active route/stage / process chain"}</div></td></tr>;})}</tbody></table></div>
+  const totalOpenForField = activeRows.reduce((a,row)=>a+entryOpenQty(row,stage,field),0);
+  const totalNewEntry = activeRows.reduce((a,row)=>a+validate(row).entryTotal,0);
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">DPR Quick Entry — Size-wise Day Entry</h3><div className="mt-panel-sub">Enter the new quantity for the selected production date. Existing cumulative totals are shown only for cross-check; the user enters today's/new quantity by size.</div></div>
+    <div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-toolbar-label">Entry Date</span><input className="mt-input mt-entry-date" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /><span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span><span className="mt-toolbar-label">Dept</span><select className="mt-select" value={stage} onChange={e=>{setStage(e.target.value); setDraft({});}}>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select><span className="mt-toolbar-label">Entry Field</span><select className="mt-select" value={field} onChange={e=>{setField(e.target.value); setDraft({});}}>{ENTRY_FIELDS.map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>{risk.days>1 && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate reason required" style={{minWidth:240}}/>}<button className="mt-btn primary" onClick={save}><CheckCircle2 size={14}/>Save Day Entry</button></div>{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated entries are validated as-of the selected date and stamped manager-approval-required; an explicit approval confirmation is required before save.</div>}<div className="mt-speed-note" style={{marginTop:8}}><b>Active setup:</b> {entryDate} · <b>{stageLabel(stage)}</b> · <b>{fieldLabel(field)}</b>. Showing only open rows for this field: <b>{activeRows.length}</b> of {allStageRows.length}. Open qty: <b>{fmt(totalOpenForField)}</b>. New entry: <b>{fmt(totalNewEntry)}</b>. {fieldHelp(field)} Reductions/corrections are not normal entry and need approval.</div></div>
+    <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Open Style / Order</th><th>Open Qty</th>{allSizes.map(sz=><th key={sz}>{sz}</th>)}<th>New Entry</th><th>Updated Total</th><th>Validation</th></tr></thead><tbody>{activeRows.length ? activeRows.map(row=>{ const sizes = sizesFor(row); const v=validate(row); const ctx=entryFieldContext(row,stage,field); return <tr key={row.id}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div><div className="mt-context-strip"><span className="mt-chip mt-info">{ctx.openLabel}</span></div></div></div></td><td><b>{fmt(ctx.open)}</b><div className="mt-small">{ctx.availableLabel}: {fmt(ctx.available)}</div></td>{allSizes.map(sz=> sizes.includes(sz) ? <td key={sz}>{(()=>{ const szCtx=entryFieldSizeContext(row,stage,field,sz); return <><div className="mt-small">Open {fmt(szCtx.open)}</div><input className={`mt-cell-input ${draft[`${row.id}|${sz}`]!==undefined?"dirty":""} ${v.blocked?"blocked":""}`} value={getVal(row,sz)} onChange={e=>setVal(row,sz,e.target.value)} placeholder="0" /></>; })()}</td> : <td key={sz} className="mt-small">—</td>)}<td><b>{fmt(v.entryTotal)}</b></td><td><b>{fmt(v.updatedTotal)}</b><div className="mt-small">was {fmt(v.oldTotal)}</div></td><td>{v.blocked ? <span className="mt-chip mt-late">Blocked</span> : v.overCut ? <span className="mt-chip mt-purple">Extra cut warning</span> : v.entryTotal ? <span className="mt-chip mt-warn">Ready to save</span> : <span className="mt-chip mt-ok">OK</span>}<div className="mt-small">{v.messages?.join("; ") || "Positive day entry only"}</div></td></tr>;}) : <tr><td colSpan={allSizes.length+5} style={{padding:18}}>No open styles for {stageLabel(stage)} · {fieldLabel(field)} in the current filter.</td></tr>}</tbody></table></div>
   </div>;
 }
 
-function ProcessRoutes({ rows, setRows }){
-  function toggle(rowId, key){
-    setRows(prev=>prev.map(r=>{
-      if (r.id !== rowId) return r;
-      const next = { ...r, [key]:!r[key] };
-      next.route = routeFor(next);
-      next.stages = { ...next.stages };
-      next.route.forEach(k=>{ if(!next.stages[k]) next.stages[k]=blankStage(); });
-      return next;
-    }));
-  }
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Style-wise Print / Embroidery Route Toggles</h3><div className="mt-panel-sub">Same idea as Merch Tracker optional stages. Validation follows the active route, not hard-coded columns.</div></div><div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style</th><th>Print Required</th><th>Embroidery Required</th><th>Active Route</th><th>Rule</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}><td className="mt-sticky"><b>{row.style_no}</b><div className="mt-small">{row.colour} · {row.component}</div></td><td><button className={`mt-btn ${row.print_required?"primary":"ghost"}`} onClick={()=>toggle(row.id,"print_required")}>{row.print_required?"Print ON":"Print OFF"}</button></td><td><button className={`mt-btn ${row.embroidery_required?"primary":"ghost"}`} onClick={()=>toggle(row.id,"embroidery_required")}>{row.embroidery_required?"Emb ON":"Emb OFF"}</button></td><td>{routeFor(row).map(k=><span className="mt-chip mt-muted" key={k} style={{marginRight:4}}>{STAGE_BY_KEY[k].short}</span>)}</td><td>Next stage check uses previous active route stage.</td></tr>)}</tbody></table></div></div>;
-}
-
-function sheetCell(row, stageKey){
-  const c = cellBreakup(row, stageKey);
-  if (c.skipped) return "SKIP";
-  const suffix = c.extra ? ` / +${fmt(c.extra)}` : "";
-  return `${fmt(c.received)} / ${fmt(c.open)} / ${fmt(c.ram)}R${suffix}`;
-}
-function allReportSizes(rows){
-  const preferred = ["XS","S","M","L","XL","XXL","2-3Y","3-4Y","4-5Y","5-6Y","7-8Y","9-10Y","30","32","34","36","38"];
-  const seen = new Set(rows.flatMap(sizesFor));
-  return preferred.filter(s => seen.has(s)).concat(Array.from(seen).filter(s => !preferred.includes(s)).sort());
-}
-function withHorizontalSizes(row, qtyBySize, allSizes){
-  return Object.fromEntries(allSizes.map(size => [size, n(qtyBySize?.[size]) || 0]));
-}
-function horizontalStageRow(row, stageKey, allSizes){
-  const c = cellBreakup(row, stageKey);
-  const st = sdata(row, stageKey);
-  const sizeQty = Object.fromEntries(sizeMatrix(row, stageKey, stageKey === "cutting" ? "received" : "received").map(x => [x.size, x.qty]));
-  const rs = rowStatus(row);
-  return {
-    Order: row.order_no,
-    Style: row.style_no,
-    Buyer: row.buyer,
-    Colour: row.colour,
-    Component: row.component,
-    Set_ID: row.set_id || "",
-    Dept_Stage: stageLabel(stageKey),
-    Status: rs.status,
-    Owner: rs.owner,
-    Action: rs.action,
-    ...withHorizontalSizes(row, sizeQty, allSizes),
-    Total_Received_Done: c.received,
-    Open: c.open,
-    Reject: n(st.reject),
-    Alter: n(st.alter),
-    Missing: n(st.missing),
-    RAM_Total: c.ram,
-    Idle_Days: n(st.idle),
-    Feed_Qty: stageKey === "cutting" ? n(row.order_qty) : stageFeed(row, stageKey),
-    Cell_View: sheetCell(row, stageKey),
-  };
-}
-function actualSizeSource(row, stageKey, field){
-  return !!row.size_stage?.[stageKey]?.[field];
-}
-function sizeQtyMap(row, stageKey, field){
-  return Object.fromEntries(sizeMatrix(row, stageKey, field).map(x => [x.size, n(x.qty)]));
-}
-function addSizeMaps(...maps){
-  const out = {};
-  maps.forEach(map => Object.entries(map || {}).forEach(([k,v]) => { out[k] = n(out[k]) + n(v); }));
-  return out;
-}
-function subtractSizeMaps(a, b){
-  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
-  const out = {};
-  keys.forEach(k => { out[k] = Math.max(0, n(a?.[k]) - n(b?.[k])); });
-  return out;
-}
-function sizeMapTotal(map){ return Object.values(map || {}).reduce((a,v)=>a+n(v),0); }
-function sizeMapForBucket(row, bucket){
-  const stage = bucket.stage;
-  const route = routeFor(row);
-  const idx = route.indexOf(stage);
-  let map = {};
-  if (bucket.type === "completed_not_issued") {
-    map = subtractSizeMaps(sizeQtyMap(row, stage, "output"), sizeQtyMap(row, stage, "issued"));
-  } else if (bucket.type === "received_not_processed") {
-    map = subtractSizeMaps(sizeQtyMap(row, stage, "received"), sizeQtyMap(row, stage, "output"));
-  } else if (bucket.type === "ram") {
-    map = addSizeMaps(sizeQtyMap(row, stage, "reject"), sizeQtyMap(row, stage, "alter"), sizeQtyMap(row, stage, "missing"));
-  } else if (bucket.type === "reconcile") {
-    const prevStage = idx > 0 ? route[idx - 1] : stage;
-    const feed = idx > 0 ? sizeQtyMap(row, prevStage, "issued") : distribute(n(row.order_qty), sizesFor(row));
-    const accounted = addSizeMaps(sizeQtyMap(row, stage, "received"), sizeQtyMap(row, stage, "reject"), sizeQtyMap(row, stage, "alter"), sizeQtyMap(row, stage, "missing"));
-    map = subtractSizeMaps(accounted, feed);
-  } else if (bucket.type === "extra_cut") {
-    map = subtractSizeMaps(sizeQtyMap(row, "cutting", "output"), distribute(n(row.order_qty), sizesFor(row)));
-  }
-  const total = sizeMapTotal(map);
-  if (!total && n(bucket.qty) > 0) map = distribute(n(bucket.qty), sizesFor(row));
-  return map;
-}
-function sizeTruthLabel(row, bucket){
-  const stage = bucket?.stage;
-  if (!stage) return "—";
-  const fields = bucket.type === "ram" ? ["reject","alter","missing"] : bucket.type === "completed_not_issued" ? ["output","issued"] : bucket.type === "received_not_processed" ? ["received","output"] : ["received","issued","reject","alter","missing"];
-  return fields.some(f => actualSizeSource(row, stage, f)) ? "Actual size ledger" : "Derived until size entries exist";
-}
-function horizontalBucketRow(row, bucket, allSizes){
-  const qtyBySize = sizeMapForBucket(row, bucket);
-  return {
-    Dept_Stage: stageLabel(bucket.stage),
-    Issue_Type: bucketTypeLabel(bucket.type),
-    Status: bucket.status,
-    Order: row.order_no,
-    Style: row.style_no,
-    Buyer: row.buyer,
-    Colour: row.colour,
-    Component: row.component,
-    Set_ID: row.set_id || "",
-    ...withHorizontalSizes(row, qtyBySize, allSizes),
-    Total_Qty: n(bucket.qty),
-    Percent: `${bucketPct(row,bucket)}%`,
-    Idle_Days: n(bucket.idle),
-    Idle_Bucket: agingBucket(n(bucket.idle)),
-    Owner: bucket.owner,
-    Support: bucket.support || "",
-    Action: bucket.action,
-    Size_Source: sizeTruthLabel(row, bucket),
-  };
-}
-function findRowForLedger(rows, entry){
-  return rows.find(row =>
-    String(row.order_no || "") === String(entry.order_no || entry.order || "") &&
-    String(row.style_no || "") === String(entry.style_no || entry.style || "") &&
-    String(row.colour || "") === String(entry.colour || "") &&
-    String(row.component || "") === String(entry.component || "")
-  ) || null;
-}
-function ledgerHorizontalRows(rows, ledgerRows, start, end){
-  const periodRows = (ledgerRows || []).filter(x => inDateRange(x.entry_date || x.entryDate || x.date, start, end));
-  if (!periodRows.length) {
-    return [{ Message:`No production activity entries found for ${start === end ? start : `${start} to ${end}`}. Daily/weekly/monthly dashboards use activity entry_date, not when the entry was typed.` }];
-  }
-  const allSizes = allReportSizes(rows);
-  const map = new Map();
-  periodRows.forEach(entry => {
-    const row = findRowForLedger(rows, entry) || {};
-    const key = [entry.entry_date || entry.entryDate || entry.date, entry.stage, entry.entry_type || entry.entryType || "", entry.order_no || entry.order, entry.style_no || entry.style, entry.colour, entry.component, entry.entry_source || entry.source || ""].join("|");
-    const old = map.get(key) || {
-      Entry_Date: entry.entry_date || entry.entryDate || entry.date || "",
-      Stage: stageLabel(entry.stage),
-      Entry_Type: entry.entry_type || entry.entryType || "",
-      Order: entry.order_no || entry.order || row.order_no || "",
-      Style: entry.style_no || entry.style || row.style_no || "",
-      Buyer: entry.buyer || row.buyer || "",
-      Colour: entry.colour || row.colour || "",
-      Component: entry.component || row.component || "",
-      Source: entry.entry_source || entry.source || "",
-      Backdated: entry.is_backdated || entry.isBackdated ? "Yes" : "No",
-      Reason: entry.backdate_reason || entry.reason || "",
-      Approval: entry.approval_status || entry.approval || "",
-      Created_At: entry.created_at || entry.createdAt || "",
-      _sizes:{},
-      Total_Qty:0,
-    };
-    const size = entry.size || "NO_SIZE";
-    old._sizes[size] = n(old._sizes[size]) + n(entry.qty ?? entry.delta);
-    old.Total_Qty += n(entry.qty ?? entry.delta);
-    map.set(key, old);
-  });
-  return Array.from(map.values()).map(r => {
-    const sizeCols = withHorizontalSizes({}, r._sizes, allSizes);
-    const {_sizes, ...core} = r;
-    return { ...core, ...sizeCols, Total_Qty: core.Total_Qty };
-  }).sort((a,b)=>String(a.Entry_Date).localeCompare(String(b.Entry_Date)) || String(a.Stage).localeCompare(String(b.Stage)) || String(a.Style).localeCompare(String(b.Style)));
-}
-function reconciliationBoardRows(rows){
-  const map = new Map();
-  rows.forEach(row => issueBuckets(row).filter(b=>b.type === "reconcile").forEach(bucket => {
-    const key = `${bucket.stage}|${bucket.status}`;
-    const old = map.get(key) || { stage:bucket.stage, Dept:stageLabel(bucket.stage), Reconcile_Type:bucket.status, Qty:0, Styles:new Set(), Owner:bucket.owner, Oldest:0, Action:bucket.action };
-    old.Qty += n(bucket.qty);
-    old.Styles.add(row.id);
-    old.Oldest = Math.max(old.Oldest, n(bucket.idle));
-    old.Owner = bucket.owner || old.Owner;
-    map.set(key, old);
-  }));
-  return Array.from(map.values()).map(x=>({ stage:x.stage, type:"reconcile", Dept:x.Dept, Reconcile_Type:x.Reconcile_Type, Qty:x.Qty, Styles:x.Styles.size, Oldest_Idle:`${x.Oldest}d`, Owner:x.Owner, Action:x.Action })).sort((a,b)=>b.Qty-a.Qty);
-}
-function buildReportSheets(rows, ledger){
-  const allSizes = allReportSizes(rows);
-  const allBuckets = rows.flatMap(row => issueBuckets(row).map(bucket => ({ row, bucket })));
-  const activeStageRows = STAGES.flatMap(stage => rows.filter(row => routeFor(row).includes(stage.key)).map(row => horizontalStageRow(row, stage.key, allSizes)));
-  const deptSheets = STAGES.map(stage => ({
-    name: `${stage.short} WIP`,
-    rows: rows.filter(row => routeFor(row).includes(stage.key)).map(row => horizontalStageRow(row, stage.key, allSizes)),
-  }));
-  const factorySummary = STAGES.map(stage => {
-    const stageRows = rows.filter(row => routeFor(row).includes(stage.key));
-    const received = stageRows.reduce((a,row)=>a+cellBreakup(row, stage.key).received,0);
-    const open = stageRows.reduce((a,row)=>a+cellBreakup(row, stage.key).open,0);
-    const ram = stageRows.reduce((a,row)=>a+cellBreakup(row, stage.key).ram,0);
-    const reconcile = stageRows.reduce((a,row)=>a+Math.max(0, cellBreakup(row, stage.key).extra),0);
-    return { Dept: stage.label, Styles: stageRows.length, Received_Done: received, Open: open, RAM_Total: ram, Reconcile_Over: reconcile, Main_Owner: stage.owner };
-  });
-  const wipStatus = rows.map(row => {
-    const rs = rowStatus(row);
-    return {
-      Order: row.order_no,
-      Style: row.style_no,
-      Buyer: row.buyer,
-      Colour: row.colour,
-      Component: row.component,
-      Set_ID: row.set_id || "",
-      Photo_URL: row.photo_url || "",
-      Current_Status: rs.status, Status_Breakup: statusText(row),
-      Current_Owner: rs.owner,
-      Open_Qty: rs.qty,
-      Idle_Days: rs.idle,
-      Next_Action: rs.action,
-      Route: routeFor(row).map(stageLabel).join(" > "),
-      Cut: sheetCell(row, "cutting"),
-      Print: routeFor(row).includes("printing") ? sheetCell(row, "printing") : "SKIP",
-      Embroidery: routeFor(row).includes("embroidery") ? sheetCell(row, "embroidery") : "SKIP",
-      Stitch: sheetCell(row, "stitching"),
-      Check: sheetCell(row, "checking"),
-      Iron: sheetCell(row, "iron"),
-      Pack: sheetCell(row, "packing"),
-      Dispatch: sheetCell(row, "dispatch"),
-    };
-  });
-  const bucketSheet = (type) => allBuckets.filter(x => x.bucket.type === type).map(x => horizontalBucketRow(x.row, x.bucket, allSizes));
-  const ramRows = allBuckets.filter(x => x.bucket.type === "ram").map(x => horizontalBucketRow(x.row, x.bucket, allSizes));
-  const ownerRows = allBuckets.filter(x => x.bucket.type !== "extra_cut").map(x => horizontalBucketRow(x.row, x.bucket, allSizes));
-  const processRows = STAGES.filter(s => ["printing","embroidery"].includes(s.key)).flatMap(stage => rows.filter(row => routeFor(row).includes(stage.key)).map(row => horizontalStageRow(row, stage.key, allSizes)));
-  const partyRows = STAGES.flatMap(stage => rows.filter(row => routeFor(row).includes(stage.key) && sdata(row, stage.key).party).map(row => ({
-    Party: sdata(row, stage.key).party,
-    Process: stage.label,
-    ...horizontalStageRow(row, stage.key, allSizes),
-  })));
-  const dispatchRows = rows.map(row => horizontalStageRow(row, "dispatch", allSizes));
-  const monthlyRows = rows.map(row => {
-    const rs = rowStatus(row);
-    return {
-      Month: today().slice(0,7),
-      Buyer: row.buyer,
-      Order: row.order_no,
-      Style: row.style_no,
-      Colour: row.colour,
-      Component: row.component,
-      ...withHorizontalSizes(row, Object.fromEntries(sizeMatrix(row, "stitching", "received").map(x=>[x.size,x.qty])), allSizes),
-      Stitched_Total: cellBreakup(row,"stitching").received,
-      Packed_Total: cellBreakup(row,"packing").received,
-      Dispatched_Total: cellBreakup(row,"dispatch").received,
-      Current_Status: rs.status,
-      Owner: rs.owner,
-      Open_Qty: rs.qty,
-    };
-  });
-  const ledgerRows = (ledger || []).map(x => ({
-    Entry_Date: x.entry_date || x.entryDate || "",
-    Created_At: x.created_at || x.createdAt || "",
-    Source: x.source || "",
-    Order: x.order_no || x.order || "",
-    Style: x.style_no || x.style || "",
-    Colour: x.colour || "",
-    Component: x.component || "",
-    Stage: x.stage || "",
-    Size: x.size || "",
-    Old_Qty: x.old_qty ?? x.oldQty ?? "",
-    New_Qty: x.new_qty ?? x.newQty ?? "",
-    Delta: x.qty ?? x.delta ?? "",
-    Backdated: x.is_backdated ?? x.isBackdated ?? "",
-    Reason: x.backdate_reason || x.reason || "",
-    Approval: x.approval_status || x.approval || "",
-  }));
-  return {
-    allSizes,
-    factorySummary,
-    wipStatus,
-    activeStageRows,
-    deptSheets,
-    completedNotIssued: bucketSheet("completed_not_issued"),
-    receivedNotProcessed: bucketSheet("received_not_processed"),
-    reconcile: bucketSheet("reconcile"),
-    ramRows,
-    ownerRows,
-    lineEfficiencyRows: lineEfficiencyRows(rows, ledger),
-    bottleneckRows: flowBottleneckRows(rows, ledger),
-    agingRows: agingStuckRows(rows),
-    qualityRows: qualityLossRows(rows),
-    processRows,
-    partyRows,
-    closureRows: rows.map(row => {
-      const rs = rowStatus(row);
-      return { Order:row.order_no, Style:row.style_no, Buyer:row.buyer, Colour:row.colour, Component:row.component, Status:rs.status, Closure_Owner:"Production Coordinator", WIP_Owner:rs.owner, Open_Qty:rs.qty, Can_Close:rs.qty ? "No" : "Yes", Action: rs.qty ? `${rs.action} · Coordinator to close/follow up style` : "Coordinator can verify and close" };
-    }),
-    dispatchRows,
-    monthlyRows,
-    ledgerRows,
-  };
-}
-
-
-function stagePlanSources(row, dept){
-  const route = routeFor(row);
-  const idx = route.indexOf(dept);
-  const prev = idx > 0 ? route[idx-1] : null;
-  const prevStage = prev ? sdata(row, prev) : null;
-  const st = sdata(row, dept);
-  const sources = [];
-  if (prev) {
-    sources.push({ key:`${prev}_ready`, label:`${stageLabel(prev)} completed / not issued`, qty:Math.max(0, n(prevStage.output) - n(prevStage.issued)), readyType:"Actual ready before handover" });
-    sources.push({ key:`${dept}_with_dept`, label:`With ${stageLabel(dept)}`, qty:Math.max(0, stageFeed(row, dept) - n(st.output) - loss(st)), readyType:"Issued/accepted by dept" });
-  }
-  if (dept === "cutting") sources.push({ key:"order_balance", label:"Order balance", qty:Math.max(0, n(row.order_qty) - n(sdata(row,"cutting").output)), readyType:"Order qty balance" });
-  sources.push({ key:"planned_ready", label:"Planned upstream ready", qty:0, readyType:"Planned ready / risk" });
-  sources.push({ key:"manual_future", label:"Manual future plan", qty:0, readyType:"Manual / not yet ready" });
-  return sources;
-}
-function bestPlanSource(row, dept){
-  const sources = stagePlanSources(row, dept);
-  return sources.find(s=>s.qty>0) || sources[sources.length-1];
-}
-function demoPlanRowsFromRows(rows){
-  const base = previousWorkingDay();
-  const stRows = rows.slice(0,3).map((r,i)=>{
-    const source = bestPlanSource(r,"stitching");
-    return { id:uid("plan"), plan_date:ymd(addDays(base,i)), dept:"stitching", line:r.line || `STF-${i+1}`, row_id:r.id, order_no:r.order_no, style_no:r.style_no, buyer:r.buyer, colour:r.colour, component:r.component, source:source.key, source_label:source.label, source_type:source.readyType, available_qty:source.qty, planned_qty: Math.max(100, Math.min(source.qty || Math.round(n(r.order_qty)*0.35), n(r.order_qty))), eight_hr_target:n(r.daily_target || r.plan_qty || 1200), changeover:i===1, remaining_hours:i===1?4.5:8, difficulty:i===0?"Difficult":"Normal", priority:i===0?"High":"Normal", status:"Draft", remarks:"Demo rolling stitching plan" };
-  });
-  const deptRows = rows.slice(0,4).map((r,i)=>{
-    const dept = r.print_required ? "printing" : (r.embroidery_required ? "embroidery" : ["checking","iron","packing"][i%3]);
-    const source = bestPlanSource(r,dept);
-    return { id:uid("plan"), plan_date:ymd(addDays(base,i%2)), dept, line:"", row_id:r.id, order_no:r.order_no, style_no:r.style_no, buyer:r.buyer, colour:r.colour, component:r.component, source:source.key, source_label:source.label, source_type:source.readyType, available_qty:source.qty, planned_qty: Math.max(50, Math.min(source.qty || Math.round(n(r.order_qty)*0.3), n(r.order_qty))), eight_hr_target:0, changeover:false, remaining_hours:8, difficulty:"Normal", priority:i===0?"High":"Normal", status:"Draft", remarks:"Demo department day plan" };
-  });
-  return [...stRows, ...deptRows];
-}
-function plannedByRowStage(planRows, rowId, dept, upToDate="9999-12-31"){
-  return (planRows||[]).filter(p=>p.row_id===rowId && p.dept===dept && String(p.plan_date||"")<=upToDate).reduce((a,p)=>a+n(p.planned_qty),0);
-}
-function planningPoolRows(rows, dept, planRows=[]){
-  return rows.filter(row=>dept === "manual" || routeFor(row).includes(dept)).map(row=>{
-    const source = bestPlanSource(row, dept === "manual" ? "stitching" : dept);
-    const planned = plannedByRowStage(planRows, row.id, dept);
-    const rs = rowStatus(row);
-    return { row, Dept:stageLabel(dept), Order:row.order_no, Style:row.style_no, Buyer:row.buyer, Colour:row.colour, Component:row.component, Route:routeType(row), Source:source.label, Source_Type:source.readyType, Available:source.qty, Already_Planned:planned, Balance_To_Plan:Math.max(0, (source.qty||n(row.order_qty)) - planned), Difficulty:row.difficulty || "Set in plan", Priority:rs.idle>=7?"High":"Normal", Status:rs.status };
-  }).sort((a,b)=>n(b.Available)-n(a.Available));
-}
 function planRowEffectiveQty(p){
   const target = n(p.eight_hr_target);
   if (!p.changeover || !target) return n(p.planned_qty);
@@ -1886,7 +1838,7 @@ function parseOrderUploadText(text){
       photo_folder_url:get(o,["folder","photo folder","onedrive","onedrive url","photo_folder_url"]),
       print_required:boolFrom(get(o,["print","print req","print_required"])),
       embroidery_required:boolFrom(get(o,["embroidery","emb req","embroidery_required"])),
-      stages:{ cutting:{ ...blankStage() }, printing:{ ...blankStage() }, embroidery:{ ...blankStage() }, stitching:{ ...blankStage() }, checking:{ ...blankStage() }, iron:{ ...blankStage() }, packing:{ ...blankStage() }, dispatch:{ ...blankStage() } },
+      stages:{ cutting:{ ...blankStage() }, printing:{ ...blankStage() }, embroidery:{ ...blankStage() }, stitching:{ ...blankStage() }, checking:{ ...blankStage() }, packing:{ ...blankStage() }, dispatch:{ ...blankStage() } },
     };
   }).filter(Boolean);
 }
@@ -1919,7 +1871,7 @@ function PlanningView({ rows, planRows, setPlanRows, ledger, setRows }){
   const [mode,setMode] = useState("stitching");
   const [dept,setDept] = useState("printing");
   const [date,setDate] = useState(defaultEntryDate(ledger));
-  const [line,setLine] = useState("STF-1");
+  const [line,setLine] = useState(productionLineNames()[0] || "STF-1");
   const [selectedRow,setSelectedRow] = useState(rows[0]?.id || "");
   const [manualQty,setManualQty] = useState("");
   const [eightHr,setEightHr] = useState("1200");
@@ -1946,7 +1898,7 @@ function PlanningView({ rows, planRows, setPlanRows, ledger, setRows }){
   return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Planning</h3><div className="mt-panel-sub">Rolling plan. Stitching is line-wise; other departments are day-wise. Manual means you can select style + quantity even if upstream is not ready yet, and the row is marked as Manual Future / Risk.</div></div>
     <div className="mt-section no-print"><div className="mt-filter-row"><button className={`mt-btn ${mode==="stitching"?"primary":"ghost"}`} onClick={()=>setMode("stitching")}>Stitching line-wise</button><button className={`mt-btn ${mode==="dept"?"primary":"ghost"}`} onClick={()=>setMode("dept")}>Other dept day-wise</button>{mode==="dept" && <select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.filter(s=>!["stitching"].includes(s.key)).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>}<span className="mt-chip mt-info">Changeover rule · next style = 70% of remaining run hours</span><span className="mt-chip mt-muted">Actuals will roll shortfall forward</span></div></div>
     <div className="mt-two"><div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">{stageLabel(activeDept)} Planning Pool</h3><div className="mt-panel-sub">Department-specific pool. Ready quantities come from route/WIP; manual future planning is allowed but marked at risk.</div></div><div className="mt-table-wrap"><table className="mt-table"><thead><tr><th>Style</th><th>Source</th><th>Available</th><th>Planned</th><th>Status</th><th>Action</th></tr></thead><tbody>{pool.map(p=><tr key={p.row.id} onClick={()=>setSelectedRow(p.row.id)} className={selectedRow===p.row.id?"drillable":""}><td><b>{p.Style}</b><div className="mt-small">{p.Order} · {p.Buyer} · {p.Colour} · {p.Component}</div></td><td>{p.Source}<div className="mt-small">{p.Source_Type}</div></td><td>{fmt(p.Available)}</td><td>{fmt(p.Already_Planned)}</td><td>{p.Status}</td><td><button className="mt-btn ghost" onClick={(e)=>{e.stopPropagation();setSelectedRow(p.row.id);}}>Select</button></td></tr>)}</tbody></table></div></div>
-      <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Add / Manual Plan Row</h3><div className="mt-panel-sub">Fast add. For manual future plan, choose source = Manual Future Plan and enter quantity. This can place a style in printing plan even if cutting is not done yet.</div></div><div className="mt-section" style={{display:"grid", gap:8}}><label className="mt-small">Plan date</label><input className="mt-input" type="date" value={date} onChange={e=>setDate(e.target.value)}/>{activeDept==="stitching" && <><label className="mt-small">Line</label><input className="mt-input" value={line} onChange={e=>setLine(e.target.value)} placeholder="STF-1"/></>}<label className="mt-small">Style</label><select className="mt-select" value={selectedRow} onChange={e=>setSelectedRow(e.target.value)}>{rows.map(r=><option key={r.id} value={r.id}>{r.style_no} · {r.buyer} · {r.colour} · {r.component}</option>)}</select><label className="mt-small">Source</label><select className="mt-select" value={source} onChange={e=>setSource(e.target.value)}>{sourceOptions.map(s=><option key={s.key} value={s.key}>{s.label} · {fmt(s.qty)} · {s.readyType}</option>)}</select><div className="mt-two"><div><label className="mt-small">Plan qty</label><input className="mt-input" value={manualQty} onChange={e=>setManualQty(e.target.value.replace(/[^0-9]/g,""))} placeholder={`Suggested ${fmt(recommended)}`}/></div><div><label className="mt-small">8hr target</label><input className="mt-input" value={eightHr} onChange={e=>setEightHr(e.target.value.replace(/[^0-9]/g,""))}/></div></div><div className="mt-two"><label className="mt-small"><input type="checkbox" checked={changeover} onChange={e=>setChangeover(e.target.checked)}/> Changeover after previous style</label><div><label className="mt-small">Remaining hours after current style completes</label><input className="mt-input" value={remainingHours} onChange={e=>setRemainingHours(e.target.value.replace(/[^0-9.]/g,""))}/></div></div><div className="mt-speed-note">If changeover is checked: target = (8hr target ÷ 8) × remaining run hours × 70%. Current suggested qty: <b>{fmt(recommended)}</b>.</div><button className="mt-btn primary" onClick={addPlan}>Add to {stageLabel(activeDept)} plan</button></div></div></div>
+      <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Add / Manual Plan Row</h3><div className="mt-panel-sub">Fast add. For manual future plan, choose source = Manual Future Plan and enter quantity. This can place a style in printing plan even if cutting is not done yet.</div></div><div className="mt-section" style={{display:"grid", gap:8}}><label className="mt-small">Plan date</label><input className="mt-input" type="date" value={date} onChange={e=>setDate(e.target.value)}/>{activeDept==="stitching" && <><label className="mt-small">Line</label><select className="mt-select" value={line} onChange={e=>setLine(e.target.value)}>{productionLineNames().map(l=><option key={l} value={l}>{l}</option>)}</select><div className="mt-small">Edit/add line names in Settings → Production Rules.</div></>}<label className="mt-small">Style</label><select className="mt-select" value={selectedRow} onChange={e=>setSelectedRow(e.target.value)}>{rows.map(r=><option key={r.id} value={r.id}>{r.style_no} · {r.buyer} · {r.colour} · {r.component}</option>)}</select><label className="mt-small">Source</label><select className="mt-select" value={source} onChange={e=>setSource(e.target.value)}>{sourceOptions.map(s=><option key={s.key} value={s.key}>{s.label} · {fmt(s.qty)} · {s.readyType}</option>)}</select><div className="mt-two"><div><label className="mt-small">Plan qty</label><input className="mt-input" value={manualQty} onChange={e=>setManualQty(e.target.value.replace(/[^0-9]/g,""))} placeholder={`Suggested ${fmt(recommended)}`}/></div><div><label className="mt-small">8hr target</label><input className="mt-input" value={eightHr} onChange={e=>setEightHr(e.target.value.replace(/[^0-9]/g,""))}/></div></div><div className="mt-two"><label className="mt-small"><input type="checkbox" checked={changeover} onChange={e=>setChangeover(e.target.checked)}/> Changeover after previous style</label><div><label className="mt-small">Remaining hours after current style completes</label><input className="mt-input" value={remainingHours} onChange={e=>setRemainingHours(e.target.value.replace(/[^0-9.]/g,""))}/></div></div><div className="mt-speed-note">If changeover is checked: target = (8hr target ÷ 8) × remaining run hours × 70%. Current suggested qty: <b>{fmt(recommended)}</b>.</div><button className="mt-btn primary" onClick={addPlan}>Add to {stageLabel(activeDept)} plan</button></div></div></div>
     <div className="mt-section"><SimpleTable title={`${stageLabel(activeDept)} Plan Rows`} sub="Editable planning rows. Shortfall rolls forward conceptually once actual DPR is posted; plan-vs-achieved flags style adherence, not only total qty." rows={visiblePlans.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Style:p.style_no, Buyer:p.buyer, Source:p.source_label, Source_Type:p.source_type, Plan_Qty:p.planned_qty, Target_8hr:p.eight_hr_target||"—", Changeover:p.changeover?"Yes":"No", Remaining_Hours:p.remaining_hours, Status:p.status, Remarks:p.remarks }))} empty="No plan rows for this department yet." /></div>
     <div className="mt-section"><SimpleTable title="Plan vs Achieved / Style Adherence" sub="Production is not only total qty. If easier styles are produced instead of the planned style, this table exposes style/mix adherence gaps." rows={pva} empty="No plan rows yet." /></div>
     <div className="mt-section"><h3 className="mt-panel-title">Bulk Order / Style Update</h3><div className="mt-panel-sub">Planned workflow: upload/copy order sheet with Order, Style, Buyer, Colour, Component, Size, Qty, Route, Print/Emb toggles, SMV/8hr target. This will update the planning pool and production orders in one go. Full parser comes with the next Supabase import patch.</div><div className="mt-speed-note">For now this screen defines the format and workflow; keep using GitHub/Supabase seed for demo rows until the importer is added.</div></div>
@@ -2120,16 +2072,27 @@ function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose
   const stage = stageKey || rs.stage;
   const st = sdata(row,stage);
   const c = cellBreakup(row,stage);
+  const feed = stage === "cutting" ? n(row.order_qty) : stageFeed(row,stage);
+  const readyToIssue = Math.max(0, n(st.output) - n(st.issued));
   const buckets = issueBuckets(row).filter(b=>b.stage===stage);
-  return <div className="mt-drawer"><div className="mt-drawer-head"><div><div style={{fontFamily:"'Archivo',sans-serif", fontSize:20, fontWeight:800}}>{row.style_no}</div><div className="mt-sub">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div></div><button className="mt-btn" onClick={onClose}><X size={16}/></button></div><div className="mt-drawer-body">
-    <LazyStylePhoto row={row} large/>
-    <div className="mt-grid" style={{gridTemplateColumns:"repeat(3,minmax(0,1fr))", marginBottom:12}}><Kpi label="Status" value={rs.status} note={rs.action} tone={rs.tone}/><Kpi label="Owner" value={rs.owner} note={rs.support || "Primary owner"}/><Kpi label="Open Qty" value={fmt(rs.qty)} note={`${rs.idle || 0} days idle`}/></div>
-    <div className="mt-card" style={{marginBottom:12}}><div className="mt-section"><h3 className="mt-panel-title">{stageLabel(stage)} Department Detail</h3><div className="mt-panel-sub">Main WIP cell stays simple; edit size-wise values below when the cell itself is used as entry.</div></div><div className="mt-section"><span className="mt-chip mt-ok">Received/Done {fmt(c.received)}</span> <span className="mt-chip mt-warn">Open {fmt(c.open)}</span> <span className="mt-chip mt-late">R/A/M {fmt(c.ram)}</span> {c.extra ? <span className="mt-chip mt-purple">Extra/Over {fmt(c.extra)}</span> : null}</div><div className="mt-section mt-two"><div><b>Quantities</b><p className="mt-small">Feed / issued to stage: {fmt(stageFeed(row,stage))}<br/>Received: {fmt(st.received)}<br/>Completed/output: {fmt(st.output)}<br/>Issued forward: {fmt(st.issued)}<br/>Reject: {fmt(st.reject)} · Alter: {fmt(st.alter)} · Missing: {fmt(st.missing)}</p></div><div><b>Safe validation</b><p className="mt-small">Cutting can overcut. After cutting, downstream total cannot jump above prior issued quantity. Backdated edits must pass as-of-date quantity checks and store audit date separately from created time.</p></div></div></div>
-    <SimpleTable title="Status / Current Drilldown" sub="Shows reconcile plus the current production bucket with qty and percentage. This is the same logic used in the Status column." rows={statusBreakdown(row).map(b=>({ Status:b.status, Stage:stageLabel(b.stage), Qty:b.qty, Percent:`${bucketPct(row,b)}%`, Owner:b.owner, Support:b.support, Action:b.action, Idle:`${b.idle||0}d` }))} empty="No open status bucket." />
-    <div style={{height:12}} />
-    <SizeCumulativeEditor row={row} rows={rows} setRows={setRows} ledger={ledger} setLedger={setLedger} stage={stage} initialField="received" source="wip_view_cell_edit" />
-    <div style={{height:12}} />
-    <SimpleTable title="Open Buckets for this Department" sub="Each bucket can become an owner chase item." rows={buckets.map(b=>({ Status:b.status, Qty:b.qty, Percent:`${bucketPct(row,b)}%`, Owner:b.owner, Support:b.support, Action:b.action, Idle:`${b.idle||0}d` }))} empty="No open bucket for this department." />
+  const primaryBucket = buckets.find(b=>b.type!=="extra_cut") || buckets[0];
+  const sizeRows = sizesFor(row).map(size=>{
+    const feedSz = n(stageFeedBySize(row,stage)[size]);
+    const out = n(sizeMatrix(row,stage,"output").find(x=>x.size===size)?.qty);
+    const iss = n(sizeMatrix(row,stage,"issued").find(x=>x.size===size)?.qty);
+    const rej = n(sizeMatrix(row,stage,"reject").find(x=>x.size===size)?.qty);
+    const alt = n(sizeMatrix(row,stage,"alter").find(x=>x.size===size)?.qty);
+    const miss = n(sizeMatrix(row,stage,"missing").find(x=>x.size===size)?.qty);
+    const ram = rej + alt + miss;
+    return { Size:size, Feed:feedSz, Output:out, Open_Work:Math.max(0, feedSz-out-ram), Ready_To_Issue:Math.max(0,out-iss), RAM:ram };
+  });
+  return <div className="mt-drawer"><div className="mt-drawer-head"><div><div style={{fontFamily:"'Archivo',sans-serif", fontSize:20, fontWeight:800}}>{stageLabel(stage)} · {row.style_no}</div><div className="mt-sub">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div></div><button className="mt-btn" onClick={onClose}><X size={16}/></button></div><div className="mt-drawer-body">
+    <div className="mt-entry-highlight"><strong>Focused WIP cell: {stageLabel(stage)}</strong><div className="mt-context-strip"><span className="mt-chip mt-info">Selected dept only</span><span className="mt-chip mt-muted">Order {row.order_no}</span><span className="mt-chip mt-muted">{row.colour} · {row.component}</span>{primaryBucket && <span className={`mt-chip ${statusClass(primaryBucket.tone)}`}>{primaryBucket.status}</span>}</div><div className="mt-panel-sub" style={{marginTop:6}}>Only the clicked department's breakup is shown first. Full style/route detail is collapsed below.</div></div>
+    <div className="mt-grid" style={{gridTemplateColumns:"repeat(4,minmax(0,1fr))", marginBottom:12}}><Kpi label={stage === "cutting" ? "Order Qty" : "Feed to Dept"} value={fmt(feed)} note={stage === "cutting" ? "Cutting base" : "Previous dept issued/accepted"}/><Kpi label="Completed / Output" value={fmt(n(st.output))} note="Good quantity done" tone="ok"/><Kpi label="Open Work" value={fmt(c.open)} note="Still with this dept" tone={c.open?"warn":"ok"}/><Kpi label="Ready to Issue" value={fmt(readyToIssue)} note="Completed but not moved forward" tone={readyToIssue?"info":"ok"}/></div>
+    <div className="mt-section mt-card" style={{marginBottom:12}}><h3 className="mt-panel-title">{stageLabel(stage)} breakup</h3><div className="mt-context-strip"><span className="mt-chip mt-ok">Done {fmt(c.received)}</span><span className="mt-chip mt-warn">Open {fmt(c.open)}</span><span className="mt-chip mt-late">R/A/M {fmt(c.ram)}</span>{c.extra ? <span className="mt-chip mt-purple">Extra/Over {fmt(c.extra)}</span> : null}<span className="mt-chip mt-info">Owner {primaryBucket?.owner || stageOwner(stage)}</span></div></div>
+    <SizeCumulativeEditor row={row} rows={rows} setRows={setRows} ledger={ledger} setLedger={setLedger} stage={stage} initialField={c.open ? "output" : readyToIssue ? "issued" : "output"} source="wip_view_cell_day_entry" />
+    <details className="mt-fold"><summary>View {stageLabel(stage)} size breakup</summary><SimpleTable title={`${stageLabel(stage)} size-wise open quantities`} sub="Only the selected/clicked department. Use this to see what is open by size before entering." rows={sizeRows} empty="No size rows." /></details>
+    <details className="mt-fold"><summary>View full style detail / route / history</summary><div className="mt-section"><LazyStylePhoto row={row} large/><div className="mt-grid" style={{gridTemplateColumns:"repeat(3,minmax(0,1fr))", marginBottom:12}}><Kpi label="Overall Status" value={rs.status} note={rs.action} tone={rs.tone}/><Kpi label="Overall Owner" value={rs.owner} note={rs.support || "Primary owner"}/><Kpi label="Overall Open Qty" value={fmt(rs.qty)} note={`${rs.idle || 0} days idle`}/></div></div><SimpleTable title="Open buckets for selected department" sub="Owner chase items for this department." rows={buckets.map(b=>({ Status:b.status, Qty:b.qty, Percent:`${bucketPct(row,b)}%`, Owner:b.owner, Support:b.support, Action:b.action, Idle:`${b.idle||0}d` }))} empty="No open bucket for this department." /><div style={{height:12}}/><SimpleTable title="Full current status drilldown" sub="Full status logic across this style/component." rows={statusBreakdown(row).map(b=>({ Status:b.status, Stage:stageLabel(b.stage), Qty:b.qty, Percent:`${bucketPct(row,b)}%`, Owner:b.owner, Support:b.support, Action:b.action, Idle:`${b.idle||0}d` }))} empty="No open status bucket." /></details>
   </div></div>;
 }
 
@@ -2215,10 +2178,27 @@ function PhotoManager({ rows, setRows }){
 
 function SettingsView({ onChanged }){
   const [tol,setTol]=useState(PROD_SETTINGS.cuttingTolerancePct);
+  const [dispatchHold,setDispatchHold]=useState(PROD_SETTINGS.dispatchRamHoldPct);
+  const [linesText,setLinesText]=useState(productionLineNames().join("\n"));
   function applyTol(v){ const num=Math.max(0, Number(String(v).replace(/[^0-9.]/g,"")) || 0); setTol(num); PROD_SETTINGS.cuttingTolerancePct=num; onChanged?.(); }
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Rules</h3><div className="mt-panel-sub">Editable business rules — single source of truth used by entry validation, status flags and dashboards. Applies on the next screen render.</div></div><div className="mt-section"><div className="mt-toolbar"><span className="mt-toolbar-label">Cutting tolerance %</span><input className="mt-input" style={{maxWidth:120}} value={tol} onChange={e=>applyTol(e.target.value)} /><span className="mt-small">Cutting may exceed order qty up to this %. One value now drives the entry allowed-limit, the extra-cut status flag and the cell marker (previously 8% / 5% / 0% in three places).</span></div></div><div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included through V7.5.1 logic</b><ul className="mt-small"><li>Option A cumulative size-wise entry</li><li>Print / embroidery route toggles</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Issued-to-department means accepted/with department; no normal issued-not-received bucket</li><li>Completed-not-issued-forward owner = Production Coordinator + Production Manager</li><li>Individual owner chase: Department HOD owns work-not-completed; Coordinator + Production Manager own completed-not-issued-forward</li><li>Style closure owner = Production Coordinator + Dept HOD; Production Manager handles movement/escalation/approval</li><li>WIP table page-specific filters, sorting, quick status buckets, and size-breakup toggle</li><li>Dashboard uses current-bin WIP logic: once a quantity moves to the next stage, it leaves the previous department bin.</li><li>Dashboard includes daily / 4-4-5 weekly / calendar-month production numbers, department × issue-type board, owner activity breakup, and production meeting focus.</li><li>Department-first dashboard pack: plan-vs-achieved/line efficiency, bottleneck/flow, aging/stuck WIP, quality/loss rate, party/outsource pending.</li><li>Dashboard drilldowns now use dashboard-specific rows, subtotal summaries, real size-stage data where available, and a visible size-source indicator.</li><li>Monthly comparison tab against Stitching Receiving with drillable summary filters</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Editable WIP cells create entries instead of raw overwrite</li><li>Entry date / backdated audit logic with next-day default, same-day confirmation, reason and approval status</li><li>Live idle recalculation from production ledger where activity exists</li><li>Set convergence: a set packs/ships only min(components); Sets board + WIP chip show packable sets and unmatched pieces</li><li>Backdated entries validate feed as-of the entry date from the ledger; locked (older) backdated entries require reason + explicit manager-approval confirmation and are stamped in the audit ledger</li><li>Single configurable cutting tolerance (Production Rules above) replaces the old 8%/5%/0% mismatch</li><li>Party/outsource pending is consistent with the WIP open bucket (feed − output − R/A/M); outsourced stages label the with-department bucket as Pending at party</li><li>R/A/M cumulative entry path and impossible sequence reconcile checks</li><li>Planning tab: stitching line-wise rolling plan, department day-wise plan, department-specific planning pool, manual future plan, changeover remaining-hours formula, plan-vs-achieved style adherence, and Review control room. Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-info"><Lock size={12}/> Future RLS</span> <span className="mt-small">Keep this as a development app. We tighten RLS before real users and live factory data.</span></div></div>;
+  function applyDispatchHold(v){ const num=Math.max(0, Number(String(v).replace(/[^0-9.]/g,"")) || 0); setDispatchHold(num); PROD_SETTINGS.dispatchRamHoldPct=num; onChanged?.(); }
+  function saveLines(){
+    const lines = linesText.split(/\r?\n|,/).map(x=>x.trim()).filter(Boolean);
+    if (!lines.length) { alert("Add at least one stitching line name."); return; }
+    PROD_SETTINGS.lineNames = Array.from(new Set(lines));
+    try { localStorage.setItem("production_line_names", JSON.stringify(PROD_SETTINGS.lineNames)); } catch {}
+    onChanged?.();
+    alert(`Saved ${PROD_SETTINGS.lineNames.length} line name(s).`);
+  }
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Rules</h3><div className="mt-panel-sub">Editable business rules — single source of truth used by entry validation, status flags and dashboards. Applies on the next screen render.</div></div>
+    <div className="mt-section" style={{display:"grid", gap:10}}>
+      <div className="mt-toolbar"><span className="mt-toolbar-label">Cutting tolerance %</span><input className="mt-input" style={{maxWidth:120}} value={tol} onChange={e=>applyTol(e.target.value)} /><span className="mt-small">Cutting may exceed order qty up to this %. One value drives entry allowed-limit, extra-cut status flag and cell marker.</span></div>
+      <div className="mt-toolbar"><span className="mt-toolbar-label">Dispatch hold if R/A/M % above</span><input className="mt-input" style={{maxWidth:120}} value={dispatchHold} onChange={e=>applyDispatchHold(e.target.value)} /><span className="mt-small">Default 2%. Dispatch output/issue is blocked if any reconcile exists or total R/A/M is above this % of order qty.</span></div>
+      <div className="mt-toolbar" style={{alignItems:"flex-start"}}><span className="mt-toolbar-label">Stitching line names</span><textarea className="mt-input" style={{minWidth:260, minHeight:110}} value={linesText} onChange={e=>setLinesText(e.target.value)} placeholder={'STF-1\nSTF-2\nSTF-3'} /><button className="mt-btn primary" onClick={saveLines}>Save Lines</button><span className="mt-small">One line per row, or comma separated. Planning uses this list for line-wise stitching plans.</span></div>
+    </div>
+    <div className="mt-section"><h3 className="mt-panel-title">Bottleneck metric guide</h3><div className="mt-panel-sub">Daily Rate = recent 7-day average output from ledger for that department. Days Cover = queue/open WIP ÷ Daily Rate. Bottleneck Score = Queue WIP + 2×Reconcile Qty + R/A/M Qty, so impossible movements and quality loss rank higher than normal queue.</div></div>
+    <div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included through V7.5.4 logic</b><ul className="mt-small"><li>Size-wise day entry with previous/updated total cross-check</li><li>Print / embroidery route toggles</li><li>Standard route changed to Checking → Packing → Dispatch; Iron removed as a normal department</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Dispatch hold: no dispatch when reconcile exists or R/A/M exceeds configured order %</li><li>Editable stitching line names in Settings used by Planning</li><li>Issued-to-department means accepted/with department; no normal issued-not-received bucket</li><li>Completed-not-issued-forward owner = Production Coordinator + Production Manager</li><li>Individual owner chase: Department HOD owns work-not-completed; Coordinator + Production Manager own completed-not-issued-forward</li><li>Style closure owner = Production Coordinator + Dept HOD; Production Manager handles movement/escalation/approval</li><li>WIP table page-specific filters, sorting, quick status buckets, and size-breakup toggle</li><li>Dashboard uses current-bin WIP logic: once a quantity moves to the next stage, it leaves the previous department bin.</li><li>Dashboard includes daily / 4-4-5 weekly / calendar-month production numbers, department × issue-type board, owner activity breakup, and production meeting focus.</li><li>Department-first dashboard pack: plan-vs-achieved/line efficiency, bottleneck/flow, aging/stuck WIP, quality/loss rate, party/outsource pending.</li><li>Dashboard drilldowns now use dashboard-specific rows, subtotal summaries, real size-stage data where available, and a visible size-source indicator.</li><li>Monthly comparison tab against Stitching Receiving with drillable summary filters</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Focused WIP cell drawer shows selected department only; DPR entry shows only open styles for selected department/field; reductions/corrections require approval workflow later</li><li>Entry date / backdated audit logic with next-day default, same-day confirmation, reason and approval status</li><li>Live idle recalculation from production ledger where activity exists</li><li>Set convergence: a set packs/ships only min(components); Sets board + WIP chip show packable sets and unmatched pieces</li><li>Backdated entries validate feed as-of the entry date from the ledger; locked (older) backdated entries require reason + explicit manager-approval confirmation and are stamped in the audit ledger</li><li>Single configurable cutting tolerance replaces the old 8%/5%/0% mismatch</li><li>Party/outsource pending is consistent with the WIP open bucket (feed − output − R/A/M); outsourced stages label the with-department bucket as Pending at party</li><li>R/A/M day-entry path and impossible sequence reconcile checks</li><li>Planning tab: stitching line-wise rolling plan, department day-wise plan, department-specific planning pool, manual future plan, changeover remaining-hours formula, plan-vs-achieved style adherence, and Review control room. Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-info"><Lock size={12}/> Future RLS</span> <span className="mt-small">Keep this as a development app. We tighten RLS before real users and live factory data.</span></div></div>;
 }
-
 
 function withLiveIdle(rows, ledger=[], referenceDate=today()){
   if (!ledger?.length) return rows;
@@ -2241,16 +2221,17 @@ function withLiveIdle(rows, ledger=[], referenceDate=today()){
   });
 }
 
-function PageFilters({ tab, query, setQuery, buyer, setBuyer, buyers, visibleRows }){
-  if (["wip","entry","owners","monthly"].includes(tab)) return null;
-  const title = tab === "dashboard" ? "Dashboard Filters" : tab === "routes" ? "Route Page Filters" : tab === "photos" ? "Photo Page Filters" : tab === "reports" ? "Report Scope" : "Page Filters";
-  const placeholder = tab === "photos" ? "Search style / photo / buyer" : "Search style / order / buyer / colour";
+function PageFilters({ tab, query, setQuery, buyer, setBuyer, buyers, order, setOrder, orders, visibleRows }){
+  const title = tab === "dashboard" ? "Dashboard Filters" : tab === "entry" ? "Entry Scope" : tab === "wip" ? "Live WIP Scope" : tab === "review" ? "Review Scope" : tab === "owners" ? "Chase Scope" : tab === "monthly" ? "Monthly Scope" : tab === "routes" ? "Route Page Filters" : tab === "photos" ? "Photo Page Filters" : tab === "reports" ? "Report Scope" : "Page Filters";
+  const placeholder = tab === "photos" ? "Search style / photo / buyer" : "Search order / style / buyer / colour / component";
   return <div className="mt-toolbar no-print" style={{marginBottom:12}}>
     <span className="mt-toolbar-label">{title}</span>
     <Search size={14}/>
     <input className="mt-input" value={query} onChange={e=>setQuery(e.target.value)} placeholder={placeholder} style={{minWidth:260}}/>
     <select className="mt-select" value={buyer} onChange={e=>setBuyer(e.target.value)}>{buyers.map(b=><option key={b}>{b}</option>)}</select>
-    {tab === "dashboard" && <span className="mt-chip mt-info">All cards drillable — click any KPI/table row</span>}
+    <select className="mt-select" value={order} onChange={e=>setOrder(e.target.value)}><option value="All">All Orders</option>{orders.map(o=><option key={o} value={o}>{o}</option>)}</select>
+    {tab === "dashboard" && <span className="mt-chip mt-info">Order filter controls all dashboard boards/drills</span>}
+    {tab === "entry" && <span className="mt-chip mt-warn">Filter order/style before entry to avoid wrong posting</span>}
     {tab === "reports" && <span className="mt-chip mt-info">Horizontal Excel exports</span>}
     <span className="mt-chip mt-muted">{visibleRows.length} rows</span>
   </div>;
@@ -2264,18 +2245,21 @@ export default function App(){
   const [planRows,setPlanRows] = useState(()=>demoPlanRowsFromRows(demoRows));
   const [query,setQuery] = useState("");
   const [buyer,setBuyer] = useState("All");
+  const [order,setOrder] = useState("All");
   const [drawer,setDrawer] = useState(null);
   const [dashboardDrill,setDashboardDrill] = useState(null);
   const [notice,setNotice] = useState(null);
   const calcRows = useMemo(()=>withLiveIdle(rows, ledger, today()), [rows, ledger]);
   const buyers = ["All", ...Array.from(new Set(calcRows.map(r=>r.buyer).filter(Boolean))).sort()];
+  const orders = Array.from(new Set(calcRows.map(r=>r.order_no).filter(Boolean))).sort();
   const visibleRows = useMemo(()=>calcRows.filter(r=>{
     const q = query.trim().toLowerCase();
     const okBuyer = buyer === "All" || r.buyer === buyer;
-    if (!q) return okBuyer;
+    const okOrder = order === "All" || r.order_no === order;
+    if (!q) return okBuyer && okOrder;
     const hay = [r.order_no,r.style_no,r.buyer,r.colour,r.component,r.set_id].join(" ").toLowerCase();
-    return okBuyer && hay.includes(q);
-  }),[calcRows,query,buyer]);
+    return okBuyer && okOrder && hay.includes(q);
+  }),[calcRows,query,buyer,order]);
   async function pullSupabase(){
     if(!isSupabaseConfigured || !supabase){ setNotice({tone:"warn", text:"Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel first."}); return; }
     const {data,error} = await supabase.from("production_orders").select("*").limit(500).order("created_at",{ascending:false});
@@ -2294,7 +2278,7 @@ export default function App(){
   }
   function exportAll(){
     const pack = buildReportSheets(visibleRows, ledger);
-    exportXlsx("production_dpr_v7_4_horizontal_quick_export.xlsx",[
+    exportXlsx("production_dpr_v7_5_4_horizontal_quick_export.xlsx",[
       { name:"Factory Summary", rows:pack.factorySummary },
       { name:"Live WIP", rows:pack.wipStatus },
       { name:"Owner Chase", rows:pack.ownerRows },
@@ -2308,10 +2292,10 @@ export default function App(){
   const tabs = [
     ["dashboard","Dashboard",BarChart3], ["planning","Planning",ClipboardList], ["wip","Live WIP",Warehouse], ["entry","DPR Entry",ClipboardList], ["review","Review",ShieldCheck], ["owners","Who to Chase",Users], ["monthly","Monthly",FileSpreadsheet], ["routes","Routes",Filter], ["photos","Photos",ImageIcon], ["reports","Reports",FileSpreadsheet], ["settings","Settings",Settings]
   ];
-  return <div className="mt-app" data-theme="paper" data-settings-tick={settingsTick}><style>{FONT + CSS}</style><div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>V7.5.1</span></div><div className="mt-sub">Excel-speed cumulative size-wise entry · planning adherence · closure control · bulk upload · photo thumbnails · audit-table ready · Supabase-ready.</div></div><div className="mt-actions"><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase}><Upload size={14}/>Seed Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
+  return <div className="mt-app" data-theme="paper" data-settings-tick={settingsTick}><style>{FONT + CSS}</style><div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>V7.5.4</span></div><div className="mt-sub">Excel-speed size-wise day entry · order-wise dashboards · planning adherence · closure control · bulk upload · photo thumbnails · audit-table ready.</div></div><div className="mt-actions"><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase}><Upload size={14}/>Seed Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
-      <PageFilters tab={tab} query={query} setQuery={setQuery} buyer={buyer} setBuyer={setBuyer} buyers={buyers} visibleRows={visibleRows}/>
+      <PageFilters tab={tab} query={query} setQuery={setQuery} buyer={buyer} setBuyer={setBuyer} buyers={buyers} order={order} setOrder={setOrder} orders={orders} visibleRows={visibleRows}/>
       {tab === "dashboard" && <Dashboard rows={visibleRows} ledger={ledger} onDrill={setDashboardDrill}/>} 
       {tab === "planning" && <PlanningView rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} ledger={ledger}/>} 
       {tab === "wip" && <WipStatus rows={visibleRows} onOpen={(row,stage)=>setDrawer({row,stage})}/>} 
