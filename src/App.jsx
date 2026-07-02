@@ -1804,6 +1804,82 @@ function QuickEntry({ rows, setRows, ledger, setLedger }){
   </div>;
 }
 
+
+function stagePlanSources(row, dept){
+  const route = routeFor(row);
+  const idx = route.indexOf(dept);
+  const st = sdata(row, dept);
+  const feed = stageFeed(row, dept);
+  const prevStage = idx > 0 ? route[idx-1] : null;
+  const prev = prevStage ? sdata(row, prevStage) : null;
+  const sources = [];
+  if (dept === "cutting") {
+    sources.push({ key:"order_qty", label:"Order quantity", qty:n(row.order_qty), readyType:"Actual order qty", status:"Ready" });
+  } else {
+    sources.push({ key:"route_ready", label: prevStage ? `${stageLabel(prevStage)} ready / issued` : "Route ready", qty:feed, readyType:"Actual ready", status: feed > 0 ? "Ready" : "Not ready" });
+    if (prevStage) sources.push({ key:"previous_output", label:`${stageLabel(prevStage)} completed`, qty:n(prev.output), readyType:"Previous dept output", status:n(prev.output)>0?"Ready":"Not ready" });
+  }
+  sources.push({ key:"dept_received", label:`${stageLabel(dept)} received/accepted`, qty:n(st.received || feed), readyType:"Dept accepted", status:n(st.received || feed)>0?"Ready":"Not ready" });
+  sources.push({ key:"manual_future", label:"Manual Future Plan", qty:n(row.order_qty), readyType:"Manual / risk", status:"Manual future / risk" });
+  return sources;
+}
+function bestPlanSource(row, dept){
+  const srcs = stagePlanSources(row, dept);
+  return srcs.find(s=>n(s.qty)>0 && s.key!=="manual_future") || srcs[srcs.length-1] || { key:"manual_future", label:"Manual Future Plan", qty:n(row?.order_qty), readyType:"Manual / risk", status:"Manual future / risk" };
+}
+function planningPoolRows(rows, dept, planRows=[]){
+  return (rows||[]).map(row=>{
+    const src = bestPlanSource(row, dept);
+    const alreadyPlanned = (planRows||[]).filter(p=>p.row_id===row.id && p.dept===dept).reduce((a,p)=>a+n(p.planned_qty),0);
+    const available = Math.max(0, n(src.qty) - alreadyPlanned);
+    return {
+      row,
+      Order:row.order_no,
+      Style:row.style_no,
+      Buyer:row.buyer,
+      Colour:row.colour,
+      Component:row.component,
+      Source:src.label,
+      Source_Type:src.readyType,
+      Available:available,
+      Already_Planned:alreadyPlanned,
+      Status: src.key === "manual_future" ? "Manual future / risk" : (available>0 ? "Open to plan" : "Fully planned / no qty")
+    };
+  }).filter(x=>n(x.Available)>0 || x.Status.includes("risk"))
+    .sort((a,b)=>n(b.Available)-n(a.Available) || String(a.Order).localeCompare(String(b.Order)));
+}
+function demoPlanRowsFromRows(rows=[]){
+  // Safe demo seed for the Planning tab. Keep this small; real plans are user-entered.
+  const baseDate = defaultEntryDate([]);
+  return (rows||[]).slice(0,3).map((row,i)=>{
+    const dept = i === 0 ? "stitching" : (i === 1 ? "checking" : "packing");
+    const src = bestPlanSource(row, dept);
+    const qty = Math.max(0, Math.min(n(src.qty) || n(row.order_qty), n(row.daily_target) || 800));
+    return {
+      id:uid("plan"),
+      row_id:row.id,
+      order_no:row.order_no,
+      style_no:row.style_no,
+      buyer:row.buyer,
+      colour:row.colour,
+      component:row.component,
+      dept,
+      line:dept === "stitching" ? (row.line || productionLineNames()[0] || "STF-1") : "",
+      plan_date:baseDate,
+      source:src.key,
+      source_label:src.label,
+      source_type:src.readyType,
+      planned_qty:qty,
+      eight_hr_target:n(row.daily_target) || 1200,
+      changeover:false,
+      remaining_hours:8,
+      difficulty:row.difficulty || "Normal",
+      status:"Demo plan",
+      remarks:"Demo seed; replace with actual plan rows."
+    };
+  }).filter(p=>n(p.planned_qty)>0);
+}
+
 function planRowEffectiveQty(p){
   const target = n(p.eight_hr_target);
   if (!p.changeover || !target) return n(p.planned_qty);
