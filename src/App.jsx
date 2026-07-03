@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.45";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.45 current status links and delete tombstones";
+const APP_VERSION = "V7.5.47";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.47 shared login and simple reconcile approval";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -447,10 +447,13 @@ const PRODUCTION_PERMISSIONS = [
   ["production.manage_users", "Manage users / permissions"],
   ["production.audit_view", "View audit history"],
 ];
+const ALL_PRODUCTION_PERMISSION_KEYS = PRODUCTION_PERMISSIONS.map(p=>p[0]);
 const ROLE_PERMISSIONS = {
+  Admin: ALL_PRODUCTION_PERMISSION_KEYS,
+  "Production Manager": ALL_PRODUCTION_PERMISSION_KEYS,
+  "Production Coordinator": ["production.view","production.entry_dpr","production.correct_entry","production.edit_styles","production.delete_styles","production.export","production.manage_photos","production.manage_routes","production.audit_view"],
+  "Data Operator": ["production.view","production.entry_dpr","production.correct_entry","production.edit_styles","production.manage_photos","production.audit_view"],
   Management: ["production.view","production.export","production.audit_view"],
-  "Production Manager": ["production.view","production.entry_dpr","production.correct_entry","production.edit_styles","production.delete_styles","production.export","production.manage_photos","production.manage_routes","production.manage_settings","production.audit_view"],
-  "Production Coordinator": ["production.view","production.entry_dpr","production.correct_entry","production.edit_styles","production.export","production.manage_photos","production.manage_routes","production.audit_view"],
   "Cutting HOD": ["production.view","production.entry_dpr","production.correct_entry","production.audit_view"],
   "Printing HOD": ["production.view","production.entry_dpr","production.correct_entry","production.audit_view"],
   "Embroidery HOD": ["production.view","production.entry_dpr","production.correct_entry","production.audit_view"],
@@ -459,30 +462,88 @@ const ROLE_PERMISSIONS = {
   "Packing HOD": ["production.view","production.entry_dpr","production.correct_entry","production.audit_view"],
   "Dispatch User": ["production.view","production.entry_dpr","production.audit_view"],
   "Merchant Read-only": ["production.view"],
-  Admin: PRODUCTION_PERMISSIONS.map(p=>p[0]),
 };
 const PRODUCTION_ROLES = Object.keys(ROLE_PERMISSIONS);
+function normalizeUserEmail(email){ return String(email || "").trim().toLowerCase(); }
+function emailLooksValid(email){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeUserEmail(email)); }
+function displayNameFromEmail(email){ return normalizeUserEmail(email).split("@")[0].replace(/[._-]+/g," ").replace(/\b\w/g,m=>m.toUpperCase()); }
+function safeParseProfile(raw){
+  try { return raw ? JSON.parse(raw) : null; } catch { return null; }
+}
+function normalizeRoleName(role){
+  const val = String(role || "").trim();
+  const hit = PRODUCTION_ROLES.find(r => r.toLowerCase() === val.toLowerCase());
+  return hit || val || "Data Operator";
+}
+function profileFromMerchTrackerStorage(){
+  const keys = ["merch_user_profile","merch_tracker_user_profile","mt_user_profile","mt_current_user","app_user_profile","user_profile"];
+  for (const key of keys) {
+    const obj = safeParseProfile(localStorage.getItem(key));
+    if (!obj) continue;
+    const email = normalizeUserEmail(obj.email || obj.user_email || obj.mail || obj.username || "");
+    if (emailLooksValid(email)) return {
+      ...defaultUserProfile(),
+      email,
+      name:String(obj.name || obj.display_name || obj.user_name || displayNameFromEmail(email)).trim(),
+      role:normalizeRoleName(obj.production_role || obj.role || obj.user_role || "Data Operator"),
+      department:obj.production_department || obj.department || "Production",
+      permissions:Array.isArray(obj.permissions) ? obj.permissions : []
+    };
+  }
+  const email = normalizeUserEmail(localStorage.getItem("mt_user_email") || localStorage.getItem("merch_user_email") || localStorage.getItem("user_email") || "");
+  if (emailLooksValid(email)) return {
+    ...defaultUserProfile(),
+    email,
+    name:localStorage.getItem("mt_user_name") || localStorage.getItem("merch_user_name") || displayNameFromEmail(email),
+    role:normalizeRoleName(localStorage.getItem("mt_user_role") || localStorage.getItem("merch_user_role") || "Data Operator"),
+    department:localStorage.getItem("mt_user_department") || localStorage.getItem("merch_user_department") || "Production",
+    permissions:[]
+  };
+  return null;
+}
+async function profileFromSupabaseAuthSession(){
+  try {
+    if (!supabase?.auth?.getSession) return null;
+    const { data } = await supabase.auth.getSession();
+    const user = data?.session?.user;
+    const email = normalizeUserEmail(user?.email || "");
+    if (!emailLooksValid(email)) return null;
+    return {
+      ...defaultUserProfile(),
+      email,
+      name:String(user?.user_metadata?.name || user?.user_metadata?.full_name || displayNameFromEmail(email)).trim(),
+      role:normalizeRoleName(user?.user_metadata?.production_role || user?.user_metadata?.role || "Data Operator"),
+      department:user?.user_metadata?.department || user?.user_metadata?.production_department || "Production",
+      permissions:[]
+    };
+  } catch { return null; }
+}
 function defaultUserProfile(){
-  return { name:"", email:"", role:"Production Coordinator", department:"Production", permissions:[] };
+  return { name:"", email:"", role:"Data Operator", department:"Production", permissions:[] };
 }
 function currentUserProfile(){
   try {
     const raw = localStorage.getItem("production_user_profile");
     if (raw) {
       const parsed = JSON.parse(raw);
-      return { ...defaultUserProfile(), ...parsed, name:String(parsed?.name || parsed?.display_name || "").trim() };
+      const email = normalizeUserEmail(parsed?.email || "");
+      return { ...defaultUserProfile(), ...parsed, email, name:String(parsed?.name || parsed?.display_name || displayNameFromEmail(email) || "").trim() };
     }
     const legacy = localStorage.getItem("production_user_name") || localStorage.getItem("mt_user_name") || "";
-    if (legacy) return { ...defaultUserProfile(), name:legacy, role:localStorage.getItem("production_user_role") || "Production Coordinator", department:localStorage.getItem("production_user_department") || "Production" };
+    if (legacy) return { ...defaultUserProfile(), name:legacy, email:normalizeUserEmail(localStorage.getItem("production_user_email") || localStorage.getItem("mt_user_email") || ""), role:localStorage.getItem("production_user_role") || localStorage.getItem("mt_user_role") || "Data Operator", department:localStorage.getItem("production_user_department") || localStorage.getItem("mt_user_department") || "Production" };
+    const merch = profileFromMerchTrackerStorage();
+    if (merch) return merch;
   } catch {}
   return defaultUserProfile();
 }
 function saveCurrentUserProfile(profile){
-  const clean = { ...defaultUserProfile(), ...profile, name:String(profile?.name || "").trim(), role:profile?.role || "Production Coordinator", department:profile?.department || "Production" };
+  const email = normalizeUserEmail(profile?.email || "");
+  const clean = { ...defaultUserProfile(), ...profile, email, name:String(profile?.name || displayNameFromEmail(email) || "").trim(), role:profile?.role || "Data Operator", department:profile?.department || "Production" };
   try {
     localStorage.setItem("production_user_profile", JSON.stringify(clean));
     localStorage.setItem("production_user_name", clean.name);
     localStorage.setItem("production_user_role", clean.role);
+    localStorage.setItem("production_user_email", clean.email);
     localStorage.setItem("production_user_department", clean.department);
   } catch {}
   return clean;
@@ -492,6 +553,7 @@ function clearCurrentUserProfile(){
     localStorage.removeItem("production_user_profile");
     localStorage.removeItem("production_user_name");
     localStorage.removeItem("production_user_role");
+    localStorage.removeItem("production_user_email");
     localStorage.removeItem("production_user_department");
   } catch {}
 }
@@ -499,12 +561,12 @@ function currentUserName(){
   const p = currentUserProfile();
   return p.name || "Not logged in";
 }
-function currentUserRole(){ return currentUserProfile().role || "Production Coordinator"; }
+function currentUserRole(){ return currentUserProfile().role || "Data Operator"; }
 function rolePermissions(role){ return new Set([...(ROLE_PERMISSIONS[role] || []), ...((currentUserProfile().permissions || []))]); }
 function currentUserCan(permission){
   const p = currentUserProfile();
   if (!p.name) return false;
-  if (p.role === "Admin") return true;
+  if (["Admin","Production Manager"].includes(p.role)) return true;
   return rolePermissions(p.role).has(permission);
 }
 function requireCurrentPermission(permission, actionLabel="this action"){
@@ -528,10 +590,34 @@ function userAuditBase(extra={}){
 async function upsertProductionAppUser(profile=currentUserProfile()){
   if (!profile?.name || !hasValidSupabaseEnv()) return { skipped:true };
   const row = {
-    display_name:profile.name, email:profile.email || null, role:profile.role || "Production Coordinator", department:profile.department || "Production", is_active:true,
+    display_name:profile.name || displayNameFromEmail(profile.email), email:normalizeUserEmail(profile.email) || null, role:profile.role || "Data Operator", department:profile.department || "Production", is_active:true,
     browser_id:productionBrowserId(), last_seen_at:new Date().toISOString(), app_version:APP_VERSION
   };
-  return fetchRestUpsertToSupabase("production_app_users", [row], "display_name");
+  const prod = await fetchRestUpsertToSupabase("production_app_users", [row], row.email ? "email" : "display_name");
+  // Optional shared ERP user registry so Production can use the same email identity as Merch Tracker later.
+  await fetchRestUpsertToSupabase("erp_app_users", [{ ...row, source_app:"production", updated_at:new Date().toISOString() }], "email").catch?.(()=>null);
+  return prod;
+}
+async function fetchSharedUserByEmail(email){
+  const cleanEmail = normalizeUserEmail(email);
+  if (!emailLooksValid(cleanEmail) || !hasValidSupabaseEnv()) return null;
+  const query = `email=eq.${encodeURIComponent(cleanEmail)}&select=*&limit=1`;
+  const tables = ["erp_app_users", "production_app_users", "merch_tracker_users", "merch_users", "app_users", "profiles"];
+  for (const table of tables) {
+    const res = await fetchRestSelectFromSupabase(table, query);
+    const hit = Array.isArray(res?.data) ? res.data[0] : null;
+    if (hit) {
+      return {
+        ...defaultUserProfile(),
+        email:cleanEmail,
+        name:String(hit.display_name || hit.name || hit.user_name || displayNameFromEmail(cleanEmail)).trim(),
+        role:normalizeRoleName(hit.production_role || hit.role || hit.user_role || "Data Operator"),
+        department:hit.production_department || hit.department || "Production",
+        permissions:Array.isArray(hit.permissions) ? hit.permissions : []
+      };
+    }
+  }
+  return null;
 }
 async function recordUserSession(event_type, profile=currentUserProfile(), extra={}){
   if (!profile?.name || !hasValidSupabaseEnv()) return { skipped:true };
@@ -2314,8 +2400,8 @@ function orderSummaryRows(rows){
   return Array.from(map.values()).map(x=>({ ...x, Oldest_Idle:`${x.Oldest_Idle}d` })).sort((a,b)=>n(b.Reconcile)-n(a.Reconcile)||n(b.Open_WIP)-n(a.Open_WIP)||String(a.Order).localeCompare(String(b.Order)));
 }
 
-function reconciliationBoardRows(rows){
-  return (rows || []).flatMap(row =>
+function reconciliationBoardRows(rows, ledger=[]){
+  const rowRecon = (rows || []).flatMap(row =>
     issueBuckets(row)
       .filter(bucket => bucket.type === "reconcile")
       .map(bucket => {
@@ -2342,7 +2428,27 @@ function reconciliationBoardRows(rows){
           Action: bucket.action || "Correct upstream entry or create approved adjustment",
         };
       })
-  ).sort((a,b)=>n(b.Difference)-n(a.Difference) || String(a.Dept).localeCompare(String(b.Dept)));
+  );
+  const p0Recon = (ledger || []).filter(e=>String(e.validation_status || e.validation_snapshot?.validation_status || "").includes("p0_date_sequence") || String(e.validation_scope || "").includes("p0_date_sequence")).map(e=>({
+    stage:e.stage,
+    type:"p0_date_sequence",
+    Dept:stageLabel(e.stage),
+    Order:e.order_no || e.order || "",
+    Style:e.style_no || e.style || "",
+    Buyer:e.buyer || "",
+    Colour:e.colour || "",
+    Component:e.component || "",
+    Reconcile_Type:"P0 date-sequence override",
+    Difference:n(e.qty !== undefined ? e.qty : e.delta),
+    Feed:"dated feed check",
+    Output:"see Register",
+    Issued_Forward:"see Register",
+    RAM:0,
+    Owner:"Production Manager + Coordinator",
+    Idle_Days:"—",
+    Action:"Correct date/quantity sequence from Register; override was confirmed and must be reviewed.",
+  }));
+  return [...rowRecon, ...p0Recon].sort((a,b)=>n(b.Difference)-n(a.Difference) || String(a.Dept).localeCompare(String(b.Dept)));
 }
 
 function dashboardDrillRows(rows, ledger, drill){
@@ -2408,7 +2514,7 @@ function Dashboard({ rows, ledger=[], onDrill, clearTick=0 }){
   const issueDeptRows = departmentIssueRows(rows);
   const ownerRows = ownerActivityRows(rows);
   const periodRows = dailyWeeklyMonthlyRows(rows, ledger, selectedDate || activityDate);
-  const reconciliationRows = reconciliationBoardRows(rows);
+  const reconciliationRows = reconciliationBoardRows(rows, ledger);
   const meetingRows = meetingFocusRows(rows);
   const lineRows = lineEfficiencyRows(rows, ledger, cal.weekStart, cal.weekEnd);
   const bottleneckRows = flowBottleneckRows(rows, ledger);
@@ -2917,6 +3023,29 @@ function chronologicalEntryIssues(row, ledger, stage, field, updatedTotal, entry
   }
   return messages;
 }
+function hardBlockMessages(validation){
+  const dateSet = new Set(validation?.dateMessages || []);
+  return (validation?.messages || []).filter(m=>!dateSet.has(m));
+}
+function p0DateViolationText(validation, limit=6){
+  const msgs = validation?.dateMessages || [];
+  return msgs.slice(0, limit).join("\n");
+}
+function confirmP0DateViolation({ validation, entryDate, stage, field, reason }){
+  const msgs = validation?.dateMessages || [];
+  if (!msgs.length) return true;
+  if (!String(reason || "").trim()) { alert("P0 date-sequence override needs a reason. This will appear in Reconcile Review."); return false; }
+  return window.confirm(`P0 DATE-SEQUENCE VIOLATION\n\nThe selected date ${entryDate} is before enough upstream/same-department dated quantity.\n\n${msgs.slice(0,8).join("\n")}\n\nIf you confirm, the entry will save as a manager-confirmed reconcile exception and appear in Review → Reconcile until corrected from Register.\n\nConfirm override for ${stageLabel(stage)} · ${fieldLabel(field)}?`);
+}
+function validationOverrideForP0(validation){
+  if (!validation?.p0DateViolation) return null;
+  return {
+    validation_status:"p0_date_sequence_override",
+    validation_scope:"p0_date_sequence_confirmed_reconcile",
+    validation_messages:validation.dateMessages || [],
+    requires_reconcile:true,
+  };
+}
 function validateDailyEntry(row, stage, field, getVal, ledger=null, entryDate=null){
   const entryTotal = rowDailyEntryTotal(row, getVal);
   const messages = [];
@@ -2934,8 +3063,9 @@ function validateDailyEntry(row, stage, field, getVal, ledger=null, entryDate=nu
     const updatedRam = n(st.reject) + Math.max(0, oldAlter - entryTotal) + n(st.missing);
     if (overSizes.length) messages.push(`Alter clear above pending alter as-of ${entryDate} in size(s): ${overSizes.join(", ")}`);
     if (stage !== "cutting" && updatedOutput + updatedRam > n(feed.qty)) messages.push(`Output + pending R/A/M would exceed dated feed by ${fmt(updatedOutput + updatedRam - n(feed.qty))}`);
-    messages.push(...dateLevelQuantityIssues(row, ledger, stage, field, entryDate, sizeEntries));
-    return { allowed:oldAlter, entryTotal, oldTotal:oldOutput, updatedTotal:updatedOutput, blocked:messages.length>0, messages, overCut:false, oldAlter, updatedAlter:Math.max(0, oldAlter-entryTotal) };
+    const dateMessages = dateLevelQuantityIssues(row, ledger, stage, field, entryDate, sizeEntries);
+    messages.push(...dateMessages);
+    return { allowed:oldAlter, entryTotal, oldTotal:oldOutput, updatedTotal:updatedOutput, blocked:messages.length>0, messages, dateMessages, p0DateViolation:dateMessages.length>0, overCut:false, oldAlter, updatedAlter:Math.max(0, oldAlter-entryTotal) };
   }
   const oldAsOf = ledger && entryDate ? fieldQtyAsOfDate(row, ledger, stage, field, entryDate) : { qty:sizeMatrix(row, stage, field).reduce((a,x)=>a+n(x.qty),0) };
   const oldTotal = n(oldAsOf.qty);
@@ -2943,7 +3073,7 @@ function validateDailyEntry(row, stage, field, getVal, ledger=null, entryDate=nu
   const validation = validateCumulativeEdit(row, stage, field, updatedTotal, ledger, entryDate);
   const dateMessages = dateLevelQuantityIssues(row, ledger, stage, field, entryDate, sizeEntries);
   const overCut = stage === "cutting" && updatedTotal > n(row.order_qty);
-  return { ...validation, messages:[...(validation.messages || []), ...dateMessages], entryTotal, oldTotal, updatedTotal, blocked:validation.blocked || dateMessages.length>0, overCut };
+  return { ...validation, messages:[...(validation.messages || []), ...dateMessages], dateMessages, p0DateViolation:dateMessages.length>0, entryTotal, oldTotal, updatedTotal, blocked:validation.blocked || dateMessages.length>0, overCut };
 }
 function applyDailySizeEntries({ rows, targetRows, stage, field, getVal }){
   const targetIds = new Set(targetRows.map(r=>r.id));
@@ -2983,7 +3113,7 @@ function applyDailySizeEntries({ rows, targetRows, stage, field, getVal }){
     return { ...row, stages, size_stage:sizeStage };
   });
 }
-function buildLedgerRows({ changes, stage, field, entryDate, reason, source }){
+function buildLedgerRows({ changes, stage, field, entryDate, reason, source, validationOverride=null }){
   const risk = backdateRisk(entryDate);
   const created = new Date().toISOString();
   const profile = currentUserProfile();
@@ -3010,8 +3140,11 @@ function buildLedgerRows({ changes, stage, field, entryDate, reason, source }){
     changed_by_role:profile.role || "",
     changed_by_department:profile.department || "",
     entry_source:source,
-    validation_scope:"size_wise_as_of_entry_date",
-    remarks:`${source}: size-wise ledger entry. Entry date ${entryDate}; actual saved ${created.slice(0,10)} by ${profile.name || currentUserName()}.`
+    validation_scope:validationOverride?.validation_scope || "size_wise_as_of_entry_date",
+    validation_status:validationOverride?.validation_status || "ok",
+    validation_messages:validationOverride?.validation_messages || [],
+    validation_requires_reconcile:!!validationOverride?.requires_reconcile,
+    remarks:`${source}: size-wise ledger entry. Entry date ${entryDate}; actual saved ${created.slice(0,10)} by ${profile.name || currentUserName()}.${validationOverride?.requires_reconcile ? " P0 date-sequence override: review in Reconcile." : ""}`
   }));
 }
 async function saveLedgerToSupabase(newLedger, field){
@@ -3030,7 +3163,9 @@ async function saveLedgerToSupabase(newLedger, field){
     reject_qty:field==="reject" ? n(x.qty) : 0,
     alter_qty:field==="alter" ? n(x.qty) : 0,
     missing_qty:field==="missing" ? n(x.qty) : 0,
-    validation_snapshot:{ old_qty:x.old_qty, new_qty:x.new_qty, entry_source:x.entry_source, is_backdated:x.is_backdated, approval_status:x.approval_status, changed_by:x.changed_by || profile.name, changed_by_role:x.changed_by_role || profile.role, changed_by_department:x.changed_by_department || profile.department }
+    validation_status:x.validation_status || "ok",
+    validation_messages:x.validation_messages || [],
+    validation_snapshot:{ old_qty:x.old_qty, new_qty:x.new_qty, entry_source:x.entry_source, is_backdated:x.is_backdated, approval_status:x.approval_status, validation_status:x.validation_status || "ok", validation_messages:x.validation_messages || [], validation_requires_reconcile:!!x.validation_requires_reconcile, changed_by:x.changed_by || profile.name, changed_by_role:x.changed_by_role || profile.role, changed_by_department:x.changed_by_department || profile.department }
   }));
   const result = await robustInsertEntriesToSupabase(payload);
   if(result?.error) console.warn("Supabase production_entries save failed", result.error);
@@ -3194,9 +3329,11 @@ function SizeCumulativeEditor({ row, rows, setRows, ledger, setLedger, stage, in
   async function save(){
     if (!changes.length) { alert("No new size-wise quantity entered."); return; }
     if (reasonMissing) { alert("Backdated entry older than normal next-day needs a reason before save."); return; }
-    if (validation.blocked) { alert(`Blocked: ${validation.messages.join("; ") || "impossible sequence"}. Correct upstream/opening stock or create approved adjustment first.`); return; }
+    const hardMessages = hardBlockMessages(validation);
+    if (hardMessages.length) { alert(`Blocked: ${hardMessages.join("; ")}. Correct upstream/opening stock or create approved adjustment first.`); return; }
+    if (!confirmP0DateViolation({ validation, entryDate, stage, field, reason })) return;
     if (!confirmEntryChecks({ entryDate, changes, stage, field, reason })) return;
-    const newLedger = buildLedgerRows({ changes, stage, field, entryDate, reason, source });
+    const newLedger = buildLedgerRows({ changes, stage, field, entryDate, reason, source, validationOverride:validationOverrideForP0(validation) });
     const sharedResult = await saveLedgerToSupabase(newLedger, field);
     if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
       const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
@@ -3248,12 +3385,20 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
   function fillAllOpen(){ setDraft(d=>{ const nd={...d}; activeRows.forEach(row=>sizesFor(row).forEach(sz=>{ nd[`${row.id}|${sz}`]=String(Math.max(0,n(entryFieldSizeContext(row,stage,field,sz).open))); })); return nd; }); }
   async function save(){
     const changed = activeRows.flatMap(row => dailySizeRows(row, stage, field, getVal, ledger, entryDate));
-    const blocked = activeRows.filter(r=>validate(r).blocked);
-    if (blocked.length) { alert(`Blocked: ${blocked.length} row(s) have impossible quantity sequence: ${blocked.map(r=>`${r.style_no}: ${validate(r).messages.join(", ")}`).slice(0,3).join(" | ")}. Correct upstream/opening stock or create approved adjustment first.`); return; }
+    const validationRows = activeRows.map(r=>({ row:r, validation:validate(r) })).filter(x=>x.validation.entryTotal);
+    const hardBlocked = validationRows.filter(x=>hardBlockMessages(x.validation).length);
+    if (hardBlocked.length) { alert(`Blocked: ${hardBlocked.length} row(s) have impossible quantity sequence: ${hardBlocked.map(x=>`${x.row.style_no}: ${hardBlockMessages(x.validation).join(", ")}`).slice(0,3).join(" | ")}. Correct upstream/opening stock or create approved adjustment first.`); return; }
+    const p0Rows = validationRows.filter(x=>x.validation.p0DateViolation);
+    if (p0Rows.length && !String(reason||"").trim()) { alert("P0 date-sequence override needs a reason. It will appear in Reconcile Review."); return; }
+    if (p0Rows.length) {
+      const msg = p0Rows.slice(0,5).map(x=>`${x.row.style_no}: ${p0DateViolationText(x.validation,2)}`).join("\n");
+      if (!window.confirm(`P0 DATE-SEQUENCE VIOLATION\n\n${p0Rows.length} row(s) are dated before enough upstream/same-department quantity.\n\n${msg}\n\nConfirm override? These entries will save as reconcile exceptions until corrected from Register.`)) return;
+    }
     if (risk.days > 1 && !reason.trim()) { alert("Backdated entry older than normal next-day needs a reason before save."); return; }
     if (!changed.length) { alert("No new size-wise quantity entered."); return; }
     if (!confirmEntryChecks({ entryDate, changes:changed, stage, field, reason })) return;
-    const newLedger = buildLedgerRows({ changes:changed, stage, field, entryDate, reason, source:"dpr_quick_entry" });
+    const override = p0Rows.length ? { validation_status:"p0_date_sequence_override", validation_scope:"p0_date_sequence_confirmed_reconcile", validation_messages:p0Rows.flatMap(x=>x.validation.dateMessages || []), requires_reconcile:true } : null;
+    const newLedger = buildLedgerRows({ changes:changed, stage, field, entryDate, reason, source:"dpr_quick_entry", validationOverride:override });
     const sharedResult = await saveLedgerToSupabase(newLedger, field);
     if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
       const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
@@ -3820,9 +3965,23 @@ function reviewBuckets(rows, ledger=[], planRows=[]){
     });
   });
   const riskyLedger = ledger || [];
-  const risky = riskyLedger.filter(e=>e.is_backdated || e.backdate_reason || e.approval_status || e.validation_snapshot?.backdate_reason).map(e=>{
+  const p0Ledger = riskyLedger.filter(e=>{
+    const st = String(e.validation_status || e.validation_snapshot?.validation_status || "");
+    const scope = String(e.validation_scope || e.validation_snapshot?.validation_scope || "");
+    return (st.includes("p0_date_sequence") || scope.includes("p0_date_sequence")) && !e.validation_resolved;
+  });
+  p0Ledger.forEach(e=>{
+    reconcile.push({
+      Entry_ID:e.id || "", Dept:stageLabel(e.stage), Order:e.order_no || e.order || "", Style:e.style_no || e.style || "", Buyer:e.buyer || "", Colour:e.colour || "", Component:e.component || "",
+      Problem:"P0 date-sequence override", Difference:n(e.qty !== undefined ? e.qty : e.delta), Entry_Date:e.entry_date, Size:e.size || "Total", User:e.changed_by || e.created_by || e.validation_snapshot?.changed_by || "—",
+      Action:"Approve/dismiss after review, or open Register and correct date/quantity sequence.",
+      Message:(e.validation_messages || e.validation_snapshot?.validation_messages || []).slice(0,2).join(" | "),
+      Review_Type:"P0 Date"
+    });
+  });
+  const risky = riskyLedger.filter(e=>e.is_backdated || e.backdate_reason || e.approval_status || e.validation_snapshot?.backdate_reason || String(e.validation_status || e.validation_snapshot?.validation_status || "").includes("p0_date_sequence")).map(e=>{
     const qtyVal = e.qty ?? e.delta;
-    return { Entry_Date:e.entry_date, Created_At:e.created_at, User:e.changed_by || e.created_by || e.validation_snapshot?.changed_by || "—", Dept:stageLabel(e.stage), Style:e.style_no || e.style, Size:e.size || "Total", Qty:qtyVal, Reason:e.backdate_reason || e.validation_snapshot?.backdate_reason || "", Approval:e.approval_status || e.validation_snapshot?.approval_status || "" };
+    return { Entry_Date:e.entry_date, Created_At:e.created_at, User:e.changed_by || e.created_by || e.validation_snapshot?.changed_by || "—", Dept:stageLabel(e.stage), Style:e.style_no || e.style, Size:e.size || "Total", Qty:qtyVal, Reason:e.backdate_reason || e.validation_snapshot?.backdate_reason || "", Approval:e.approval_status || e.validation_snapshot?.approval_status || e.validation_status || e.validation_snapshot?.validation_status || "" };
   });
   return { ready, cannotClose, reconcile, ram, risky, planDev:planDeviationRows(planRows, rows, ledger) };
 }
@@ -3991,1415 +4150,77 @@ function PlanningView({ rows, planRows, setPlanRows, ledger, setRows }){
     <div className="mt-section"><h3 className="mt-panel-title">Bulk Order / Style Update</h3><div className="mt-panel-sub">Planned workflow: upload/copy order sheet with Order, Style, Buyer, Colour, Component, Size, Qty, Route, Print/Emb toggles, SMV/8hr target. This will update the planning pool and production orders in one go. Full parser comes with the next Supabase import patch.</div><div className="mt-speed-note">For now this screen defines the format and workflow; keep using GitHub/Supabase seed for demo rows until the importer is added.</div></div>
   </div>;
 }
-function ReviewView({ rows, ledger, planRows }){
-  const [section,setSection] = useState("cannotClose");
+function ReconcileActionTable({ rows, onResolve }){
+  const cleanRows = rows.map(({Entry_ID, ...r})=>r);
+  const cols = cleanRows.length ? Object.keys(cleanRows[0]) : [];
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Reconcile Review</h3><div className="mt-panel-sub">P0 date exceptions can be approved/dismissed here after review. Wrong quantities should still be corrected from Register so the numeric truth is fixed.</div></div><div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}<th>Review Action</th></tr></thead><tbody>{rows.length ? rows.map((r,i)=><tr key={r.Entry_ID || i}>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] === undefined || r[c] === null ? "" : r[c])}</td>)}<td><button className="mt-btn ghost" onClick={()=>onResolve(r,"approved")}>Approve</button><button className="mt-btn ghost" style={{marginLeft:6}} onClick={()=>onResolve(r,"dismissed")}>Dismiss</button></td></tr>) : <tr><td style={{padding:18}} colSpan={cols.length+1}>No reconcile exceptions pending.</td></tr>}</tbody></table></div></div>;
+}
+function ReviewView({ rows, ledger, setLedger, planRows }){
+  const [section,setSection] = useState("ready");
+  const [msg,setMsg] = useState(null);
   const rb = reviewBuckets(rows, ledger, planRows);
   const sectionMap = {
-    ready:{ title:"Ready to Close", sub:"Numbers are clean; Production Coordinator should close these department/style balances.", rows:rb.ready },
-    cannotClose:{ title:"Cannot Close — Open Balance", sub:"Main daily closure pain list. Department has unexplained/open balance; coordinator follows until explained/closed.", rows:rb.cannotClose },
-    reconcile:{ title:"Reconcile Review", sub:"Impossible sequences or total jumps. These are data-integrity blockers, not normal WIP.", rows:rb.reconcile },
-    ram:{ title:"Reject / Alter / Missing Review", sub:"Quality/loss/recovery control. Main list is horizontal/summary; reason breakup comes next.", rows:rb.ram },
-    risky:{ title:"Backdated / Risky Entry Review", sub:"Entry date is production activity date; created_at is actual entry time. Same-day/old backdated/corrections are reviewed here.", rows:rb.risky },
-    planDev:{ title:"Plan Deviation Review", sub:"Catches shortfalls and planned difficult styles being replaced by easier/unplanned output.", rows:rb.planDev },
+    ready:{ title:"Ready to Close", sub:"Departments/styles that are complete enough for Coordinator closure follow-up.", rows:rb.ready },
+    cannot:{ title:"Cannot Close — Open Balance", sub:"Open/tail balances that need HOD/coordinator action, not manager escalation by default.", rows:rb.cannotClose },
+    completed:{ title:"Completed Not Issued Forward", sub:"Output done but not moved to next department; movement coordination owner.", rows:rows.flatMap(row=>issueBuckets(row).filter(b=>b.type==="completed_not_issued").map(b=>({ Dept:stageLabel(b.stage), Order:row.order_no, Style:row.style_no, Colour:row.colour, Component:row.component, Qty:b.qty, Owner:b.owner, Action:b.action }))) },
+    reconcile:{ title:"Reconcile Review", sub:"Impossible sequences or confirmed P0 date exceptions. Approve/dismiss date exceptions only after checking; correct wrong quantities from Register.", rows:rb.reconcile },
+    ram:{ title:"Reject / Alter / Missing Review", sub:"Quality/loss balances needing reason, recovery or closure.", rows:rb.ram },
+    risky:{ title:"Backdated / Risky Entry Review", sub:"Same-day/backdated/override entries for audit follow-up.", rows:rb.risky },
+    plan:{ title:"Plan Deviation Review", sub:"Planned vs achieved mismatch by style/line/day.", rows:rb.planDev },
   };
   const active = sectionMap[section];
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Review — Coordinator Control Room</h3><div className="mt-panel-sub">Review is not normal WIP viewing. It is where the Production Coordinator clears closures, open balances, reconcile, R/A/M, risky entries, and plan deviations after daily entries are done.</div></div><div className="mt-section no-print"><div className="mt-summary-strip">{Object.entries(sectionMap).map(([k,v])=><button key={k} className={`mt-summary-tile ${section===k?"active":""}`} onClick={()=>setSection(k)}><div className="label">{v.title}</div><div className="value">{v.rows.length}</div><div className="mt-small">drill review</div></button>)}</div></div><div className="mt-section"><SimpleTable title={active.title} sub={active.sub} rows={active.rows} empty="Nothing pending in this review section." /></div><div className="mt-section"><span className="mt-chip mt-info">Closing owner: Production Coordinator</span> <span className="mt-chip mt-muted">Department HOD owns work completion</span> <span className="mt-chip mt-muted">Production Manager only WIP escalation / approvals</span></div></div>;
-}
-
-function MonthlyComparison({ rows, ledger=[], clearTick=0 }){
-  const [month,setMonth] = useState(()=>safeJsonLoad(uiStorageKey("monthly_month"), latestActivityDate(ledger).slice(0,7)));
-  const [buyer,setBuyer] = useState(()=>safeJsonLoad(uiStorageKey("monthly_buyer"), "All"));
-  const [focus,setFocus] = useState(()=>safeJsonLoad(uiStorageKey("monthly_focus"), "all"));
-  const [route,setRoute] = useState(()=>safeJsonLoad(uiStorageKey("monthly_route"), "all"));
-  useEffect(()=>safeJsonSave(uiStorageKey("monthly_month"), month), [month]);
-  useEffect(()=>safeJsonSave(uiStorageKey("monthly_buyer"), buyer), [buyer]);
-  useEffect(()=>safeJsonSave(uiStorageKey("monthly_focus"), focus), [focus]);
-  useEffect(()=>safeJsonSave(uiStorageKey("monthly_route"), route), [route]);
-  useEffect(()=>{ if (!clearTick) return; setBuyer("All"); setFocus("all"); setRoute("all"); }, [clearTick]);
-  const [sizeBreak,setSizeBreak] = useState(true);
-  const buyers = ["All", ...uniqueList(rows.map(r=>r.buyer))];
-  const { start, end, label } = monthRangeFromYm(month);
-  const rawPeriodRows = monthlyComparisonRows(rows, ledger, month);
-  const baseRows = rawPeriodRows.filter(row => (buyer === "All" || row.Buyer === buyer) && (route === "all" || row.Route === route));
-  const summary = {
-    styles: baseRows.length,
-    stitched: baseRows.reduce((a,row)=>a+n(row.Stitching_Receiving_In_Period),0),
-    checked: baseRows.reduce((a,row)=>a+n(row.Checking_In_Period),0),
-    packed: baseRows.reduce((a,row)=>a+n(row.Packing_In_Period),0),
-    dispatched: baseRows.reduce((a,row)=>a+n(row.Dispatch_In_Period),0),
-    afterStitch: baseRows.reduce((a,row)=>a+n(row.Month_Flow_After_Stitch),0),
-    oldWipChecked: baseRows.reduce((a,row)=>a+n(row.Checking_From_Opening_WIP),0),
-    oldWipUsed: baseRows.reduce((a,row)=>a+n(row.Opening_WIP_Used_In_Month),0),
-    checkedNotPacked: baseRows.reduce((a,row)=>a+n(row.Month_Checked_Not_Packed),0),
-    packedNotDispatch: baseRows.reduce((a,row)=>a+n(row.Month_Packed_Not_Dispatched),0),
-    ram: baseRows.reduce((a,row)=>a+n(row.RAM_Posted_In_Period),0),
-  };
-  const tiles = [
-    { key:"all", label:"Styles With Period Activity", value:summary.styles, note:"ledger rows in selected month" },
-    { key:"stitched", label:"Stitching Receiving", value:summary.stitched, note:"only posted in this month" },
-    { key:"checked", label:"Checking In Period", value:summary.checked, note:"can include old stitched WIP" },
-    { key:"old_wip_checked", label:"Old WIP Checked", value:summary.oldWipChecked, note:"checking done from opening stitched WIP" },
-    { key:"old_wip_used", label:"Opening WIP Used", value:summary.oldWipUsed, note:"old WIP processed in later stages" },
-    { key:"after_stitch", label:"New Stitch Pending Check", value:summary.afterStitch, note:"period stitch not yet checked" },
-    { key:"packed_pending", label:"Month Packed Not Dispatch", value:summary.packedNotDispatch, note:"period packed minus period dispatch" },
-    { key:"ram", label:"R/A/M Posted", value:summary.ram, note:"period reject/alter/missing" },
-  ];
-  const filtered = baseRows.filter(row=>{
-    if (focus === "all") return true;
-    if (focus === "stitched") return n(row.Stitching_Receiving_In_Period) > 0;
-    if (focus === "checked") return n(row.Checking_In_Period) > 0;
-    if (focus === "old_wip_checked") return n(row.Checking_From_Opening_WIP) > 0;
-    if (focus === "old_wip_used") return n(row.Opening_WIP_Used_In_Month) > 0;
-    if (focus === "after_stitch") return n(row.Month_Flow_After_Stitch) > 0;
-    if (focus === "packed_pending") return n(row.Month_Packed_Not_Dispatched) > 0;
-    if (focus === "ram") return n(row.RAM_Posted_In_Period) > 0;
-    return true;
-  });
-  const tableRows = filtered.map(row=>{
-    const { Current_Status_Snapshot, Current_Owner_Snapshot, Current_Open_Qty_Snapshot, Next_Action, ...periodCols } = row;
-    const sizeCols = sizeBreak ? {} : Object.fromEntries(Object.keys(periodCols).filter(k=>k.startsWith("Size_")).map(k=>[k, undefined]));
-    const cleaned = { ...periodCols };
-    if (!sizeBreak) Object.keys(cleaned).filter(k=>k.startsWith("Size_")).forEach(k=>delete cleaned[k]);
-    return {
-      ...cleaned,
-      Current_Status_Snapshot,
-      Current_Owner_Snapshot,
-      Current_Open_Qty_Snapshot,
-      Next_Action,
-    };
-  });
-  const noLedger = !(ledger||[]).some(e=>ledgerEntryInPeriod(e, start, end));
-  return <div className="mt-card">
-    <div className="mt-section"><h3 className="mt-panel-title">Monthly Comparison — Period Activity + Opening WIP Flow</h3><div className="mt-panel-sub">Duration rule locked: quantities are from production_entries.entry_date inside the selected month only. If an old WIP style has only 500 stitched in July but 1,200 checked in July, the report shows Stitching 500 and Checking 1,200, with 700 marked as checking from opening stitched WIP.</div></div>
-    <div className="mt-section no-print">
-      <div className="mt-filter-row"><span className="mt-toolbar-label">Month</span><input className="mt-input" type="month" value={month} onChange={e=>setMonth(e.target.value)}/><span className="mt-chip mt-info">{label} · {dateRangeLabel(parseYmd(start), parseYmd(end))}</span><span className="mt-toolbar-label">Buyer</span><select className="mt-select" value={buyer} onChange={e=>setBuyer(e.target.value)}>{buyers.map(b=><option key={b}>{b}</option>)}</select><span className="mt-toolbar-label">Route</span><select className="mt-select" value={route} onChange={e=>setRoute(e.target.value)}><option value="all">All routes</option><option>Plain</option><option>Print</option><option>Embroidery</option><option>Print + Emb</option></select><button className={`mt-btn ${sizeBreak?"primary":"ghost"}`} onClick={()=>setSizeBreak(v=>!v)}><Layers size={14}/>Horizontal sizes</button><span className="mt-page-filter-note">{tableRows.length} rows</span></div>
-      <div className="mt-speed-note"><b>Important:</b> this report is not a cumulative WIP snapshot. It only sums activity entries whose <code>entry_date</code> falls from {start} to {end}. If Checking/Packing/Dispatch is higher than same-month Stitching, the excess is explained in the Opening WIP columns, not treated as an error.</div>
-      <div className="mt-summary-strip">{tiles.map(t=><button key={t.key} className={`mt-summary-tile ${focus===t.key?"active":""}`} onClick={()=>setFocus(t.key)}><div className="label">{t.label}</div><div className="value">{typeof t.value === "number" && t.key!=="all" ? fmt(t.value) : t.value}</div><div className="mt-small">{t.note}</div></button>)}</div>
-    </div>
-    {noLedger && <div className="mt-section"><span className="mt-chip mt-warn">No production activity entries found for this month</span> <span className="mt-small">Cumulative style totals are intentionally not shown here, because duration reports must show only activity posted in the selected period.</span></div>}
-    <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{(tableRows[0] ? Object.keys(tableRows[0]) : ["Note"]).map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{tableRows.length ? tableRows.map((r,i)=><tr key={i}>{Object.keys(tableRows[0]).map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] === undefined || r[c] === null ? "" : r[c])}</td>)}</tr>) : <tr><td style={{padding:18}}>No period activity rows for this filter.</td></tr>}</tbody></table></div>
-  </div>;
-}
-
-function Reports({ rows, ledger }){
-  const pack = buildReportSheets(rows, ledger);
-  function exportDailyPack(){
-    exportXlsx("daily_production_pack_horizontal.xlsx",[
-      { name:"Factory Summary", rows:pack.factorySummary },
-      ...pack.deptSheets,
-      { name:"Owner Chase", rows:pack.ownerRows },
-      { name:"Reconcile", rows:pack.reconcile },
-    ]);
-  }
-  function exportIssueReceive(){
-    exportXlsx("issue_receive_control_horizontal.xlsx",[
-      { name:"Completed Not Issued", rows:pack.completedNotIssued },
-      { name:"Received Not Processed", rows:pack.receivedNotProcessed },
-      { name:"Handover Aging", rows:pack.ownerRows.filter(r => String(r.Status).includes("Ready") || String(r.Status).includes("With")) },
-    ]);
-  }
-  function exportQualityLoss(){
-    exportXlsx("quality_loss_pack_horizontal.xlsx",[
-      { name:"Reject Alter Missing", rows:pack.ramRows },
-      { name:"Reconcile", rows:pack.reconcile },
-      { name:"Audit Ledger", rows:pack.ledgerRows },
-    ]);
-  }
-  function exportManagementMonthly(){
-    exportXlsx("management_monthly_pack_horizontal.xlsx",[
-      { name:"WIP Status", rows:pack.wipStatus },
-      { name:"Monthly Comparison", rows:pack.monthlyRows },
-      { name:"Process Print Emb", rows:pack.processRows },
-      { name:"Party Pending", rows:pack.partyRows },
-      { name:"Dispatch Ready", rows:pack.dispatchRows },
-      { name:"Closure Pending", rows:pack.closureRows },
-      { name:"Backdated Audit", rows:pack.ledgerRows },
-    ]);
-  }
-  function exportAllReports(){
-    exportXlsx("production_dpr_all_reports_horizontal.xlsx",[
-      { name:"Factory Summary", rows:pack.factorySummary },
-      { name:"Live WIP", rows:pack.wipStatus },
-      { name:"Size Wise WIP", rows:pack.activeStageRows },
-      { name:"Completed Not Issued", rows:pack.completedNotIssued },
-      { name:"Received Not Processed", rows:pack.receivedNotProcessed },
-      { name:"Reject Alter Missing", rows:pack.ramRows },
-      { name:"Reconcile", rows:pack.reconcile },
-      { name:"Owner Chase", rows:pack.ownerRows },
-      { name:"Line Efficiency", rows:pack.lineEfficiencyRows },
-      { name:"Bottleneck Flow", rows:pack.bottleneckRows },
-      { name:"Aging Stuck WIP", rows:pack.agingRows },
-      { name:"Quality Loss Rate", rows:pack.qualityRows },
-      { name:"Print Embroidery", rows:pack.processRows },
-      { name:"Party Pending", rows:pack.partyRows },
-      { name:"Dispatch Ready", rows:pack.dispatchRows },
-      { name:"Closure Pending", rows:pack.closureRows },
-      { name:"Monthly Comparison", rows:pack.monthlyRows },
-      { name:"Backdated Audit", rows:pack.ledgerRows },
-      ...pack.deptSheets,
-    ]);
-  }
-  const reportCards = [
-    { title:"Daily Production Pack", desc:"Factory summary + one horizontal WIP sheet per department + owner chase + reconcile.", action:exportDailyPack },
-    { title:"Issue / Receive Control", desc:"Issued not received, completed not issued, received not processed, and handover aging.", action:exportIssueReceive },
-    { title:"Quality Loss Pack", desc:"Reject / alter / missing, reconcile, and audit entries.", action:exportQualityLoss },
-    { title:"Management Monthly Pack", desc:"WIP status, monthly comparison, print/emb, party pending, dispatch, closure, backdated audit.", action:exportManagementMonthly },
-    { title:"All Reports Workbook", desc:"Everything above in one workbook, all user-facing sheets horizontal.", action:exportAllReports },
-  ];
-  return <div className="mt-two"><div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Excel Reports — Horizontal Format</h3><div className="mt-panel-sub">All team-facing size-wise reports use one row per style/order/colour/component/stage with size columns across and auto totals. Vertical format is only used for the audit ledger.</div></div><div className="mt-section" style={{display:"grid", gap:10}}>{reportCards.map(card=><div key={card.title} className="mt-card" style={{boxShadow:"none"}}><div className="mt-section"><h3 className="mt-panel-title" style={{fontSize:13}}>{card.title}</h3><div className="mt-panel-sub">{card.desc}</div><button className="mt-btn primary" style={{marginTop:9}} onClick={card.action}><Download size={14}/>Export</button></div></div>)}</div></div><PrintableHodSheet rows={rows}/></div>;
-}
-
-function PrintableHodSheet({ rows }){
-  const [dept,setDept] = useState("stitching");
-  const deptRows = rows.filter(r=>routeFor(r).includes(dept));
-  const allSizes = allReportSizes(deptRows);
-  return <div className="mt-card"><div className="mt-section no-print"><h3 className="mt-panel-title">Printable Department Head WIP</h3><div className="mt-panel-sub">Daily HOD sheet in horizontal size format. One row per style/component; sizes across columns.</div><div style={{marginTop:10}}><select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select> <button className="mt-btn" onClick={()=>window.print()}><Printer size={14}/>Print</button></div></div><div className="mt-section mt-print-sheet"><h3 style={{marginTop:0}}>{stageLabel(dept)} WIP Sheet — {today()}</h3><table className="mt-table" style={{minWidth:980}}><thead><tr><th>Order</th><th>Style</th><th>Colour</th><th>Component</th><th>Status</th>{allSizes.map(size=><th key={size}>{size}</th>)}<th>Total</th><th>Open</th><th>R/A/M</th><th>Idle</th><th>Owner</th><th>Action</th></tr></thead><tbody>{deptRows.map(row=>{ const st=sdata(row,dept); const c=cellBreakup(row,dept); const rs=rowStatus(row); const sizeQty=Object.fromEntries(sizeMatrix(row,dept,"received").map(x=>[x.size,x.qty])); return <tr key={row.id}><td>{row.order_no}</td><td><b>{row.style_no}</b></td><td>{row.colour}</td><td>{row.component}</td><td>{rs.status}</td>{allSizes.map(size=><td key={size}>{fmt(sizeQty[size] || 0)}</td>)}<td><b>{fmt(c.received)}</b></td><td>{fmt(c.open)}</td><td>{fmt(c.ram)}</td><td>{n(st.idle)}d</td><td>{rs.owner}</td><td>{rs.action}</td></tr>; })}</tbody></table></div></div>;
-}
-
-function SimpleTable({ title, sub, rows, empty, onRowClick }){
-  const cols = rows.length ? Object.keys(rows[0]) : [];
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{sub}</div></div><div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{rows.length ? rows.map((r,i)=><tr key={i} className={onRowClick ? "drillable" : ""} onClick={()=>onRowClick?.(r)}>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] === undefined || r[c] === null ? "" : r[c])}</td>)}</tr>) : <tr><td style={{padding:18}}>{empty}</td></tr>}</tbody></table></div></div>;
-}
-
-function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose, onOpenRegister, onSharedSave }){
-  const rs = rowStatus(row);
-  const stage = stageKey || rs.stage;
-  const st = sdata(row,stage);
-  const c = cellBreakup(row,stage);
-  const feed = stage === "cutting" ? n(row.order_qty) : stageFeed(row,stage);
-  const readyToIssue = Math.max(0, n(st.output) - n(st.issued));
-  const rejectQty = n(st.reject);
-  const alterQty = n(st.alter);
-  const missingQty = n(st.missing);
-  const ramQty = rejectQty + alterQty + missingQty;
-  const accountedQty = n(st.output) + ramQty;
-  const tailQty = Math.max(0, feed - accountedQty);
-  const buckets = issueBuckets(row).filter(b=>b.stage===stage);
-  const primaryBucket = buckets.find(b=>b.type!=="extra_cut") || buckets[0];
-  const receivingRows = receivingHistoryRows(row, stage, ledger);
-  const outputHistoryRows = departmentOutputHistoryRows(row, stage, ledger);
-  const openRegisterForEdit = (activity="all") => onOpenRegister?.(row, stage, activity);
-  const sizeRows = sizesFor(row).map(size=>{
-    const feedSz = n(stageFeedBySize(row,stage)[size]);
-    const out = n(sizeMatrix(row,stage,"output").find(x=>x.size===size)?.qty);
-    const iss = n(sizeMatrix(row,stage,"issued").find(x=>x.size===size)?.qty);
-    const rej = n(sizeMatrix(row,stage,"reject").find(x=>x.size===size)?.qty);
-    const alt = n(sizeMatrix(row,stage,"alter").find(x=>x.size===size)?.qty);
-    const miss = n(sizeMatrix(row,stage,"missing").find(x=>x.size===size)?.qty);
-    const ram = rej + alt + miss;
-    return { Size:size, Feed:feedSz, Output:out, Open_Work:Math.max(0, feedSz-out-ram), Ready_To_Issue:Math.max(0,out-iss), RAM:ram };
-  });
-  async function shortCloseCutting(){
-    if (stage !== "cutting") return;
-    const open = cuttingAccountableOpen(row);
-    if (open <= 0) { alert("No cutting balance is open to short close."); return; }
-    const qty = n(window.prompt(`Cutting open is ${fmt(open)}. Enter quantity to short close:`, String(open)));
-    if (!qty || qty < 0 || qty > open) { alert(`Enter a quantity between 1 and ${fmt(open)}.`); return; }
-    const reason = window.prompt("Reason / approval note for cutting short close:", row.cutting_short_close_reason || "Short close approved") || "Short close approved";
-    const nextQty = cuttingShortCloseQty(row) + qty;
-    const updatedRow = { ...row, cutting_short_close_qty:nextQty, cutting_short_close_reason:reason, stages:{ ...(row.stages||{}), cutting:{ ...blankStage(), ...(row.stages?.cutting||{}), short_close:nextQty } } };
-    setRows(prev=>prev.map(r=>String(r.id)===String(row.id) ? updatedRow : r));
-    const { error } = await upsertOneStyleToSupabase(updatedRow);
-    if (error) alert(`Short close saved in browser, Supabase save failed: ${error.message}`);
-  }
-  return <div className="mt-drawer"><div className="mt-drawer-head"><div><div style={{fontFamily:"'Archivo',sans-serif", fontSize:20, fontWeight:800}}>{stageLabel(stage)} · {row.style_no}</div><div className="mt-sub">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div></div><button className="mt-btn" onClick={onClose}><X size={16}/></button></div><div className="mt-drawer-body">
-    <div className="mt-entry-highlight"><strong>Focused WIP cell: {stageLabel(stage)}</strong><div className="mt-context-strip"><span className="mt-chip mt-info">Selected dept only</span><span className="mt-chip mt-muted">Order {row.order_no}</span><span className="mt-chip mt-muted">{row.colour} · {row.component}</span>{primaryBucket && <span className={`mt-chip ${statusClass(primaryBucket.tone)}`}>{primaryBucket.status}</span>}</div><div className="mt-panel-sub" style={{marginTop:6}}>Only the clicked department's breakup is shown first. Full style/route detail is collapsed below.</div></div>
-    <div className="mt-grid" style={{gridTemplateColumns:"repeat(4,minmax(0,1fr))", marginBottom:12}}>
-      <Kpi label={stage === "cutting" ? "Order Qty" : "Feed to Dept"} value={fmt(feed)} note={stage === "cutting" ? "Cutting base" : "Previous dept issued/accepted"}/>
-      <Kpi label="Completed / Output" value={`Good ${fmt(n(st.output))}`} note={<span>Reject {fmt(rejectQty)} · Missing {fmt(missingQty)} · Alter {fmt(alterQty)}<br/>Accounted {fmt(accountedQty)} / {fmt(feed)}</span>} tone={ramQty ? "warn" : "ok"}/>
-      <Kpi label="Open / Tail Action" value={fmt(c.open)} note={<span>Work open {fmt(c.open)} · Tail {fmt(tailQty)}<br/>Use R/A/M rows if balance is not production.</span>} tone={c.open || tailQty ? "warn" : "ok"}/>
-      <Kpi label="Ready to Issue" value={fmt(readyToIssue)} note="Completed but not moved forward" tone={readyToIssue?"info":"ok"}/>
-    </div>
-    <div className="mt-section mt-card" style={{marginBottom:12}}><h3 className="mt-panel-title">{stageLabel(stage)} breakup</h3><div className="mt-context-strip"><span className="mt-chip mt-ok">Done {fmt(c.received)}</span><span className="mt-chip mt-warn">Open {fmt(c.open)}</span><span className="mt-chip mt-late">R/A/M {fmt(c.ram)}</span>{c.shortClose ? <span className="mt-chip mt-purple">Short Closed {fmt(c.shortClose)}</span> : null}{c.extra ? <span className="mt-chip mt-purple">Extra/Over {fmt(c.extra)}</span> : null}<span className="mt-chip mt-info">Owner {primaryBucket?.owner || stageOwner(stage)}</span></div>{stage==="cutting" && c.open>0 ? <div style={{marginTop:10}}><button className="mt-btn ghost" onClick={shortCloseCutting}>Short close cutting balance</button><div className="mt-small">Use only when management approves cutting less than order qty. This removes balance from Cutting Pending; it does not add production.</div></div> : null}</div>
-    <SizeCumulativeEditor row={row} rows={rows} setRows={setRows} ledger={ledger} setLedger={setLedger} stage={stage} initialField={c.open ? "output" : readyToIssue ? "issued" : "output"} source="wip_view_cell_day_entry" onSharedSave={onSharedSave} />
-    <div className="mt-section no-print" style={{paddingLeft:0,paddingRight:0}}><button className="mt-btn ghost" onClick={()=>openRegisterForEdit("all")}><FileSpreadsheet size={14}/>Open Register to edit this dept history</button><span className="mt-small" style={{marginLeft:8}}>Register opens filtered to this order/style/department; use Correct for audit-safe edits.</span></div>
-    {stage!=="cutting" && <details className="mt-fold" open={stage==="stitching"}><summary>Receiving / previous department issue history for {stageLabel(stage)}</summary><div className="mt-section no-print" style={{paddingLeft:0,paddingRight:0}}><button className="mt-btn ghost" onClick={()=>onOpenRegister?.(row, "all", "all")}><FileSpreadsheet size={14}/>Open Register for full receive trail</button></div><SimpleTable title={`${stageLabel(stage)} receiving history`} sub="Previous department issue / receiving trail, horizontal by date/activity with size columns across. Vertical one-size-per-row is reserved only for raw audit ledgers." rows={receivingRows} empty="No receiving / issue history found in ledger yet." /></details>}
-    <details className="mt-fold" open={false}><summary>Complete {stageLabel(stage)} output / issue / R-A-M history</summary><div className="mt-section no-print" style={{paddingLeft:0,paddingRight:0}}><button className="mt-btn ghost" onClick={()=>openRegisterForEdit("all")}><FileSpreadsheet size={14}/>Open Register to correct output / issue / R-A-M</button></div><SimpleTable title={`${stageLabel(stage)} complete output history`} sub="Good output, issue-forward, rejection, missing, alter defect and alter clear entries for this department. Always grouped horizontally by activity/date with sizes across." rows={outputHistoryRows} empty="No output / issue / R-A-M ledger history found for this department yet." /></details>
-    <details className="mt-fold"><summary>View {stageLabel(stage)} size breakup</summary><SimpleTable title={`${stageLabel(stage)} size-wise open quantities`} sub="Only the selected/clicked department. Use this to see what is open by size before entering." rows={sizeRows} empty="No size rows." /></details>
-    <details className="mt-fold"><summary>View full style detail / route / history</summary><div className="mt-section"><LazyStylePhoto row={row} large/><div className="mt-grid" style={{gridTemplateColumns:"repeat(3,minmax(0,1fr))", marginBottom:12}}><Kpi label="Overall Status" value={rs.status} note={rs.action} tone={rs.tone}/><Kpi label="Overall Owner" value={rs.owner} note={rs.support || "Primary owner"}/><Kpi label="Overall Open Qty" value={fmt(rs.qty)} note={`${rs.idle || 0} days idle`}/></div></div><SimpleTable title="Open buckets for selected department" sub="Owner chase items for this department." rows={buckets.map(b=>({ Status:b.status, Qty:b.qty, Percent:`${bucketPct(row,b)}%`, Owner:b.owner, Support:b.support, Action:b.action, Idle:`${b.idle||0}d` }))} empty="No open bucket for this department." /><div style={{height:12}}/><SimpleTable title="Full current status drilldown" sub="Full status logic across this style/component." rows={statusBreakdown(row).map(b=>({ Status:b.status, Stage:stageLabel(b.stage), Qty:b.qty, Percent:`${bucketPct(row,b)}%`, Owner:b.owner, Support:b.support, Action:b.action, Idle:`${b.idle||0}d` }))} empty="No open status bucket." /></details>
-  </div></div>;
-}
-
-function sanitizePhotoName(text){
-  return String(text || "style").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,80) || "style";
-}
-
-async function compressImageFile(file, maxSide=900, quality=0.76){
-  if (!file || !file.type?.startsWith("image/")) throw new Error("Please choose an image file.");
-  if (file.size > 12 * 1024 * 1024) throw new Error("Image is too large. Please use a photo below 12 MB before compression.");
-  const imgUrl = URL.createObjectURL(file);
-  try {
-    const img = await new Promise((resolve,reject)=>{
-      const i = new Image();
-      i.onload = () => resolve(i);
-      i.onerror = () => reject(new Error("Could not read this image."));
-      i.src = imgUrl;
-    });
-    const scale = Math.min(1, maxSide / Math.max(img.width || maxSide, img.height || maxSide));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round((img.width || maxSide) * scale));
-    canvas.height = Math.max(1, Math.round((img.height || maxSide) * scale));
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise((resolve)=> canvas.toBlob(resolve, "image/webp", quality));
-    return blob || file;
-  } finally {
-    URL.revokeObjectURL(imgUrl);
-  }
-}
-
-function PhotoManager({ rows, setRows, clearTick=0 }){
-  const [draft, setDraft] = useState({});
-  const [folderDraft, setFolderDraft] = useState({});
-  const [uploading, setUploading] = useState({});
-  const [msg, setMsg] = useState("");
-  useEffect(()=>{
-    setDraft(Object.fromEntries(rows.map(r=>[r.id, r.photo_thumb_url || r.photo_url || ""])));
-    setFolderDraft(Object.fromEntries(rows.map(r=>[r.id, r.photo_folder_url || ""])));
-  }, [rows]);
-  function setUrl(rowId, value){ setDraft(d=>({ ...d, [rowId]:value })); }
-  function setFolder(rowId, value){ setFolderDraft(d=>({ ...d, [rowId]:value })); }
-  async function uploadPhoto(row, file){
-    if (!isSupabaseConfigured || !supabase) { setMsg("Supabase is not configured. Use direct photo URL for now."); return; }
-    try {
-      setUploading(u=>({ ...u, [row.id]:true }));
-      setMsg("Compressing and uploading photo...");
-      const blob = await compressImageFile(file);
-      const path = `${sanitizePhotoName(row.order_no)}/${sanitizePhotoName(row.style_no)}-${sanitizePhotoName(row.colour)}-${sanitizePhotoName(row.component)}-${Date.now()}.webp`;
-      const { error: uploadError } = await supabase.storage.from("production-photos").upload(path, blob, { cacheControl:"31536000", upsert:true, contentType:"image/webp" });
-      if (uploadError) throw uploadError;
-      const { data } = supabase.storage.from("production-photos").getPublicUrl(path);
-      const publicUrl = data?.publicUrl || "";
-      if (!publicUrl) throw new Error("Upload finished but public URL was not returned.");
-      setUrl(row.id, publicUrl);
-      setRows(prev=>prev.map(r=>r.id===row.id ? ({ ...r, photo_url:publicUrl, photo_thumb_url:publicUrl }) : r));
-      const result = await robustUpsertOrdersToSupabase([{ ...row, photo_url:publicUrl, photo_thumb_url:publicUrl, photo_folder_url:folderDraft[row.id] || row.photo_folder_url || "" }]);
-      if (result?.error) throw result.error;
-      setMsg(`Photo uploaded. Thumbnail will show in WIP/Planning/Review tables. ${supabaseSaveLabel(result)}`);
-    } catch (e) {
-      setMsg(e?.message || "Photo upload failed. Check Supabase Storage bucket/policies.");
-    } finally {
-      setUploading(u=>({ ...u, [row.id]:false }));
+  async function resolveReconcile(row, decision){
+    const id = row.Entry_ID;
+    if (!id) { alert("This reconcile row has no ledger id yet. Pull shared data and try again, or correct from Register."); return; }
+    const note = window.prompt(`${decision === "approved" ? "Approve" : "Dismiss"} P0 date exception reason:`, decision === "approved" ? "Reviewed and accepted by Production Manager" : "Dismissed after review") || "";
+    if (!note.trim()) return;
+    if (!window.confirm(`${decision.toUpperCase()} this P0 date-sequence exception?\n\nThis only closes the reconcile alert. It does not change quantity. Use Register correction if the entry quantity/date is wrong.`)) return;
+    const patch = { validation_resolved:true, validation_resolved_at:new Date().toISOString(), validation_resolved_by:currentUserName(), validation_resolution_decision:decision, validation_resolution_note:note };
+    let result = { skipped:true };
+    if (isSupabaseConfigured && supabase) {
+      try { result = await supabase.from("production_entries").update(patch).eq("id", id); } catch(e) { result = { error:{ message:e?.message || String(e) } }; }
     }
+    if (result?.error) result = await fetchRestPatchToSupabase("production_entries", `id=eq.${encodeURIComponent(id)}`, patch);
+    if (result?.error) { alert(`Could not update Supabase reconcile status: ${result.error.message}`); return; }
+    setLedger?.(prev => (prev || []).map(e => String(e.id) === String(id) ? { ...e, ...patch } : e));
+    await recordProductionAudit(`p0_reconcile_${decision}`, { table_name:"production_entries", order_no:row.Order, style_no:row.Style, colour:row.Colour, component:row.Component, stage:row.Dept, entry_date:row.Entry_Date, qty:row.Difference, source:"review_reconcile", metadata:{ note } });
+    setMsg({ tone:"ok", text:`P0 reconcile ${decision}. It is now hidden from pending Reconcile Review.` });
   }
-  async function save(){
-    const nextRows = rows.map(r=>({ ...r, photo_url:draft[r.id] || "", photo_thumb_url:draft[r.id] || "", photo_folder_url:folderDraft[r.id] || "" }));
-    setRows(prev=>prev.map(r=>Object.prototype.hasOwnProperty.call(draft, r.id) ? ({ ...r, photo_url:draft[r.id] || "", photo_thumb_url:draft[r.id] || "", photo_folder_url:folderDraft[r.id] || "" }) : r));
-    setMsg("Photos saved locally. Seed/Pull will sync once Supabase columns exist.");
-    if (hasValidSupabaseEnv()) {
-      const result = await robustUpsertOrdersToSupabase(nextRows);
-      setMsg(result.error ? result.error.message : `Photo thumbnail/folder URLs saved to Supabase. ${supabaseSaveLabel(result)}`);
-    }
-  }
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Style Photos</h3><div className="mt-panel-sub">Upload one style photo or paste a direct thumbnail URL. WIP/Planning/Review tables show tiny lazy-loaded thumbnails; detail drawer shows a larger preview.</div></div>
-    <div className="mt-section"><div className="mt-speed-note"><b>Best workflow:</b> upload here → app compresses to WebP → saves to Supabase Storage bucket <code>production-photos</code> → writes <code>photo_url</code> and <code>photo_thumb_url</code>. Keep OneDrive only as optional folder/reference link.</div></div>
-    <div className="mt-section no-print"><button className="mt-btn primary" onClick={save}><CheckCircle2 size={14}/>Save Photo URLs</button> {msg && <span className="mt-chip mt-info">{msg}</span>}</div>
-    <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style</th><th>Preview</th><th>Upload Thumbnail</th><th>Photo / Thumb URL</th><th>OneDrive Folder URL</th><th>Usage</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}><td className="mt-sticky"><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div></td><td><LazyStylePhoto row={{...row, photo_url:draft[row.id], photo_thumb_url:draft[row.id]}}/></td><td><input type="file" accept="image/*" onChange={e=>{ const f=e.target.files?.[0]; if(f) uploadPhoto(row,f); e.target.value=""; }} disabled={!!uploading[row.id]} />{uploading[row.id] ? <div className="mt-small">Uploading...</div> : <div className="mt-small">Compressed before upload</div>}</td><td><input className="mt-input" style={{width:"min(520px,60vw)"}} value={draft[row.id] || ""} onChange={e=>setUrl(row.id,e.target.value)} placeholder="https://.../style-thumbnail.webp" /></td><td><input className="mt-input" style={{width:"min(420px,50vw)"}} value={folderDraft[row.id] || ""} onChange={e=>setFolder(row.id,e.target.value)} placeholder="Optional OneDrive folder/share link" /></td><td><span className="mt-chip mt-muted">Thumbnail in sheets</span> <span className="mt-chip mt-muted">Large in detail</span></td></tr>)}</tbody></table></div>
-  </div>;
-}
-
-
-function styleCompositeKey(row){ return [row.order_no||"", row.style_no||"", row.colour||"", row.component||""].join("|::|").toLowerCase(); }
-function ledgerRowMatchesStyle(x,row){
-  return String(x.order_no || x.order || "") === String(row.order_no || "") &&
-    String(x.style_no || x.style || "") === String(row.style_no || "") &&
-    String(x.colour || "") === String(row.colour || "") &&
-    String(x.component || "") === String(row.component || "");
-}
-function styleHasStageActivity(row){
-  return routeFor(row).some(stage=>{
-    const st = sdata(row, stage);
-    return ["received","output","issued","reject","alter","missing"].some(k=>n(st[k])>0);
-  });
-}
-function blankStagesForRoute(row){ return Object.fromEntries(routeFor(row).map(k=>[k, blankStage()])); }
-function safeStagesForEditedRow(prevRow, draftRow){
-  const next = {};
-  routeFor(draftRow).forEach(k=>{ next[k] = { ...blankStage(), ...(prevRow?.stages?.[k] || {}) }; });
-  return next;
-}
-async function upsertOneStyleToSupabase(row){
-  return robustUpsertOrdersToSupabase([row]);
-}
-function styleNaturalKey(row){
-  return {
-    order_no: String(row?.order_no || "").trim(),
-    style_no: String(row?.style_no || "").trim(),
-    colour: String(row?.colour || "").trim(),
-    component: String(row?.component || "").trim(),
-  };
-}
-function applyStyleNaturalKeyFilter(query, row){
-  const key = styleNaturalKey(row);
-  if (!key.order_no || !key.style_no || !key.colour || !key.component) {
-    return { query:null, error:{ message:"Delete needs Order No, Style No, Colour and Component." } };
-  }
-  return {
-    query: query
-      .eq("order_no", key.order_no)
-      .eq("style_no", key.style_no)
-      .eq("colour", key.colour)
-      .eq("component", key.component),
-    error:null
-  };
-}
-function supabaseEnvBaseUrl(){
-  const raw = String(import.meta.env?.VITE_SUPABASE_URL || "").trim();
-  if (!raw) return "";
-  try {
-    // Always normalize to the project origin. This fixes common env mistakes such as
-    // https://project.supabase.co/rest/v1 or /rest/v1/production_orders which make
-    // supabase-js build an invalid request path.
-    const u = new URL(raw);
-    return u.origin.replace(/\/+$/, "");
-  } catch {
-    return raw.replace(/\/rest\/v1.*$/i, "").replace(/\/storage\/v1.*$/i, "").replace(/\/+$/, "");
-  }
-}
-function supabaseEnvAnonKey(){ return String(import.meta.env?.VITE_SUPABASE_ANON_KEY || "").trim(); }
-function hasValidSupabaseEnv(){
-  try {
-    const raw = supabaseEnvBaseUrl();
-    if (!raw || !supabaseEnvAnonKey()) return false;
-    const u = new URL(raw);
-    return u.protocol === "https:" || u.protocol === "http:";
-  } catch { return false; }
-}
-function supabaseConfigWarning(){
-  return "Supabase URL/key is missing or invalid. Use the project URL like https://xxxxx.supabase.co in VITE_SUPABASE_URL, not a copied REST path. Changes are saved in this browser fallback until Supabase is fixed.";
-}
-function urlEncodedEqQuery(key){
-  return Object.entries(key).map(([k,v])=>`${encodeURIComponent(k)}=eq.${encodeURIComponent(String(v || ""))}`).join("&");
-}
-function missingSchemaColumnName(err){
-  const msg = String(err?.message || err || "");
-  return msg.match(/Could not find the '([^']+)' column/i)?.[1] ||
-    msg.match(/column ["']?([a-zA-Z0-9_]+)["']? .*schema cache/i)?.[1] ||
-    "";
-}
-function removeColumnFromPayloadRows(payloadRows, column){
-  const rows = Array.isArray(payloadRows) ? payloadRows : [payloadRows];
-  return rows.map(row=>{ const next = { ...row }; delete next[column]; return next; });
-}
-async function retrySchemaSafeSupabaseUpsert(table, payloadRows, onConflict, maxRetries=8){
-  if (!isSupabaseConfigured || !supabase) return { error:{ message:"Supabase client unavailable" } };
-  let payload = Array.isArray(payloadRows) ? payloadRows : [payloadRows];
-  const removed = [];
-  for (let i=0; i<=maxRetries; i++){
-    const { error } = await supabase.from(table).upsert(payload, { onConflict });
-    if (!error) return { error:null, via:"supabase-js", savedCount:payload.length, removedColumns:removed };
-    const col = missingSchemaColumnName(error);
-    if (!col || removed.includes(col)) return { error, removedColumns:removed };
-    removed.push(col);
-    payload = removeColumnFromPayloadRows(payload, col);
-  }
-  return { error:{ message:`Supabase save failed after removing schema-missing columns: ${removed.join(", ")}` }, removedColumns:removed };
-}
-
-async function retrySchemaSafeSupabaseInsert(table, payloadRows, maxRetries=8){
-  if (!isSupabaseConfigured || !supabase) return { error:{ message:"Supabase client unavailable" } };
-  let payload = Array.isArray(payloadRows) ? payloadRows : [payloadRows];
-  const removed = [];
-  for (let i=0; i<=maxRetries; i++){
-    const { error } = await supabase.from(table).insert(payload);
-    if (!error) return { error:null, via:"supabase-js", savedCount:payload.length, removedColumns:removed };
-    const col = missingSchemaColumnName(error);
-    if (!col || removed.includes(col)) return { error, removedColumns:removed };
-    removed.push(col);
-    payload = removeColumnFromPayloadRows(payload, col);
-  }
-  return { error:{ message:`Supabase insert failed after removing schema-missing columns: ${removed.join(", ")}` }, removedColumns:removed };
-}
-async function fetchRestInsertToSupabase(table, payloadRows){
-  const base = supabaseEnvBaseUrl();
-  const anon = supabaseEnvAnonKey();
-  if (!base || !anon) return { skipped:true, warning:supabaseConfigWarning() };
-  let rows = Array.isArray(payloadRows) ? payloadRows : [payloadRows];
-  if (!rows.length) return { error:null, via:"rest", savedCount:0 };
-  const removed = [];
-  const url = `${base}/rest/v1/${encodeURIComponent(table)}`;
-  for (let attempt=0; attempt<8; attempt++){
-    try {
-      const res = await fetch(url, {
-        method:"POST",
-        headers:{ apikey:anon, Authorization:`Bearer ${anon}`, "Content-Type":"application/json", Prefer:"return=minimal" },
-        body:JSON.stringify(rows)
-      });
-      if (res.ok) return { error:null, via:"rest", savedCount:rows.length, removedColumns:removed };
-      const text = await res.text().catch(()=>"");
-      const col = missingSchemaColumnName({ message:text });
-      if (col && !removed.includes(col)) {
-        removed.push(col);
-        rows = removeColumnFromPayloadRows(rows, col);
-        continue;
-      }
-      return { error:{ message:text || `REST insert HTTP ${res.status}` }, removedColumns:removed };
-    } catch (e) {
-      return { error:{ message:e?.message || String(e) }, removedColumns:removed };
-    }
-  }
-  return { error:{ message:`REST insert failed after removing schema-missing columns: ${removed.join(", ")}` }, removedColumns:removed };
-}
-async function robustInsertEntriesToSupabase(payloadRows){
-  if (!hasValidSupabaseEnv()) return { skipped:true, warning:supabaseConfigWarning() };
-  let firstError = null;
-  if (isSupabaseConfigured && supabase) {
-    try {
-      const result = await retrySchemaSafeSupabaseInsert("production_entries", payloadRows);
-      if (!result.error) return result;
-      firstError = result.error;
-    } catch (e) {
-      firstError = { message:e?.message || String(e) };
-    }
-  }
-  const fallback = await fetchRestInsertToSupabase("production_entries", payloadRows);
-  if (!fallback?.error) return { ...fallback, recoveredFrom:firstError?.message || "Supabase client was unavailable" };
-  return { error:{ message:`${firstError?.message || "Supabase client entry insert failed"}; REST fallback also failed: ${fallback.error.message}` } };
-}
-
-async function fetchRestUpsertToSupabase(table, payloadRows, onConflict){
-  const base = supabaseEnvBaseUrl();
-  const anon = supabaseEnvAnonKey();
-  if (!base || !anon) return { skipped:true, warning:supabaseConfigWarning() };
-  let rows = Array.isArray(payloadRows) ? payloadRows : [payloadRows];
-  if (!rows.length) return { error:null, via:"rest", savedCount:0 };
-  const removed = [];
-  const url = `${base}/rest/v1/${encodeURIComponent(table)}?on_conflict=${encodeURIComponent(onConflict)}`;
-  for (let attempt=0; attempt<8; attempt++){
-    try {
-      const res = await fetch(url, {
-        method:"POST",
-        headers:{
-          apikey:anon,
-          Authorization:`Bearer ${anon}`,
-          "Content-Type":"application/json",
-          Prefer:"resolution=merge-duplicates,return=minimal"
-        },
-        body:JSON.stringify(rows)
-      });
-      if (res.ok) return { error:null, via:"rest", savedCount:rows.length, removedColumns:removed };
-      const text = await res.text().catch(()=>"");
-      const col = missingSchemaColumnName({ message:text });
-      if (col && !removed.includes(col)) {
-        removed.push(col);
-        rows = removeColumnFromPayloadRows(rows, col);
-        continue;
-      }
-      return { error:{ message:text || `REST upsert HTTP ${res.status}` }, removedColumns:removed };
-    } catch (e) {
-      return { error:{ message:e?.message || String(e) }, removedColumns:removed };
-    }
-  }
-  return { error:{ message:`REST save failed after removing schema-missing columns: ${removed.join(", ")}` }, removedColumns:removed };
-}
-async function robustUpsertOrdersToSupabase(rows){
-  if (!hasValidSupabaseEnv()) return { skipped:true, warning:supabaseConfigWarning() };
-  const payload = (Array.isArray(rows) ? rows : [rows]).map(orderToSupabase);
-  let firstError = null;
-  if (isSupabaseConfigured && supabase) {
-    try {
-      const result = await retrySchemaSafeSupabaseUpsert("production_orders", payload, "order_no,style_no,colour,component");
-      if (!result.error) return result;
-      firstError = result.error;
-    } catch (e) {
-      firstError = { message:e?.message || String(e) };
-    }
-  }
-  const fallback = await fetchRestUpsertToSupabase("production_orders", payload, "order_no,style_no,colour,component");
-  if (!fallback?.error) return { ...fallback, recoveredFrom:firstError?.message || "Supabase client was unavailable" };
-  return { error:{ message:`${firstError?.message || "Supabase client save failed"}; REST fallback also failed: ${fallback.error.message}` } };
-}
-function supabaseSaveLabel(result){
-  const stripped = result?.removedColumns?.length ? ` Schema-safe save: skipped non-table columns ${result.removedColumns.join(", ")}.` : "";
-  if (result?.via === "rest") return `Saved to Supabase via REST fallback.${stripped}`;
-  if (result?.via === "supabase-js") return `Saved to Supabase.${stripped}`;
-  return `Saved to Supabase.${stripped}`;
-}
-function shortRecoveredSupabaseNote(text){
-  if (!text) return "";
-  const msg = String(text || "");
-  if (msg.includes("null value in column \"id\"")) return " Supabase client had an id compatibility issue; REST fallback saved it.";
-  if (msg.includes("Invalid path specified")) return " Supabase client path failed; REST fallback saved it.";
-  if (msg.length > 160) return " Supabase client failed first; REST fallback saved it.";
-  return ` Recovered from: ${msg}`;
-}
-async function fetchRestSelectFromSupabase(table, query="select=*&limit=1"){
-  const base = supabaseEnvBaseUrl();
-  const anon = supabaseEnvAnonKey();
-  if (!base || !anon) return { skipped:true, warning:supabaseConfigWarning() };
-  const joiner = query ? `?${query}` : "";
-  try {
-    const res = await fetch(`${base}/rest/v1/${encodeURIComponent(table)}${joiner}`, { headers:{ apikey:anon, Authorization:`Bearer ${anon}` } });
-    const text = await res.text().catch(()=>"");
-    if (!res.ok) return { error:{ message:text || `REST select HTTP ${res.status}` } };
-    return { error:null, data:text ? JSON.parse(text) : [], via:"rest" };
-  } catch (e) {
-    return { error:{ message:e?.message || String(e) } };
-  }
-}
-async function fetchRestSelectByNaturalKey(table, row){
-  const key = styleNaturalKey(row);
-  if (!key.order_no || !key.style_no || !key.colour || !key.component) return { error:{ message:"Select needs Order No, Style No, Colour and Component." } };
-  return fetchRestSelectFromSupabase(table, `${urlEncodedEqQuery(key)}&select=order_no,style_no,colour,component&limit=1`);
-}
-async function fetchDeleteByNaturalKey(table, row){
-  const base = supabaseEnvBaseUrl();
-  const anon = supabaseEnvAnonKey();
-  const key = styleNaturalKey(row);
-  if (!base || !anon) return { skipped:true, warning:supabaseConfigWarning() };
-  if (!key.order_no || !key.style_no || !key.colour || !key.component) return { error:{ message:"Delete needs Order No, Style No, Colour and Component." } };
-  const url = `${base}/rest/v1/${encodeURIComponent(table)}?${urlEncodedEqQuery(key)}`;
-  try {
-    const res = await fetch(url, { method:"DELETE", headers:{ apikey:anon, Authorization:`Bearer ${anon}`, Prefer:"return=minimal" } });
-    if (!res.ok) {
-      let text = await res.text().catch(()=>"");
-      return { error:{ message:text || `HTTP ${res.status}` } };
-    }
-    return { error:null, via:"rest" };
-  } catch (e) {
-    return { error:{ message:e?.message || String(e) } };
-  }
-}
-async function verifyNaturalKeyAbsent(table, row){
-  let readError = null;
-  if (isSupabaseConfigured && supabase) {
-    try {
-      const scoped = applyStyleNaturalKeyFilter(supabase.from(table).select("order_no,style_no,colour,component").limit(1), row);
-      if (!scoped.error) {
-        const { data, error } = await scoped.query;
-        if (!error) return { verified:true, found:(data || []).length > 0, via:"supabase-js" };
-        readError = error;
-      }
-    } catch (e) { readError = { message:e?.message || String(e) }; }
-  }
-  const rest = await fetchRestSelectByNaturalKey(table, row);
-  if (rest.error) return { verified:false, found:null, error:rest.error, recoveredFrom:readError?.message };
-  return { verified:true, found:(rest.data || []).length > 0, via:"rest", recoveredFrom:readError?.message };
-}
-async function robustDeleteByNaturalKey(table, row){
-  if (!hasValidSupabaseEnv()) return { skipped:true, warning:supabaseConfigWarning() };
-  let firstError = null;
-  let via = "rest";
-  if (isSupabaseConfigured && supabase) {
-    try {
-      const scoped = applyStyleNaturalKeyFilter(supabase.from(table).delete(), row);
-      if (scoped.error) return { error:scoped.error };
-      const { error } = await scoped.query;
-      if (!error) via = "supabase-js";
-      else firstError = error;
-    } catch (e) { firstError = { message:e?.message || String(e) }; }
-  } else {
-    firstError = { message:"Supabase client unavailable" };
-  }
-  if (firstError) {
-    const fallback = await fetchDeleteByNaturalKey(table, row);
-    if (fallback?.error) return { error:{ message:`${firstError.message}; REST delete fallback also failed: ${fallback.error.message}` } };
-    via = fallback?.via || "rest";
-  }
-  const verify = await verifyNaturalKeyAbsent(table, row);
-  if (verify.verified && verify.found) return { error:{ message:`Delete request finished but row still exists in ${table}. Check RLS/delete policy or natural key.` }, via, verified:false };
-  if (verify.error) return { error:null, via, verified:false, warning:`Delete sent, but verification read failed: ${verify.error.message}` };
-  return { error:null, via, verified:true };
-}
-async function deleteOneStyleFromSupabase(row){
-  return robustDeleteByNaturalKey("production_orders", row);
-}
-async function deleteStyleLedgerFromSupabase(row){
-  return robustDeleteByNaturalKey("production_entries", row);
-}
-async function runSupabaseSmokeTest(){
-  if (!hasValidSupabaseEnv()) return { tone:"warn", text:supabaseConfigWarning() };
-  const parts = [];
-  const ordersRead = await fetchRestSelectFromSupabase("production_orders", "select=order_no,style_no,colour,component&limit=1");
-  if (ordersRead.error) return { tone:"late", text:`Supabase check failed: production_orders read failed — ${ordersRead.error.message}` };
-  parts.push("production_orders read OK");
-  const entriesRead = await fetchRestSelectFromSupabase("production_entries", "select=order_no,style_no,colour,component,entry_date&limit=1");
-  if (entriesRead.error) parts.push(`production_entries read warning: ${entriesRead.error.message}`);
-  else parts.push("production_entries read OK");
-  const testRow = { id:"supabase_connection_test", order_no:"__SUPABASE_TEST__", style_no:"CONNECTION_TEST", buyer:"SYSTEM", colour:"TEST", component:"TEST", order_qty:1, size_set:"alpha", set_id:"", print_required:false, embroidery_required:false, route:["cutting","stitching","checking","packing","dispatch"], stages:{ cutting:blankStage(), stitching:blankStage(), checking:blankStage(), packing:blankStage(), dispatch:blankStage() } };
-  const up = await robustUpsertOrdersToSupabase([testRow]);
-  if (up.error) return { tone:"late", text:`Supabase check failed: test upsert failed — ${up.error.message}` };
-  parts.push(`test style upsert OK (${up.via || "saved"})`);
-  const readBack = await fetchRestSelectByNaturalKey("production_orders", testRow);
-  if (readBack.error) return { tone:"late", text:`Supabase check failed: test read-back failed — ${readBack.error.message}` };
-  if (!(readBack.data || []).length) return { tone:"late", text:"Supabase check failed: test row did not read back after save." };
-  parts.push("test read-back OK");
-  const del = await robustDeleteByNaturalKey("production_orders", testRow);
-  if (del.error) return { tone:"late", text:`Supabase check failed: test delete failed — ${del.error.message}` };
-  parts.push(`test delete ${del.verified ? "verified OK" : "sent but not verified"}${del.via ? ` (${del.via})` : ""}`);
-  return { tone:del.verified ? "ok" : "warn", text:`Supabase connection audit complete: ${parts.join(" · ")}.${del.warning ? " " + del.warning : ""}` };
-}
-
-function excelValue(raw, aliases){
-  const map = {};
-  Object.entries(raw || {}).forEach(([k,v])=>{
-    const key = String(k || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    map[key] = v;
-  });
-  for (const alias of aliases) {
-    const key = String(alias || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (Object.prototype.hasOwnProperty.call(map, key)) {
-      const mappedVal = map[key] ?? "";
-      if (String(mappedVal).trim() !== "") return mappedVal;
-    }
-  }
-  return "";
-}
-function parseExcelBool(v){
-  const s = String(v ?? "").trim().toLowerCase();
-  if (["yes","y","true","1","required","req","print","emb","embroidery"].includes(s)) return true;
-  if (["no","n","false","0","not required","none","skip"].includes(s)) return false;
-  return !!v && s !== "";
-}
-function parseSizeQtyText(text){
-  const out = {};
-  String(text || "").split(/[,;|]+/).forEach(part=>{
-    const bits = part.split(/[=:]/);
-    if (bits.length < 2) return;
-    const size = cleanSizeToken(bits[0]);
-    const qty = n(bits.slice(1).join(":").replace(/[^0-9.-]/g,""));
-    if (size) out[size] = Math.max(0, qty);
-  });
-  return out;
-}
-function excelSizeValue(raw, size){
-  return excelValue(raw, sizeKeyAliases(size));
-}
-function extractOrderSizeQtyFromExcel(raw, sizeSet, existing){
-  const sizes = getSizeSets()[sizeSet] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha;
-  const fromText = parseSizeQtyText(excelValue(raw, ["Order Size Breakup", "Size Breakup", "Size Qty", "Size Qty Breakup", "Order Sizes"]));
-  const out = {};
-  let found = false;
-  sizes.forEach(size=>{
-    const direct = excelSizeValue(raw, size);
-    const val = direct !== "" ? direct : fromText[size];
-    if (val !== undefined && val !== "") { out[size] = Math.max(0,n(val)); found = true; }
-  });
-  if (found) return normalizeSizeQtyMap(out, sizes);
-  return normalizeSizeQtyMap(existing?.order_size_qty || {}, sizes);
-}
-function normalizeSizeSetName(v){
-  const sets = getSizeSets();
-  const s = normalizeSizeGroupKey(v || "alpha");
-  if (sets[s]) return s;
-  if (s.includes("kid")) return "kids";
-  if (s.includes("waist") || s.includes("pant") || s.includes("trouser")) return "waist";
-  return "alpha";
-}
-function excelHasSizeColumn(raw, size){
-  const aliases = sizeKeyAliases(size);
-  const keys = Object.keys(raw || {}).map(k=>normalizedLooseKey(k));
-  return aliases.some(alias=>keys.includes(normalizedLooseKey(alias)));
-}
-function inferSizeSetFromExcel(raw, fallback="alpha"){
-  const sets = getSizeSets();
-  let best = { key:normalizeSizeSetName(fallback), score:0 };
-  Object.entries(sets).forEach(([key,sizes])=>{
-    const score = (sizes || []).reduce((a,size)=>a+(excelHasSizeColumn(raw,size)?1:0),0);
-    if (score > best.score) best = { key, score };
-  });
-  return best.score > 0 ? best.key : best.key;
-}
-function styleFromExcelRow(raw, existing){
-  const order_no = String(excelValue(raw,["Order No","Order","PO","SO","Order Number"]) || existing?.order_no || "").trim().toUpperCase();
-  const style_no = String(excelValue(raw,["Style No","Style","Style Number","Style Code"]) || existing?.style_no || "").trim().toUpperCase();
-  const buyer = String(excelValue(raw,["Buyer","Brand","Buyer / Brand","Customer"]) || existing?.buyer || "").trim().toUpperCase();
-  const colour = String(excelValue(raw,["Colour","Color"]) || existing?.colour || "").trim().toUpperCase();
-  const component = String(excelValue(raw,["Component","Garment","Part"]) || existing?.component || "").trim().toUpperCase();
-  const oq = excelValue(raw,["Order Qty","Qty","Quantity","Order Quantity"]);
-  const sizeSet = excelValue(raw,["Size Set","SizeSet","Sizes"]);
-  const sizeSetNorm = sizeSet === "" ? inferSizeSetFromExcel(raw, existing?.size_set || "alpha") : normalizeSizeSetName(sizeSet);
-  const orderSizeQty = extractOrderSizeQtyFromExcel(raw, sizeSetNorm, existing);
-  const orderSizeTotal = qtyMapTotal(orderSizeQty);
-  const line = excelValue(raw,["Planning Line Override","Default Line","Line","Stitching Line"]);
-  const printVal = excelValue(raw,["Print Required","Print","Printing"]);
-  const embVal = excelValue(raw,["Embroidery Required","Embroidery","Emb"]);
-  const rejectDispatchVal = excelValue(raw,["Allow Rejection Dispatch","Rejection Dispatch","Reject Dispatch","Approved Rejection Dispatch"]);
-  const photo = excelValue(raw,["Photo URL","Photo","Thumbnail URL","Photo Thumb URL"]);
-  const folder = excelValue(raw,["OneDrive Folder URL","Folder URL","Photo Folder URL","OneDrive URL"]);
-  return {
-    ...(existing || {}),
-    order_no, style_no, buyer, colour, component,
-    order_qty: oq === "" ? n(existing?.order_qty) : n(oq),
-    order_size_qty: orderSizeQty,
-    size_set: sizeSetNorm,
-    set_id: String(excelValue(raw,["Set ID","Set","SetId"]) || existing?.set_id || "").trim().toUpperCase(),
-    line: String(line || existing?.line || "").trim(),
-    print_required: printVal === "" ? !!existing?.print_required : parseExcelBool(printVal),
-    embroidery_required: embVal === "" ? !!existing?.embroidery_required : parseExcelBool(embVal),
-    dispatch_reject_allowed: rejectDispatchVal === "" ? !!existing?.dispatch_reject_allowed : parseExcelBool(rejectDispatchVal),
-    priority: String(excelValue(raw,["Priority"]) || existing?.priority || "Normal").trim() || "Normal",
-    difficulty: String(excelValue(raw,["Difficulty"]) || existing?.difficulty || "Normal").trim() || "Normal",
-    photo_url: String(photo || existing?.photo_url || "").trim(),
-    photo_thumb_url: String(photo || existing?.photo_thumb_url || existing?.photo_url || "").trim(),
-    photo_folder_url: String(folder || existing?.photo_folder_url || "").trim(),
-  };
-}
-function styleExcelAction(raw){
-  return String(excelValue(raw,["Action","Mode","Operation"]) || "ADD_UPDATE").trim().toUpperCase().replace(/\s+/g,"_");
-}
-function styleTemplateRows(){
-  const allSizes = Array.from(new Set(Object.values(getSizeSets()).flat())).slice(0,40);
-  const blankSizeCols = Object.fromEntries(allSizes.map(size=>[`Size ${size}`, ""]));
-  return [
-    { Action:"ADD_UPDATE", "Order No":"SO/25-26/100", "Style No":"STYLE-001", Buyer:"VMM", Colour:"BLACK", Component:"TOP", "Order Qty":1200, "Size Set":"alpha", ...blankSizeCols, "Size XS":100, "Size S":200, "Size M":300, "Size L":300, "Size XL":200, "Size XXL":100, "Set ID":"", "Planning Line Override":"", "Print Required":"No", "Embroidery Required":"No", Priority:"Normal", Difficulty:"Normal", "Photo URL":"", "OneDrive Folder URL":"" },
-    { Action:"ADD_UPDATE", "Order No":"SO/25-26/101", "Style No":"KIDS-001", Buyer:"HOPSCOTCH", Colour:"PINK", Component:"TOP", "Order Qty":400, "Size Set":"kids", ...blankSizeCols, "Size 2-3Y":80, "Size 3-4Y":80, "Size 4-5Y":80, "Size 5-6Y":80, "Size 7-8Y":80, "Order Size Breakup":"", "Set ID":"", "Planning Line Override":"", "Print Required":"No", "Embroidery Required":"Yes", Priority:"Normal", Difficulty:"Normal", "Photo URL":"", "OneDrive Folder URL":"" },
-    { Action:"HARD_DELETE", "Order No":"SO/25-26/OLD", "Style No":"WRONG-STYLE", Buyer:"", Colour:"BLACK", Component:"TOP", "Order Qty":"", "Size Set":"", ...blankSizeCols, "Order Size Breakup":"", "Set ID":"", "Planning Line Override":"", "Print Required":"", "Embroidery Required":"", Priority:"", Difficulty:"", "Photo URL":"", "OneDrive Folder URL":"" },
-  ];
-}
-
-function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0, onSharedSave }){
-  const emptyForm = {
-    id:"", order_no:"", style_no:"", buyer:"", colour:"", component:"", set_components:"", order_qty:"", order_size_qty:{}, size_set:"alpha", set_id:"", line:"", dispatch_reject_allowed:false,
-    print_required:false, embroidery_required:false, priority:"Normal", difficulty:"Normal", photo_url:"", photo_folder_url:""
-  };
-  const [form,setForm] = useState(emptyForm);
-  const [q,setQ] = useState("");
-  const [msg,setMsg] = useState(null);
-  const [busy,setBusy] = useState(false);
-  const [bulkMsg,setBulkMsg] = useState(null);
-  const [allowHardDelete,setAllowHardDelete] = useState(true);
-  useEffect(()=>{ if (!clearTick) return; setQ(""); }, [clearTick]);
-  const editing = !!form.id;
-  const tableRows = (rows||[]).filter(row=>{
-    const s = q.trim().toLowerCase();
-    if (!s) return true;
-    return [row.order_no,row.style_no,row.buyer,row.colour,row.component,row.set_id].join(" ").toLowerCase().includes(s);
-  });
-  const formSizes = getSizeSets()[form.size_set] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha;
-  const formOrderSizeQty = normalizeSizeQtyMap(form.order_size_qty || {}, formSizes);
-  const formSizeTotal = qtyMapTotal(formOrderSizeQty);
-  const formSizeVariance = sizeVarianceInfo(form.order_qty, formOrderSizeQty);
-  const duplicateSetId = form.set_id ? (allRows||[]).find(r=>String(r.set_id||"").toUpperCase()===String(form.set_id||"").toUpperCase() && String(r.id)!==String(form.id) && (String(r.order_no||"").toUpperCase()!==String(form.order_no||"").toUpperCase() || String(r.style_no||"").toUpperCase()!==String(form.style_no||"").toUpperCase())) : null;
-  function setField(k,v){
-    setForm(f=>{
-      if (k === "size_set") {
-        const nextSizes = getSizeSets()[v] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha;
-        return { ...f, size_set:v, order_size_qty:normalizeSizeQtyMap(f.order_size_qty || {}, nextSizes) };
-      }
-      return { ...f, [k]:v };
-    });
-  }
-  function setOrderSizeQty(size, value){
-    setForm(f=>{
-      const next = { ...(f.order_size_qty || {}), [size]:String(value).replace(/[^0-9]/g,"") };
-      return { ...f, order_size_qty:next };
-    });
-  }
-  function distributeFormOrderQty(){ setForm(f=>({ ...f, order_size_qty:distribute(n(f.order_qty), getSizeSets()[f.size_set] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha) })); }
-  function clearFormOrderSizes(){ setForm(f=>({ ...f, order_size_qty:{} })); }
-  function edit(row){
-    setForm({
-      id:row.id || "", order_no:row.order_no || "", style_no:row.style_no || "", buyer:row.buyer || "", colour:row.colour || "", component:row.component || "", order_qty:String(n(row.order_qty)||""),
-      order_size_qty:normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row)),
-      size_set:row.size_set || "alpha", set_id:row.set_id || "", line:row.line || "",
-      print_required:!!row.print_required, embroidery_required:!!row.embroidery_required, priority:row.priority || "Normal", difficulty:row.difficulty || "Normal",
-      photo_url:row.photo_url || row.photo_thumb_url || "", photo_folder_url:row.photo_folder_url || "",
-      set_components: row.set_id ? (allRows||[]).filter(r=>String(r.set_id||"").toUpperCase()===String(row.set_id||"").toUpperCase() && String(r.order_no||"").toUpperCase()===String(row.order_no||"").toUpperCase() && String(r.style_no||"").toUpperCase()===String(row.style_no||"").toUpperCase() && String(r.colour||"").toUpperCase()===String(row.colour||"").toUpperCase()).map(r=>r.component).filter(Boolean).join(", ") : ""
-    });
-    setMsg({ tone:"info", text:`Editing ${row.style_no} · ${row.colour} · ${row.component}` });
-    window.scrollTo({ top:0, behavior:"smooth" });
-  }
-  function reset(){ setForm(emptyForm); setMsg(null); }
-  async function save(){
-    const permission = requireCurrentPermission("production.edit_styles", "add/edit production styles");
-    if (permission) { setMsg({ tone:"late", text:permission.error.message }); return; }
-    const cleanSizeQty = normalizeSizeQtyMap(form.order_size_qty || {}, formSizes);
-    const cleanSizeTotal = qtyMapTotal(cleanSizeQty);
-    const clean = {
-      ...form,
-      order_no:String(form.order_no||"").trim().toUpperCase(),
-      style_no:String(form.style_no||"").trim().toUpperCase(),
-      buyer:String(form.buyer||"").trim().toUpperCase(),
-      colour:String(form.colour||"").trim().toUpperCase(),
-      component:String(form.component||"").trim().toUpperCase(),
-      set_id:String(form.set_id||"").trim().toUpperCase(),
-      line:String(form.line||"").trim(),
-      order_qty:n(form.order_qty),
-      order_size_qty:cleanSizeQty,
-      photo_thumb_url:form.photo_url || ""
-    };
-    if (!clean.order_no || !clean.style_no || !clean.buyer || !clean.colour || !clean.component || !clean.order_qty) { setMsg({ tone:"late", text:"Order, style, buyer, colour, component and order qty are mandatory." }); return; }
-    const variance = sizeVarianceInfo(clean.order_qty, cleanSizeQty);
-    if (variance.diff !== 0) {
-      const ok = window.confirm(`${variance.text}\n\nOrder Qty is the master quantity. Size breakup will not change Order Qty. Continue saving?`);
-      if (!ok) { setMsg({ tone:variance.tone, text:variance.text }); return; }
-    }
-    if (duplicateSetId) {
-      const ok = window.confirm(`Set ID ${clean.set_id} is already used by another order/style (${naturalKeyLabel(duplicateSetId)}).\n\nUse same Set ID only for real TOP/BOTTOM/set components. Continue?`);
-      if (!ok) return;
-    }
-    let componentList = [clean.component];
-    if (clean.set_id && !editing) {
-      componentList = parseComponentList(form.set_components || clean.component);
-      if (!componentList.includes(clean.component)) componentList.unshift(clean.component);
-      componentList = Array.from(new Set(componentList));
-      if (componentList.length < 2) {
-        setMsg({ tone:"late", text:"Set entry requires all components in one go. Enter components like TOP, BOTTOM in Set components." });
-        return;
-      }
-    }
-    const prevRow = editing ? (allRows||[]).find(r=>String(r.id)===String(form.id)) : null;
-    const duplicate = (allRows||[]).find(r=>componentList.some(comp=>styleCompositeKey(r)===styleCompositeKey({ ...clean, component:comp })) && String(r.id)!==String(form.id));
-    if (duplicate) { setMsg({ tone:"late", text:`Duplicate row already exists for ${naturalKeyLabel(duplicate)}. Edit that row instead of adding another.` }); return; }
-    if (editing && prevRow) {
-      const oldKey = styleCompositeKey(prevRow);
-      const newKey = styleCompositeKey(clean);
-      const hasActivity = styleHasStageActivity(prevRow) || (ledger||[]).some(x=>ledgerRowMatchesStyle(x, prevRow));
-      const changes = [];
-      if (oldKey !== newKey) changes.push(`Unique key: ${naturalKeyLabel(prevRow)} → ${naturalKeyLabel(clean)}`);
-      if (n(prevRow.order_qty) !== clean.order_qty) changes.push(`Order Qty: ${fmt(prevRow.order_qty)} → ${fmt(clean.order_qty)}`);
-      if (JSON.stringify(normalizeSizeQtyMap(prevRow.order_size_qty || {}, formSizes)) !== JSON.stringify(cleanSizeQty)) changes.push("Order size breakup changed");
-      if (!!prevRow.print_required !== !!clean.print_required || !!prevRow.embroidery_required !== !!clean.embroidery_required) changes.push("Route toggle changed");
-      if (changes.length) {
-        const ok = window.confirm(`Confirm production style data change.\n\nUnique row key is Order No + Style No + Colour + Component, not Style alone.\n\n${changes.join("\n")}\n\n${hasActivity ? "This row has production activity/ledger, so confirm carefully." : ""}`);
-        if (!ok) return;
-      }
-    }
-    const rowsToSave = editing ? [{
-      ...(prevRow || {}),
-      ...clean,
-      id:form.id,
-      stages:safeStagesForEditedRow(prevRow, clean),
-      route:routeFor(clean),
-    }] : componentList.map(comp=>({
-      ...clean,
-      component:comp,
-      id:uid("demo_manual_style"),
-      stages:blankStagesForRoute({ ...clean, component:comp }),
-      route:routeFor({ ...clean, component:comp }),
-    }));
-    const mainRow = rowsToSave[0];
-    setBusy(true);
-    try {
-      setRows(prev=>{
-        let next = [...prev];
-        rowsToSave.forEach(rowToSave=>{ forgetDeletedStyle(rowToSave);
-          const key = styleCompositeKey(rowToSave);
-          const exists = next.some(r=>String(r.id)===String(rowToSave.id) || styleCompositeKey(r)===key);
-          next = exists ? next.map(r=>(String(r.id)===String(rowToSave.id) || styleCompositeKey(r)===key) ? rowToSave : r) : [rowToSave, ...next];
-        });
-        return next;
-      });
-      const { error, skipped, warning, via, recoveredFrom } = rowsToSave.length > 1
-        ? await robustUpsertOrdersToSupabase(rowsToSave)
-        : await upsertOneStyleToSupabase(mainRow);
-      if (editing && prevRow && styleCompositeKey(prevRow) !== styleCompositeKey(mainRow) && !skipped) {
-        await deleteOneStyleFromSupabase(prevRow);
-      }
-      const saveLabel = rowsToSave.length > 1 ? `Added ${rowsToSave.length} set components (${componentList.join(", ")})` : `${editing ? "Updated" : "Added"} ${mainRow.style_no}`;
-      if (error) setMsg({ tone:"late", text:`${saveLabel} in browser, Supabase save failed: ${error.message}` });
-      else if (warning) setMsg({ tone:"warn", text:`${saveLabel} in browser. ${warning}` });
-      else setMsg({ tone:variance.diff ? "warn" : "ok", text:`${saveLabel}. ${variance.diff ? variance.text + " " : ""}${skipped ? "Browser/demo save only." : supabaseSaveLabel({via})}${shortRecoveredSupabaseNote(recoveredFrom)}` });
-      if (!error && !warning) {
-        recordProductionAudit(editing ? "style_update" : "style_add", { table_name:"production_orders", order_no:mainRow.order_no, style_no:mainRow.style_no, colour:mainRow.colour, component:mainRow.component, qty:mainRow.order_qty, source:"Styles", after_data:{ rows:rowsToSave.length, components:componentList } });
-        onSharedSave?.({ skipped, via, recoveredFrom }, saveLabel);
-      }
-      if (!editing) setForm(emptyForm);
-    } finally { setBusy(false); }
-  }
-  async function remove(row){
-    const permission = requireCurrentPermission("production.delete_styles", "delete production styles");
-    if (permission) { setMsg({ tone:"late", text:permission.error.message }); return; }
-    const hasLedger = (ledger||[]).some(x=>ledgerRowMatchesStyle(x,row));
-    const hasActivity = styleHasStageActivity(row) || hasLedger;
-    const word = hasActivity ? "HARD DELETE" : "DELETE";
-    const warning = hasActivity
-      ? `Hard delete will remove ${row.style_no} and its local ledger/history from this demo app. This is okay for demo cleanup, but not for live factory audit. Type HARD DELETE to confirm.`
-      : `Delete unused style ${row.style_no}? Type DELETE to confirm.`;
-    const confirmText = window.prompt(`${warning}
-
-${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
-    if (confirmText !== word) return;
-    setBusy(true);
-    try {
-      const orderDelete = await deleteOneStyleFromSupabase(row);
-      let cleanupWarning = orderDelete?.error ? `Supabase order cleanup failed: ${orderDelete.error.message}` : "";
-      if (hasActivity) {
-        const led = await deleteStyleLedgerFromSupabase(row);
-        if (led.error) cleanupWarning = [cleanupWarning, `Supabase ledger cleanup failed: ${led.error.message}`].filter(Boolean).join(" · ");
-      }
-      rememberDeletedStyle(row);
-      setRows(prev=>prev.filter(r=>String(r.id)!==String(row.id) && styleCompositeKey(r)!==styleCompositeKey(row)));
-      setLedger?.(prev=>(prev||[]).filter(x=>!ledgerRowMatchesStyle(x,row)));
-      setMsg(cleanupWarning ? { tone:"warn", text:`${hasActivity ? "Hard deleted" : "Deleted"} locally/demo. ${cleanupWarning}. If Pull brings it back, delete the Supabase row manually or check table RLS.` } : { tone:"ok", text:`${hasActivity ? "Hard deleted" : "Deleted"} ${row.style_no}. ${isSupabaseConfigured ? "Supabase cleanup completed." : "Local/demo cleanup only."}` });
-      if (!cleanupWarning) recordProductionAudit(hasActivity ? "style_hard_delete" : "style_delete", { table_name:"production_orders", order_no:row.order_no, style_no:row.style_no, colour:row.colour, component:row.component, qty:row.order_qty, source:"Styles delete", before_data:{ had_activity:hasActivity, had_ledger:hasLedger } });
-      if (String(form.id)===String(row.id)) reset();
-    } finally { setBusy(false); }
-  }
-  function downloadTemplate(){
-    exportXlsx("production_style_bulk_template.xlsx", [
-      { name:"Bulk Update", rows:styleTemplateRows() },
-      { name:"Instructions", rows:[
-        { Rule:"Action", Detail:"Use ADD_UPDATE to add/update rows. Use HARD_DELETE to remove a style/order/colour/component from demo data." },
-        { Rule:"Unique key", Detail:"Order No + Style No + Colour + Component identifies the row." },
-        { Rule:"Size Set", Detail:`Allowed: ${Object.keys(getSizeSets()).join(", ")}. Add/edit groups in Settings.` },
-        { Rule:"Order size breakup", Detail:"Order Qty is mandatory and remains master. Fill horizontal Size XS / Size S / Size M columns; app warns if size total is less/more than Order Qty." },
-        { Rule:"Booleans", Detail:"Print Required / Embroidery Required accept Yes/No, TRUE/FALSE, 1/0." },
-        { Rule:"Hard delete", Detail:"For demo cleanup only. Live production should archive/approve instead of hard deleting." },
-      ]}
-    ]);
-  }
-  async function bulkUploadExcel(file){
-    const permission = requireCurrentPermission("production.edit_styles", "bulk update production styles");
-    if (permission) { setBulkMsg({ tone:"late", text:permission.error.message }); return; }
-    if (!file) return;
-    setBusy(true); setBulkMsg({ tone:"info", text:"Reading Excel bulk update..." });
-    try {
-      const XLSX = await import("xlsx");
-      const wb = XLSX.read(await file.arrayBuffer(), { type:"array" });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rawRows = XLSX.utils.sheet_to_json(ws, { defval:"" });
-      if (!rawRows.length) { setBulkMsg({ tone:"late", text:"No rows found in first sheet." }); return; }
-      let added=0, updated=0, deleted=0, skipped=0;
-      const errors=[];
-      const upserts=[];
-      const deletes=[];
-      let nextRows=[...(allRows||[])];
-      for (const [idx,raw] of rawRows.entries()) {
-        const rowNo = idx + 2;
-        const action = styleExcelAction(raw);
-        const keyProbe = styleFromExcelRow(raw, {});
-        if (!keyProbe.order_no || !keyProbe.style_no || !keyProbe.colour || !keyProbe.component) { skipped++; errors.push(`Row ${rowNo}: missing Order No / Style No / Colour / Component.`); continue; }
-        const existing = nextRows.find(r=>styleCompositeKey(r)===styleCompositeKey(keyProbe));
-        if (["DELETE","HARD_DELETE","REMOVE"].includes(action)) {
-          if (!existing) { skipped++; errors.push(`Row ${rowNo}: delete target not found.`); continue; }
-          nextRows = nextRows.filter(r=>styleCompositeKey(r)!==styleCompositeKey(existing));
-          deletes.push(existing); rememberDeletedStyle(existing);
-          deleted++; continue;
-        }
-        const clean = styleFromExcelRow(raw, existing);
-        const rawSizeSet = excelValue(raw,["Size Set","SizeSet","Sizes"]);
-        if (!rawSizeSet && clean.size_set !== (existing?.size_set || "alpha")) errors.push(`Row ${rowNo} ${clean.order_no}/${clean.style_no}: inferred size set ${clean.size_set} from Excel size columns.`);
-        if (!clean.buyer || !clean.order_qty) { skipped++; errors.push(`Row ${rowNo}: Buyer and Order Qty are mandatory for add/update.`); continue; }
-        const variance = sizeVarianceInfo(clean.order_qty, normalizeSizeQtyMap(clean.order_size_qty || {}, getSizeSets()[clean.size_set] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha));
-        if (variance.diff !== 0) errors.push(`Row ${rowNo} ${clean.order_no}/${clean.style_no}: ${variance.text}`);
-        const merged = {
-          ...(existing || {}), ...clean, id:existing?.id || uid("demo_bulk_style"),
-          stages: existing ? safeStagesForEditedRow(existing, clean) : blankStagesForRoute(clean),
-          route:routeFor(clean),
-        };
-        if (existing) { nextRows = nextRows.map(r=>styleCompositeKey(r)===styleCompositeKey(existing) ? merged : r); updated++; }
-        else { nextRows.unshift(merged); added++; }
-        upserts.push(merged);
-      }
-      setRows(nextRows);
-      if (deletes.length) setLedger?.(prev=>(prev||[]).filter(x=>!deletes.some(row=>ledgerRowMatchesStyle(x,row))));
-      if (hasValidSupabaseEnv()) {
-        if (upserts.length) {
-          const result = await robustUpsertOrdersToSupabase(upserts);
-          if (result.error) errors.push(`Supabase upsert: ${result.error.message}`);
-          else if (result.recoveredFrom) errors.push(`Supabase upsert saved via REST fallback.${shortRecoveredSupabaseNote(result.recoveredFrom)}`);
-        }
-        for (const row of deletes) {
-          const a = await deleteOneStyleFromSupabase(row); if (a.error) errors.push(`Supabase delete ${row.style_no}: ${a.error.message}`);
-          const b = await deleteStyleLedgerFromSupabase(row); if (b.error) errors.push(`Supabase ledger delete ${row.style_no}: ${b.error.message}`);
-        }
-      }
-      setBulkMsg({ tone:errors.length ? "warn" : "ok", text:`Bulk update done. Added ${added}, updated ${updated}, hard deleted ${deleted}, skipped ${skipped}.${errors.length ? " Issues: "+errors.slice(0,4).join(" | ")+(errors.length>4?` | +${errors.length-4} more`:"") : ""}` });
-      recordProductionAudit("style_bulk_update", { table_name:"production_orders", qty:upserts.length, source:"Styles bulk upload", metadata:{ added, updated, deleted, skipped, error_count:errors.length } });
-    } catch(e) {
-      setBulkMsg({ tone:"late", text:e?.message || "Bulk Excel update failed." });
-    } finally { setBusy(false); }
-  }
-  const formRoute = routeFor(form);
-  return <div className="mt-two">
-    <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Add / Edit Style</h3><div className="mt-panel-sub">Create or update a production style/order row. For demo cleanup, hard delete is allowed with confirmation; for live use this should become archive/approval.</div></div>
-      <div className="mt-section" style={{display:"grid", gap:9}}>
-        {msg && <span className={`mt-chip ${statusClass(msg.tone)}`}>{msg.text}</span>}
-        <div className="mt-two"><div><label className="mt-small">Order No *</label><input className="mt-input" value={form.order_no} onChange={e=>setField("order_no",e.target.value.toUpperCase())}/></div><div><label className="mt-small">Style No *</label><input className="mt-input" value={form.style_no} onChange={e=>setField("style_no",e.target.value.toUpperCase())}/></div></div>
-        <div className="mt-two"><div><label className="mt-small">Buyer / Brand *</label><input className="mt-input" value={form.buyer} onChange={e=>setField("buyer",e.target.value.toUpperCase())}/></div><div><label className="mt-small">Order Qty *</label><input className="mt-input" value={form.order_qty} onChange={e=>setField("order_qty",e.target.value.replace(/[^0-9]/g,""))}/></div></div>
-        <div className="mt-two"><div><label className="mt-small">Colour *</label><input className="mt-input" value={form.colour} onChange={e=>setField("colour",e.target.value.toUpperCase())}/></div><div><label className="mt-small">Component *</label><input className="mt-input" value={form.component} onChange={e=>setField("component",e.target.value.toUpperCase())}/></div></div>
-        <div className="mt-two"><div><label className="mt-small">Size Set</label><select className="mt-select" value={form.size_set} onChange={e=>setField("size_set",e.target.value)}>{Object.entries(getSizeSets()).map(([k,arr])=><option key={k} value={k}>{k} · {arr.join(" / ")}</option>)}</select></div><div><label className="mt-small">Set ID</label><div style={{display:"flex", gap:6}}><input className="mt-input" style={{flex:1}} value={form.set_id} onChange={e=>setField("set_id",e.target.value.toUpperCase())} placeholder="Optional, TOP/BOTTOM set matching"/><button className="mt-btn ghost" type="button" onClick={()=>setField("set_id", suggestSetIdFor(form, allRows))}>Suggest</button></div>{duplicateSetId ? <div className="mt-small" style={{color:"var(--fg-warn)", fontWeight:800}}>Same Set ID exists on {naturalKeyLabel(duplicateSetId)}. Use same ID only for real set components.</div> : <div className="mt-small">System can suggest a clean Set ID so unrelated duplicates are avoided.</div>}</div></div>
-        {!editing && String(form.set_id||"").trim() ? <div className="mt-order-size-card"><b>Set components — create together</b><div className="mt-small">Because this is a set, enter all components in one go so TOP/BOTTOM pieces do not get missed. Example: TOP, BOTTOM.</div><input className="mt-input" style={{width:"100%", marginTop:6}} value={form.set_components || ""} onChange={e=>setField("set_components", e.target.value.toUpperCase())} placeholder="TOP, BOTTOM"/><div className="mt-small">Add Style will create/update one row per component using the same Order Qty, size breakup, route and Set ID.</div></div> : null}
-        <div className="mt-order-size-card"><div style={{display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center"}}><div><b>Order Size Breakup</b><div className="mt-small">Order Qty is master. Size entries subtract from it; missing balance is shown instead of changing Order Qty.</div></div><div style={{display:"flex", gap:6, flexWrap:"wrap"}}><span className={`mt-chip ${statusClass(formSizeVariance.tone)}`}>{formSizeVariance.text}</span><span className="mt-chip mt-muted">Size total {fmt(formSizeTotal)} / Order {fmt(form.order_qty)}</span><button className="mt-btn ghost" type="button" onClick={distributeFormOrderQty}>Distribute Order Qty</button><button className="mt-btn ghost" type="button" onClick={clearFormOrderSizes}>Clear Sizes</button></div></div><div className="mt-order-size-row">{formSizes.map(size=><div className="mt-order-size-cell" key={size}><label>{size}</label><input className="mt-cell-input" style={{width:"100%"}} value={formOrderSizeQty[size] || ""} onChange={e=>setOrderSizeQty(size,e.target.value)} placeholder="0" /></div>)}</div><div className="mt-small">Bulk Excel uses the same size columns. Order Qty is mandatory; upload summary warns if size breakup is short/excess.</div></div>
-        <div className="mt-two"><div><label className="mt-small">Planning line override</label><select className="mt-select" value={form.line} onChange={e=>setField("line",e.target.value)}><option value="">Not fixed — decide in Planning</option>{productionLineNames().map(l=><option key={l} value={l}>{l}</option>)}</select><div className="mt-small">Stitching line is normally decided later in Planning, not locked in Style Master.</div></div><div><label className="mt-small">Priority</label><select className="mt-select" value={form.priority} onChange={e=>setField("priority",e.target.value)}>{["Low","Normal","High","Urgent"].map(x=><option key={x}>{x}</option>)}</select></div></div>
-        <div className="mt-two"><label className="mt-small"><input type="checkbox" checked={!!form.print_required} onChange={e=>setField("print_required",e.target.checked)}/> Print required</label><label className="mt-small"><input type="checkbox" checked={!!form.embroidery_required} onChange={e=>setField("embroidery_required",e.target.checked)}/> Embroidery required</label></div>
-        <label className="mt-small"><input type="checkbox" checked={!!form.dispatch_reject_allowed} onChange={e=>setField("dispatch_reject_allowed",e.target.checked)}/> Allow rejection dispatch for this order/style only</label>
-        <div><label className="mt-small">Photo URL / thumbnail</label><input className="mt-input" style={{width:"100%"}} value={form.photo_url} onChange={e=>setField("photo_url",e.target.value)} placeholder="Optional direct/Supabase image URL"/></div>
-        <div><label className="mt-small">OneDrive / folder URL</label><input className="mt-input" style={{width:"100%"}} value={form.photo_folder_url} onChange={e=>setField("photo_folder_url",e.target.value)} placeholder="Optional folder link"/></div>
-        <div className="mt-speed-note"><b>Route preview:</b> {formRoute.map(stageLabel).join(" → ")}<br/>New styles start with blank WIP. Use DPR Entry for cutting/output/movement.</div>
-        <div style={{display:"flex", gap:8, flexWrap:"wrap"}}><button className="mt-btn primary" disabled={busy} onClick={save}><CheckCircle2 size={14}/>{editing ? "Update Style" : "Add Style"}</button>{editing && <button className="mt-btn ghost" onClick={reset}>Cancel edit</button>}</div>
-      </div>
-    </div>
-
-    <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Bulk Excel Add / Update / Hard Delete</h3><div className="mt-panel-sub">Upload one Excel sheet to add or update many styles at once. Use Action = HARD_DELETE to remove wrong demo rows and their local ledger entries.</div></div>
-      <div className="mt-section no-print" style={{display:"grid", gap:10}}>
-        {bulkMsg && <span className={`mt-chip ${statusClass(bulkMsg.tone)}`}>{bulkMsg.text}</span>}
-        <div className="mt-toolbar"><button className="mt-btn" disabled={busy} onClick={downloadTemplate}><Download size={14}/>Download Template</button><label className="mt-btn primary" style={{cursor:busy?"not-allowed":"pointer"}}><Upload size={14}/>Upload Excel<input type="file" accept=".xlsx,.xls,.csv" style={{display:"none"}} disabled={busy} onChange={e=>{ const f=e.target.files?.[0]; if(f) bulkUploadExcel(f); e.target.value=""; }}/></label><span className="mt-chip mt-warn"><AlertTriangle size={12}/>Hard delete allowed for demo cleanup</span></div>
-        <div className="mt-speed-note"><b>Required key:</b> Order No + Style No + Colour + Component. <b>Action:</b> ADD_UPDATE or HARD_DELETE. Bulk update preserves existing WIP where possible; hard delete removes the style row and matching ledger entries from this demo dataset.</div>
-      </div>
-    </div>
-    <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Style List / Edit / Hard Delete</h3><div className="mt-panel-sub">Search, edit, delete unused rows, or hard delete demo rows with activity. For live production, hard delete should be replaced by archive/approval governance.</div></div>
-      <div className="mt-section no-print"><div className="mt-toolbar"><Search size={14}/><input className="mt-input" value={q} onChange={e=>setQ(e.target.value)} placeholder="Search order / style / buyer / colour"/><span className="mt-chip mt-muted">{tableRows.length} rows</span></div></div>
-      <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style</th><th>Order</th><th>Buyer</th><th>Colour</th><th>Component</th><th>Qty</th><th>Route</th><th>Activity</th><th>Action</th></tr></thead><tbody>{tableRows.map(row=>{ const hasLedger=(ledger||[]).some(x=>ledgerRowMatchesStyle(x,row)); const hasActivity=styleHasStageActivity(row)||hasLedger; return <tr key={row.id}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.set_id ? `Set ${row.set_id} · ` : ""}{row.size_set}</div></div></div></td><td>{row.order_no}</td><td>{row.buyer}</td><td>{row.colour}</td><td>{row.component}</td><td><b>{fmt(row.order_qty)}</b><div className="mt-small">{explicitOrderSizeQtyTotal(row) ? sizesFor(row).map(sz=>`${sz} ${fmt(normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row))[sz]||0)}`).join(" · ") : <span style={{color:"var(--fg-warn)", fontWeight:800}}>Size breakup missing</span>}</div></td><td>{routeFor(row).map(stageLabel).join(" → ")}</td><td>{hasActivity ? <span className="mt-chip mt-warn">Has activity</span> : <span className="mt-chip mt-ok">Unused</span>}</td><td><button className="mt-btn" onClick={()=>edit(row)}>Edit</button> <button className="mt-btn ghost" disabled={busy} onClick={()=>remove(row)}>{hasActivity ? "Hard Delete" : "Delete"}</button>{hasActivity && <div className="mt-small">Demo cleanup only; removes matching ledger locally.</div>}</td></tr>; })}</tbody></table></div>
-    </div>
-  </div>;
-}
-
-function SettingsView({ onChanged }){
-  const [tol,setTol]=useState(PROD_SETTINGS.cuttingTolerancePct);
-  const [dispatchHold,setDispatchHold]=useState(PROD_SETTINGS.dispatchRamHoldPct);
-  const [dispatchReject,setDispatchReject]=useState(dispatchRejectAllowed());
-  const [linesText,setLinesText]=useState(productionLineNames().join("\n"));
-  const [sizeSetsText,setSizeSetsText]=useState(sizeSetsToText(getSizeSets()));
-  function applyTol(v){ const num=Math.max(0, Number(String(v).replace(/[^0-9.]/g,"")) || 0); setTol(num); PROD_SETTINGS.cuttingTolerancePct=num; onChanged?.(); }
-  function applyDispatchHold(v){ const num=Math.max(0, Number(String(v).replace(/[^0-9.]/g,"")) || 0); setDispatchHold(num); PROD_SETTINGS.dispatchRamHoldPct=num; onChanged?.(); }
-  function applyDispatchReject(checked){ PROD_SETTINGS.dispatchRejectAllowed=!!checked; setDispatchReject(!!checked); try { localStorage.setItem("production_dispatch_reject_allowed", checked ? "true" : "false"); } catch {} onChanged?.(); }
-  function saveLines(){
-    const lines = linesText.split(/\r?\n|,/).map(x=>x.trim()).filter(Boolean);
-    if (!lines.length) { alert("Add at least one stitching line name."); return; }
-    PROD_SETTINGS.lineNames = Array.from(new Set(lines));
-    try { localStorage.setItem("production_line_names", JSON.stringify(PROD_SETTINGS.lineNames)); } catch {}
-    onChanged?.();
-    alert(`Saved ${PROD_SETTINGS.lineNames.length} line name(s).`);
-  }
-  function saveSizeSets(){
-    const parsed = parseSizeSetsText(sizeSetsText);
-    if (!Object.keys(parsed).length) { alert("Add at least one size group, for example alpha = XS, S, M, L, XL"); return; }
-    saveCustomSizeSets(parsed);
-    onChanged?.();
-    alert(`Saved ${Object.keys(parsed).length} size group(s). Styles and entry screens will use this list.`);
-  }
-  function resetSizeSets(){
-    try { localStorage.removeItem("production_size_sets"); } catch {}
-    setSizeSetsText(sizeSetsToText(DEFAULT_SIZE_SETS));
-    onChanged?.();
-  }
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Rules</h3><div className="mt-panel-sub">Editable business rules — single source of truth used by entry validation, status flags and dashboards. Applies on the next screen render.</div></div>
-    <div className="mt-section" style={{display:"grid", gap:10}}>
-      <div className="mt-toolbar"><span className="mt-toolbar-label">Cutting tolerance %</span><input className="mt-input" style={{maxWidth:120}} value={tol} onChange={e=>applyTol(e.target.value)} /><span className="mt-small">Cutting may exceed order qty up to this %. One value drives entry allowed-limit, extra-cut status flag and cell marker.</span></div>
-      <div className="mt-toolbar"><span className="mt-toolbar-label">Dispatch hold if R/A/M % above</span><input className="mt-input" style={{maxWidth:120}} value={dispatchHold} onChange={e=>applyDispatchHold(e.target.value)} /><span className="mt-small">Default 2%. Dispatch output/issue is blocked if any reconcile exists or dispatch-blocking R/A/M is above this % of order qty.</span></div>
-      <div className="mt-toolbar"><span className="mt-toolbar-label">Allow rejection dispatch default</span><label className="mt-chip mt-info" style={{cursor:"pointer"}}><input type="checkbox" checked={dispatchReject} onChange={e=>applyDispatchReject(e.target.checked)} style={{marginRight:6}}/> Default for new/unspecified orders</label><span className="mt-small">Actual approval is order/style-wise in Add/Edit Style. Missing, Alter and Reconcile still block.</span></div>
-      <div className="mt-toolbar" style={{alignItems:"flex-start"}}><span className="mt-toolbar-label">Stitching line names</span><textarea className="mt-input" style={{minWidth:260, minHeight:110}} value={linesText} onChange={e=>setLinesText(e.target.value)} placeholder={'STF-1\nSTF-2\nSTF-3'} /><button className="mt-btn primary" onClick={saveLines}>Save Lines</button><span className="mt-small">One line per row, or comma separated. Planning uses this list for line-wise stitching plans.</span></div>
-      <div className="mt-toolbar" style={{alignItems:"flex-start"}}><span className="mt-toolbar-label">Size groups</span><textarea className="mt-input" style={{minWidth:360, minHeight:140}} value={sizeSetsText} onChange={e=>setSizeSetsText(e.target.value)} placeholder={'alpha = XS, S, M, L, XL, XXL\nkids = 2-3Y, 3-4Y, 4-5Y\nwaist = 30, 32, 34, 36'} /><div style={{display:"grid",gap:8}}><button className="mt-btn primary" onClick={saveSizeSets}>Save Size Groups</button><button className="mt-btn ghost" onClick={resetSizeSets}>Reset Defaults</button></div><span className="mt-small">Format: group = size, size, size. Add buyer/category groups anytime, then select them in Styles or bulk upload.</span></div>
-    </div>
-    <div className="mt-section"><h3 className="mt-panel-title">Bottleneck metric guide</h3><div className="mt-panel-sub">Daily Rate = recent 7-day average output from ledger for that department. Days Cover = queue/open WIP ÷ Daily Rate. Bottleneck Score = Queue WIP + 2×Reconcile Qty + R/A/M Qty, so impossible movements and quality loss rank higher than normal queue.</div></div>
-    <div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included through V7.5.23 logic</b><ul className="mt-small"><li>Add/edit production styles manually with horizontal order-size breakup; Order Qty remains master and size shortage/excess is warned in manual and bulk upload.</li><li>Browser fallback persistence keeps style updates after refresh even when Supabase URL/key is not configured correctly.</li><li>Cutting Pending now appears correctly until cut/output/R/A/M/short-close accounts for order qty; Cutting short-close action is available in Cutting detail.</li><li>Editable size groups in Settings; Styles and bulk upload can use custom buyer/category size sets.</li><li>Order-wise rejection dispatch flag: approved rejected pieces can be included in Dispatch feed by size only for that order/style.</li><li>WIP Other Open Split column is now toggleable and hidden by default to avoid duplicate/confusing status reading.</li><li>Simple 6-day Excel-style planning grid: enter total day target by style/line without SMV/OPS complexity</li><li>WIP now separates one Pending Stage from All Activity by Cut %, so the grid stays narrow while still showing the full cut/order breakup</li><li>Selected department detail shows Good Output together with Reject/Missing/Alter and accounted/tail quantities for a complete HOD picture</li><li>Size-wise day entry with previous/updated total cross-check</li><li>Print / embroidery route toggles</li><li>Standard route changed to Checking → Packing → Dispatch; Iron removed as a normal department</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Dispatch hold: no dispatch when reconcile exists or dispatch-blocking R/A/M exceeds configured order %. Optional setting allows approved rejection to be dispatched while Missing/Alter still block.</li><li>Editable stitching line names in Settings used by Planning</li><li>Issued-to-department means accepted/with department; no normal issued-not-received bucket</li><li>Completed-not-issued-forward owner = Production Coordinator + Production Manager</li><li>Individual owner chase: Department HOD owns work-not-completed; Coordinator + Production Manager own completed-not-issued-forward</li><li>Style closure owner = Production Coordinator + Dept HOD; Production Manager handles movement/escalation/approval</li><li>WIP table page-specific filters, sorting, quick status buckets, and size-breakup toggle</li><li>Dashboard uses current-bin WIP logic: once a quantity moves to the next stage, it leaves the previous department bin.</li><li>Dashboard includes daily / 4-4-5 weekly / calendar-month production numbers, department × issue-type board, owner activity breakup, and production meeting focus.</li><li>Department-first dashboard pack: plan-vs-achieved/line efficiency, bottleneck/flow, aging/stuck WIP, quality/loss rate, party/outsource pending.</li><li>Dashboard drilldowns now use dashboard-specific rows, subtotal summaries, real size-stage data where available, and a visible size-source indicator.</li><li>Monthly comparison tab against Stitching Receiving with drillable summary filters</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Open-first WIP sheet modes: Open Control, Order View, Department View, Issue View, and Full Matrix</li><li>Focused WIP cell drawer shows selected department only; DPR entry shows only open styles for selected department/field; entry cells show open, previous, available, new entry, remaining and updated total; reductions/corrections require approval workflow later</li><li>Entry date / backdated audit logic with next-day default, same-day confirmation, reason and approval status</li><li>Live idle recalculation from production ledger where activity exists</li><li>Set convergence: a set packs/ships only min(components); Sets board + WIP chip show packable sets and unmatched pieces</li><li>Backdated entries validate feed as-of the entry date from the ledger; locked (older) backdated entries require reason + explicit manager-approval confirmation and are stamped in the audit ledger</li><li>Single configurable cutting tolerance replaces the old 8%/5%/0% mismatch</li><li>Party/outsource pending is consistent with the WIP open bucket (feed − output − R/A/M); outsourced stages label the with-department bucket as Pending at party</li><li>R/A/M day-entry path and impossible sequence reconcile checks</li><li>Planning tab: stitching line-wise rolling plan, department day-wise plan, department-specific planning pool, manual future plan, changeover remaining-hours formula, plan-vs-achieved style adherence, and Review control room. Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-info"><Lock size={12}/> Future RLS</span> <span className="mt-small">Keep this as a development app. We tighten RLS before real users and live factory data.</span></div></div>;
-}
-
-function withLiveIdle(rows, ledger=[], referenceDate=today()){
-  if (!ledger?.length) return rows;
-  const latestBy = new Map();
-  ledger.forEach(x=>{
-    const key = [x.order_no || x.order, x.style_no || x.style, x.colour||"", x.component||"", ledgerStage(x)].join("|::|");
-    const d = ledgerDate(x);
-    if (!d || !ledgerStage(x)) return;
-    if (!latestBy.has(key) || d > latestBy.get(key)) latestBy.set(key,d);
-  });
-  return rows.map(row=>{
-    const stages = { ...(row.stages||{}) };
-    routeFor(row).forEach(stage=>{
-      const key = [row.order_no,row.style_no,row.colour||"",row.component||"",stage].join("|::|");
-      const latest = latestBy.get(key);
-      if (!latest) return;
-      stages[stage] = { ...blankStage(), ...sdata(row,stage), idle:Math.max(0,dateDiff(latest, referenceDate)) };
-    });
-    return { ...row, stages };
-  });
-}
-
-function PageFilters({ tab, query, setQuery, buyer, setBuyer, buyers, order, setOrder, orders, visibleRows }){
-  const title = tab === "dashboard" ? "Dashboard Filters" : tab === "entry" ? "Entry Scope" : tab === "wip" ? "Live WIP Scope" : tab === "review" ? "Review Scope" : tab === "owners" ? "Chase Scope" : tab === "monthly" ? "Monthly Scope" : tab === "styles" ? "Style Master Scope" : tab === "routes" ? "Route Page Filters" : tab === "photos" ? "Photo Page Filters" : tab === "reports" ? "Report Scope" : "Page Filters";
-  const placeholder = tab === "photos" ? "Search style / photo / buyer" : "Search order / style / buyer / colour / component";
-  return <div className="mt-toolbar no-print" style={{marginBottom:12}}>
-    <span className="mt-toolbar-label">{title}</span>
-    <Search size={14}/>
-    <input className="mt-input" value={query} onChange={e=>setQuery(e.target.value)} placeholder={placeholder} style={{minWidth:260}}/>
-    <select className="mt-select" value={buyer} onChange={e=>setBuyer(e.target.value)}>{buyers.map(b=><option key={b}>{b}</option>)}</select>
-    <select className="mt-select" value={order} onChange={e=>setOrder(e.target.value)}><option value="All">All Orders</option>{orders.map(o=><option key={o} value={o}>{o}</option>)}</select>
-    {tab === "dashboard" && <span className="mt-chip mt-info">Order filter controls all dashboard boards/drills</span>}
-    {tab === "entry" && <span className="mt-chip mt-warn">Filter order/style before entry to avoid wrong posting</span>}
-    {tab === "reports" && <span className="mt-chip mt-info">Horizontal Excel exports</span>}
-    {tab === "register" && <span className="mt-chip mt-info">Output / Issue-Receive Register</span>}
-    <span className="mt-chip mt-muted">{visibleRows.length} rows</span>
-  </div>;
-}
-
-
-function PermissionGate({ permission, children, label }){
-  if (currentUserCan(permission)) return children;
-  return <div className="mt-card"><div className="mt-section"><span className="mt-chip mt-late"><Lock size={12}/>Permission blocked</span><div className="mt-panel-sub" style={{marginTop:8}}>{currentUserName()} ({currentUserRole()}) cannot open {label || "this screen"}. Required permission: <b>{permission}</b>.</div></div></div>;
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Review — Coordinator Control Room</h3><div className="mt-panel-sub">Review is not normal WIP viewing. It clears closures, open balances, reconcile, R/A/M, risky entries and plan deviations after daily entries.</div>{msg && <div style={{marginTop:8}}><span className={`mt-chip ${statusClass(msg.tone)}`}>{msg.text}</span></div>}</div><div className="mt-section no-print"><div className="mt-summary-strip">{Object.entries(sectionMap).map(([k,v])=><button key={k} className={`mt-summary-tile ${section===k?"active":""}`} onClick={()=>setSection(k)}><div className="label">{v.title}</div><div className="value">{v.rows.length}</div><div className="mt-small">drill review</div></button>)}</div></div><div className="mt-section">{section === "reconcile" ? <ReconcileActionTable rows={active.rows} onResolve={resolveReconcile}/> : <SimpleTable title={active.title} sub={active.sub} rows={active.rows} empty="Nothing pending in this review section." />}</div><div className="mt-section"><span className="mt-chip mt-info">Closing owner: Production Coordinator</span> <span className="mt-chip mt-muted">Department HOD owns work completion</span> <span className="mt-chip mt-muted">Production Manager approves/dismisses P0 exceptions</span></div></div>;
 }
 function LoginDialog({ open, profile, onSave, onClose, force=false }){
-  const [form,setForm] = useState(()=>({ ...defaultUserProfile(), ...profile }));
-  useEffect(()=>setForm({ ...defaultUserProfile(), ...profile }), [profile?.name, profile?.role, profile?.department]);
+  const merchProfile = useMemo(()=>{ try { return profileFromMerchTrackerStorage(); } catch { return null; } }, [open]);
+  const [form,setForm] = useState(()=>({ ...defaultUserProfile(), ...(merchProfile || {}), ...profile, email:normalizeUserEmail(profile?.email || merchProfile?.email || "") }));
+  const [lookupMsg,setLookupMsg] = useState("");
+  useEffect(()=>setForm({ ...defaultUserProfile(), ...(merchProfile || {}), ...profile, email:normalizeUserEmail(profile?.email || merchProfile?.email || "") }), [profile?.name, profile?.email, profile?.role, profile?.department, merchProfile?.email]);
   if (!open) return null;
+  async function useMerchOrAuthLogin(){
+    setLookupMsg("Checking Merch/Supabase login...");
+    const authProfile = await profileFromSupabaseAuthSession();
+    const candidate = authProfile || profileFromMerchTrackerStorage();
+    if (!candidate?.email) { setLookupMsg("No Merch Tracker/Supabase login found in this browser. Enter the same work email used in Merch Tracker."); return; }
+    const shared = await fetchSharedUserByEmail(candidate.email);
+    const merged = { ...defaultUserProfile(), ...candidate, ...(shared || {}) };
+    setForm(f=>({ ...f, ...merged, email:normalizeUserEmail(merged.email), name:merged.name || f.name || displayNameFromEmail(merged.email) }));
+    setLookupMsg(shared ? `Loaded shared user permissions for ${merged.email}.` : `Using saved Merch/Supabase email ${merged.email}.`);
+  }
+  async function lookupEmail(){
+    const email = normalizeUserEmail(form.email);
+    if (!emailLooksValid(email)) { setLookupMsg("Enter a valid email first."); return; }
+    setLookupMsg("Looking up shared user...");
+    const shared = await fetchSharedUserByEmail(email);
+    if (!shared) { setLookupMsg("No shared user found yet. This login will create/update Production user registry after continue."); return; }
+    setForm(f=>({ ...f, ...shared, email }));
+    setLookupMsg(`Loaded ${shared.name} · ${shared.role} from shared user registry.`);
+  }
   async function save(){
-    if (!String(form.name||"").trim()) { alert("User name is mandatory."); return; }
-    const clean = saveCurrentUserProfile(form);
-    await recordUserSession("login", clean, { force, note:"Production DPR user login" });
+    const email = normalizeUserEmail(form.email);
+    if (!emailLooksValid(email)) { alert("Valid email login is mandatory for multi-user audit."); return; }
+    const shared = await fetchSharedUserByEmail(email);
+    const clean = saveCurrentUserProfile({ ...(shared || {}), ...form, email, name:String(form.name || shared?.name || displayNameFromEmail(email)).trim(), role:normalizeRoleName(form.role || shared?.role || "Data Operator") });
+    await recordUserSession("login", clean, { force, note:"Production DPR shared email-wise login" });
     onSave?.(clean);
   }
-  return <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>{force ? "Login required" : "Change user"}</span><span className="mt-chip mt-info">User-wise audit</span></div><div className="body"><div><b>Enter the person using this browser.</b></div><div className="mt-small">This stamps DPR entries, register corrections, style changes and login/session history. Full password auth can later move to Supabase Auth; this patch gives user-wise factory accountability now.</div><label className="mt-small">User name *</label><input className="mt-input" value={form.name || ""} onChange={e=>setForm(f=>({ ...f, name:e.target.value }))} placeholder="Example: RAMESH CUTTING"/><label className="mt-small">Role</label><select className="mt-select" value={form.role || "Production Coordinator"} onChange={e=>setForm(f=>({ ...f, role:e.target.value }))}>{PRODUCTION_ROLES.map(r=><option key={r} value={r}>{r}</option>)}</select><label className="mt-small">Department</label><input className="mt-input" value={form.department || ""} onChange={e=>setForm(f=>({ ...f, department:e.target.value }))} placeholder="Cutting / Stitching / Production"/><label className="mt-small">Email / phone optional</label><input className="mt-input" value={form.email || ""} onChange={e=>setForm(f=>({ ...f, email:e.target.value }))} placeholder="Optional"/><div className="mt-card"><div className="mt-section"><b>Permissions for selected role</b><div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>{PRODUCTION_PERMISSIONS.map(([key,label])=><span key={key} className={`mt-chip ${(ROLE_PERMISSIONS[form.role]||[]).includes(key) || form.role==="Admin" ? "mt-ok" : "mt-muted"}`}>{label}</span>)}</div></div></div></div><div className="actions">{!force && <button className="mt-btn ghost" onClick={onClose}>Cancel</button>}<button className="mt-btn primary" onClick={save}><UserCheck size={14}/>Login / continue</button></div></div></div>;
-}
-function UserAuditView({ profile, onSwitchUser, onLogout }){
-  const [audit,setAudit] = useState([]);
-  const [users,setUsers] = useState([]);
-  const [msg,setMsg] = useState(null);
-  const [loading,setLoading] = useState(false);
-  async function refresh(){
-    setLoading(true); setMsg({tone:"info", text:"Loading users and audit history..."});
-    try {
-      const u = await fetchProductionUsers();
-      const a = await fetchProductionAudit(300);
-      setUsers(u.data || []); setAudit(a.data || []);
-      const warnings = [u.error ? `Users: ${u.error.message}` : "", a.error ? `Audit: ${a.error.message}` : ""].filter(Boolean);
-      setMsg(warnings.length ? {tone:"warn", text:`Could not read all governance tables. Run the V7.5.44 SQL patch. ${warnings.join(" | ")}`} : {tone:"ok", text:`Loaded ${u.data?.length || 0} users and ${a.data?.length || 0} audit rows.`});
-    } finally { setLoading(false); }
-  }
-  useEffect(()=>{ refresh(); }, []);
-  const perms = ROLE_PERMISSIONS[profile.role] || [];
-  const localHistory = safeJsonLoad(uiStorageKey("tab_history"), []);
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Users / Permissions / History</h3><div className="mt-panel-sub">User-wise accountability for multi-user Production DPR. Login/session and audit tables require the V7.5.44 SQL patch.</div></div><div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-chip mt-info"><UserCheck size={12}/>{profile.name || "Not logged in"}</span><span className="mt-chip mt-muted">{profile.role}</span><span className="mt-chip mt-muted">{profile.department || "—"}</span><button className="mt-btn" onClick={refresh} disabled={loading}><RefreshCw size={14}/>Refresh History</button><button className="mt-btn ghost" onClick={onSwitchUser}><Users size={14}/>Switch User</button><button className="mt-btn ghost" onClick={onLogout}><LogOut size={14}/>Logout</button>{msg && <span className={`mt-chip ${statusClass(msg.tone)}`}>{msg.text}</span>}</div></div><div className="mt-section"><h3 className="mt-panel-title">Current Role Permissions</h3><div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>{PRODUCTION_PERMISSIONS.map(([key,label])=><span key={key} className={`mt-chip ${profile.role==="Admin" || perms.includes(key) ? "mt-ok" : "mt-muted"}`}>{label}</span>)}</div><div className="mt-small" style={{marginTop:8}}>Last local tab history: {localHistory.length ? localHistory.join(" → ") : "No tab history yet"}</div></div><SimpleTable title="Active / recent users" sub="From production_app_users. Shows who has opened or logged in from browsers." rows={(users||[]).map(u=>({ User:u.display_name || u.user_name, Role:u.role, Department:u.department, Email:u.email, Last_Seen:u.last_seen_at || u.created_at, Browser:u.browser_id, Active:u.is_active ? "Yes" : "No" }))} empty="No user rows yet. Login once after running SQL patch."/><div style={{height:12}}/><SimpleTable title="Audit history" sub="Latest saves/corrections/sessions. Keep this horizontal and management-readable; raw JSON stays in metadata only." rows={(audit||[]).map(a=>({ Time:a.created_at, User:a.user_name, Role:a.user_role, Action:a.action || a.event_type, Table:a.table_name, Order:a.order_no, Style:a.style_no, Colour:a.colour, Component:a.component, Dept:stageLabel(a.stage || ""), Activity:a.entry_type, Date:a.entry_date, Qty:a.qty, Source:a.source }))} empty="No audit rows yet or SQL patch not run."/></div>;
+  return <div className="mt-update-backdrop no-print"><div className="mt-update-popup" style={{maxWidth:760}}><div className="head"><span>{force ? "Production login required" : "Switch production user"}</span><span className="mt-chip mt-info">Same email as Merch Tracker</span></div><div className="body"><div><b>Use the same work email you use in Merch Tracker.</b></div><div className="mt-small">Production now uses email as the user key. If Merch Tracker/Supabase login exists in this browser, use the button below; otherwise enter the same email and the Production user registry will stamp every entry/correction/history against it.</div><div className="mt-toolbar"><button className="mt-btn ghost" onClick={useMerchOrAuthLogin}><UserCheck size={14}/>Use Merch Tracker / Supabase login</button><button className="mt-btn ghost" onClick={lookupEmail}><Search size={14}/>Find saved user by email</button>{lookupMsg && <span className="mt-chip mt-info">{lookupMsg}</span>}</div><label className="mt-small">Work email *</label><input className="mt-input mandatory" value={form.email || ""} onChange={e=>setForm(f=>({ ...f, email:normalizeUserEmail(e.target.value), name:f.name || displayNameFromEmail(e.target.value) }))} placeholder="name@company.com" autoFocus/><label className="mt-small">Display name</label><input className="mt-input" value={form.name || ""} onChange={e=>setForm(f=>({ ...f, name:e.target.value }))} placeholder="Auto from email if blank"/><div className="mt-two"><div><label className="mt-small">Role</label><select className="mt-select" value={form.role || "Data Operator"} onChange={e=>setForm(f=>({ ...f, role:e.target.value }))}>{PRODUCTION_ROLES.map(r=><option key={r} value={r}>{r}</option>)}</select></div><div><label className="mt-small">Department</label><select className="mt-select" value={form.department || "Production"} onChange={e=>setForm(f=>({ ...f, department:e.target.value }))}>{["Production","Cutting","Printing","Embroidery","Stitching","Checking","Packing","Dispatch","Management","Merchandising","Admin"].map(d=><option key={d} value={d}>{d}</option>)}</select></div></div><div className="mt-card"><div className="mt-section"><b>Permission preview</b><div className="mt-small">Admin and Production Manager have full access. Data Operator can enter daily production and correct register entries but cannot manage users/settings/delete.</div><div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>{PRODUCTION_PERMISSIONS.map(([key,label])=><span key={key} className={`mt-chip ${(ROLE_PERMISSIONS[form.role]||[]).includes(key) || ["Admin","Production Manager"].includes(form.role) ? "mt-ok" : "mt-muted"}`}>{label}</span>)}</div></div></div></div><div className="actions">{!force && <button className="mt-btn ghost" onClick={onClose}>Cancel</button>}<button className="mt-btn primary" onClick={save}><UserCheck size={14}/>Login / continue</button></div></div></div>;
 }
 
-export default function App(){
-  const [tab,setTab] = useState(()=>safeJsonLoad(uiStorageKey("active_tab"), "dashboard"));
-  const [settingsTick,setSettingsTick] = useState(0);
-  const [rows,setRows] = useState(()=>loadInitialRows());
-  const [ledger,setLedger] = useState(()=>loadInitialLedger());
-  const [planRows,setPlanRows] = useState(()=>loadInitialPlanRows());
-  const [query,setQuery] = useState(()=>safeJsonLoad(uiStorageKey("global_query"), ""));
-  const [buyer,setBuyer] = useState(()=>safeJsonLoad(uiStorageKey("global_buyer"), "All"));
-  const [order,setOrder] = useState(()=>safeJsonLoad(uiStorageKey("global_order"), "All"));
-  const [cleanMode,setCleanMode] = useState(()=>safeJsonLoad(uiStorageKey("clean_mode"), true));
-  const [drawer,setDrawer] = useState(null);
-  const [dashboardDrill,setDashboardDrill] = useState(null);
-  const [registerFocus,setRegisterFocus] = useState(null);
-  const [entryFocus,setEntryFocus] = useState(null);
-  const [notice,setNotice] = useState(null);
-  const [sharedSync,setSharedSync] = useState(()=>hasValidSupabaseEnv() ? { tone:"warn", text:"Shared sync starting…" } : { tone:"late", text:"Supabase not configured" });
-  const [clearFiltersTick,setClearFiltersTick] = useState(0);
-  const [showUpdatePopup,setShowUpdatePopup] = useState(()=>{
-    try { return localStorage.getItem("production_app_seen_version") !== APP_VERSION; } catch { return true; }
-  });
-  const [userProfile,setUserProfile] = useState(()=>currentUserProfile());
-  const [showLogin,setShowLogin] = useState(()=>!currentUserProfile().name);
-  useEffect(()=>{ safeJsonSave(LOCAL_ROWS_KEY, rows); }, [rows]);
-  useEffect(()=>{ if (userProfile?.name) { saveCurrentUserProfile(userProfile); upsertProductionAppUser(userProfile); recordUserSession("app_open", userProfile, { tab }); } }, [userProfile?.name, userProfile?.role, userProfile?.department]);
-  useEffect(()=>{ safeJsonSave(LOCAL_LEDGER_KEY, ledger); }, [ledger]);
-  useEffect(()=>{ safeJsonSave(LOCAL_PLAN_KEY, planRows); }, [planRows]);
-  useEffect(()=>safeJsonSave(uiStorageKey("global_query"), query), [query]);
-  useEffect(()=>safeJsonSave(uiStorageKey("global_buyer"), buyer), [buyer]);
-  useEffect(()=>safeJsonSave(uiStorageKey("global_order"), order), [order]);
-  useEffect(()=>safeJsonSave(uiStorageKey("clean_mode"), cleanMode), [cleanMode]);
-  useEffect(()=>{
-    safeJsonSave(uiStorageKey("active_tab"), tab);
-    const history = safeJsonLoad(uiStorageKey("tab_history"), []);
-    const next = [tab, ...history.filter(x=>x!==tab)].slice(0,8);
-    safeJsonSave(uiStorageKey("tab_history"), next);
-  }, [tab]);
-  const sharedLedgerRows = useMemo(()=>applySharedLedgerTotalsToRows(rows, ledger), [rows, ledger]);
-  const calcRows = useMemo(()=>withLiveIdle(sharedLedgerRows, ledger, today()), [sharedLedgerRows, ledger]);
-  const buyers = ["All", ...Array.from(new Set(calcRows.map(r=>r.buyer).filter(Boolean))).sort()];
-  const orders = Array.from(new Set(calcRows.map(r=>r.order_no).filter(Boolean))).sort();
-  const visibleRows = useMemo(()=>calcRows.filter(r=>{
-    const q = query.trim().toLowerCase();
-    const okBuyer = buyer === "All" || r.buyer === buyer;
-    const okOrder = order === "All" || r.order_no === order;
-    if (!q) return okBuyer && okOrder;
-    const hay = [r.order_no,r.style_no,r.buyer,r.colour,r.component,r.set_id].join(" ").toLowerCase();
-    return okBuyer && okOrder && hay.includes(q);
-  }),[calcRows,query,buyer,order]);
-  function markVersionSeen(){
-    try { localStorage.setItem("production_app_seen_version", APP_VERSION); } catch {}
-    setShowUpdatePopup(false);
-  }
-  async function pullSharedData(silent=true, reason="manual"){
-    if(!isSupabaseConfigured || !supabase || !hasValidSupabaseEnv()) {
-      const msg = supabaseConfigWarning();
-      if (!silent) setNotice({tone:"warn", text:msg});
-      setSharedSync({tone:"late", text:"Shared sync OFF — Supabase config issue"});
-      return { error:{ message:msg } };
-    }
-    try {
-      const {data,error} = await supabase.from("production_orders").select("*").limit(1000).order("created_at",{ascending:false});
-      if(error){
-        if (!silent) setNotice({tone:"late", text:error.message});
-        setSharedSync({tone:"late", text:`Shared pull failed: ${error.message}`});
-        return { error };
-      }
-      const {data:entryData,error:entryError} = await supabase.from("production_entries").select("*").limit(10000).order("entry_date",{ascending:false});
-      if(entryError){
-        setRows(filterDeletedStyles((data || []).map(supabaseToOrder)));
-        if (!silent) setNotice({tone:"warn", text:`Pulled orders, but entries failed: ${entryError.message}`});
-        setSharedSync({tone:"warn", text:`Orders shared · entries pull failed`});
-        return { error:entryError };
-      }
-      setRows(filterDeletedStyles((data || []).map(supabaseToOrder)));
-      setLedger(entryData || []);
-      const stamp = new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" });
-      setSharedSync({tone:"ok", text:`Shared live · ${data?.length || 0} orders · ${entryData?.length || 0} entries · ${stamp}`});
-      if (!silent) setNotice({ tone:"ok", text:`Pulled shared Supabase data: ${data?.length || 0} orders, ${entryData?.length || 0} entries. Reason: ${reason}.` });
-      return { error:null, orders:data || [], entries:entryData || [] };
-    } catch(e) {
-      const msg = e?.message || "Shared pull failed";
-      if (!silent) setNotice({tone:"late", text:msg});
-      setSharedSync({tone:"late", text:msg});
-      return { error:{ message:msg } };
-    }
-  }
-  useEffect(()=>{
-    if(!isSupabaseConfigured || !supabase || !hasValidSupabaseEnv()) return;
-    let cancelled = false;
-    let debounceTimer = null;
-    function requestPull(reason="realtime"){
-      if (cancelled) return;
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(()=>{ if (!cancelled) pullSharedData(true, reason); }, 550);
-    }
-    const first = setTimeout(()=>pullSharedData(true, "startup"), 350);
-    const timer = setInterval(()=>pullSharedData(true, "10s poll"), 10000);
-    const onFocus = ()=>pullSharedData(true, "browser focus");
-    const onVisible = ()=>{ if (document.visibilityState === "visible") pullSharedData(true, "tab visible"); };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisible);
-    let channel = null;
-    try {
-      channel = supabase.channel("production-dpr-shared-sync")
-        .on("postgres_changes", { event:"*", schema:"public", table:"production_orders" }, ()=>requestPull("orders realtime"))
-        .on("postgres_changes", { event:"*", schema:"public", table:"production_entries" }, ()=>requestPull("entries realtime"))
-        .subscribe(status=>{
-          if (status === "SUBSCRIBED") setSharedSync({ tone:"ok", text:"Shared live sync ON" });
-          if (["CHANNEL_ERROR","TIMED_OUT"].includes(status)) setSharedSync({ tone:"warn", text:`Realtime ${status}; 10s polling still ON` });
-        });
-    } catch {
-      setSharedSync({ tone:"warn", text:"Realtime unavailable; 10s polling ON" });
-    }
-    return ()=>{
-      cancelled = true;
-      clearTimeout(first); clearTimeout(debounceTimer); clearInterval(timer);
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisible);
-      if (channel && supabase?.removeChannel) supabase.removeChannel(channel);
-    };
-  }, []);
-  async function pullSupabase(){
-    await pullSharedData(false, "manual refresh");
-  }
-  function handleSharedSave(result, label="Shared save"){
-    if (result?.error) { setSharedSync({ tone:"late", text:`${label} not shared: ${result.error.message}` }); return; }
-    if (result?.warning || result?.skipped) { setSharedSync({ tone:"warn", text:`${label}: browser-only until Supabase is fixed` }); return; }
-    setSharedSync({ tone:"ok", text:`${label} saved to Supabase · refreshing shared data…` });
-    setTimeout(()=>pullSharedData(true, `${label} after-save refresh`), 700);
-  }
-  async function seedSupabase(){
-    if(!hasValidSupabaseEnv()){ setNotice({tone:"warn", text:supabaseConfigWarning()}); return; }
-    try {
-      const result = await robustUpsertOrdersToSupabase(rows);
-      if(result.error){ setNotice({tone:"late", text:result.error.message}); return; }
-      if(result.warning){ setNotice({tone:"warn", text:result.warning}); return; }
-      setNotice({tone:result.recoveredFrom ? "warn" : "ok", text:`Synced ${result.savedCount ?? rows.length} current browser/app rows to Supabase production_orders. ${supabaseSaveLabel(result)}${shortRecoveredSupabaseNote(result.recoveredFrom)}`});
-    } catch(e) {
-      setNotice({tone:"late", text:e?.message || "Supabase sync failed. Check VITE_SUPABASE_URL / RLS policies."});
-    }
-  }
-  async function testSupabaseConnection(){
-    setNotice({tone:"info", text:"Testing Supabase read, upsert, read-back and verified delete..."});
-    const result = await runSupabaseSmokeTest();
-    setNotice(result);
-  }
-  function openRegisterFromWip(row, stage, activity="all"){
-    setRegisterFocus({
-      id:uid("regfocus"),
-      order_no:row?.order_no || "",
-      style_no:row?.style_no || "",
-      colour:row?.colour || "",
-      component:row?.component || "",
-      stage:stage || "all",
-      activity
-    });
-    setDrawer(null);
-    setTab("register");
-  }
-  function openEntryFromWip(row, stage, field="output"){
-    if (!row) return;
-    setEntryFocus({ id:uid("entryfocus"), rowKey:styleCompositeKey(row), stage:stage || "cutting", field:field || "output", order_no:row.order_no || "", style_no:row.style_no || "", colour:row.colour || "", component:row.component || "" });
-    setOrder(row.order_no || "All");
-    setQuery([row.style_no, row.colour, row.component].filter(Boolean).join(" "));
-    setDrawer(null);
-    setTab("entry");
-  }
-  function clearAllScreenFilters(){
-    setQuery("");
-    setBuyer("All");
-    setOrder("All");
-    setRegisterFocus(null);
-    setDashboardDrill(null);
-    const keys = [
-      "global_query","global_buyer","global_order",
-      "wip_search","wip_dept","wip_issue","wip_owner","wip_route","wip_view_mode","wip_column_filters",
-      "register_from","register_to","register_dept","register_activity","register_query",
-      "monthly_buyer","monthly_focus","monthly_route",
-      "chase_q","chase_issue","chase_dept"
-    ];
-    try { keys.forEach(k=>localStorage.removeItem(uiStorageKey(k))); } catch {}
-    setClearFiltersTick(t=>t+1);
-    setNotice({tone:"ok", text:"Cleared filters across screens. Draft entry quantities are kept unless you clear them inside the entry screen."});
-  }
-  function exportAll(){
-    const pack = buildReportSheets(visibleRows, ledger);
-    exportXlsx(`production_dpr_${APP_VERSION.toLowerCase().replace(/[^a-z0-9]+/g,"_")}_horizontal_quick_export.xlsx`,[
-      { name:"Factory Summary", rows:pack.factorySummary },
-      { name:"Live WIP", rows:pack.wipStatus },
-      { name:"Owner Chase", rows:pack.ownerRows },
-      { name:"Completed Not Issued", rows:pack.completedNotIssued },
-      { name:"Received Not Processed", rows:pack.receivedNotProcessed },
-      { name:"Reject Alter Missing", rows:pack.ramRows },
-      { name:"Reconcile", rows:pack.reconcile },
-      { name:"Backdated Audit", rows:pack.ledgerRows },
-    ]);
-  }
-  function tabPermission(k){
-    if (["entry"].includes(k)) return "production.entry_dpr";
-    if (["register"].includes(k)) return "production.correct_entry";
-    if (["styles"].includes(k)) return "production.edit_styles";
-    if (["routes"].includes(k)) return "production.manage_routes";
-    if (["photos"].includes(k)) return "production.manage_photos";
-    if (["reports","monthly"].includes(k)) return "production.export";
-    if (["settings"].includes(k)) return "production.manage_settings";
-    if (["users"].includes(k)) return "production.audit_view";
-    return "production.view";
-  }
-  function canOpenTab(k){ return currentUserCan(tabPermission(k)); }
-  useEffect(()=>{ if (userProfile?.name && !canOpenTab(tab)) setTab("dashboard"); }, [userProfile?.name, userProfile?.role, tab]);
-  async function logoutUser(){
-    await recordUserSession("logout", userProfile, { note:"User clicked logout" });
-    clearCurrentUserProfile();
-    const blank = defaultUserProfile();
-    setUserProfile(blank);
-    setShowLogin(true);
-    setNotice({ tone:"warn", text:"Logged out. Login is required before production entry/edit actions." });
-  }
-  const tabs = [
-    ["dashboard","Dashboard",BarChart3], ["planning","Planning",ClipboardList], ["wip","Live WIP",Warehouse], ["entry","DPR Entry",ClipboardList], ["register","Register",FileSpreadsheet], ["review","Review",ShieldCheck], ["owners","Who to Chase",Users], ["monthly","Monthly",FileSpreadsheet], ["styles","Styles",Shirt], ["routes","Routes",Filter], ["photos","Photos",ImageIcon], ["reports","Reports",FileSpreadsheet], ["users","Users/Audit",UserCheck], ["settings","Settings",Settings]
-  ];
-  return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
-    <style>{FONT + CSS}</style>
-    <LoginDialog open={showLogin} force={!userProfile?.name} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
-    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Current status links open the exact DPR entry context; toggleable route progress shows cut/order/cut-stage balance; deleted styles are protected from reappearing by local tombstones while Supabase delete verification is fixed.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
-    <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Reports. Supabase-first autosave · user login · permissions · audit history.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className={`mt-chip ${userProfile?.name ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=>{ const allowed = canOpenTab(k); return <button key={k} className={tab===k?"active":""} disabled={!allowed} title={allowed ? label : `Blocked: ${tabPermission(k)}`} onClick={()=>allowed && setTab(k)}><Icon size={14}/> {label}{!allowed ? " 🔒" : ""}</button>; })}</div></div></div>
-    <div className="mt-shell mt-page">
-      {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
-      <PageFilters tab={tab} query={query} setQuery={setQuery} buyer={buyer} setBuyer={setBuyer} buyers={buyers} order={order} setOrder={setOrder} orders={orders} visibleRows={visibleRows}/>
-      <div className="mt-keepalive-note slim no-print"><span className="mt-chip mt-info">Remembered tab/draft</span><span className="mt-small">This browser remembers your tab/drafts. Saved production data is shared through Supabase and refreshes by realtime/polling.</span></div>
-      <div className="mt-tab-panel" style={{display:tab==="dashboard"?"block":"none"}} aria-hidden={tab!=="dashboard"}><Dashboard rows={visibleRows} ledger={ledger} onDrill={setDashboardDrill} clearTick={clearFiltersTick}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="planning"?"block":"none"}} aria-hidden={tab!=="planning"}><PlanningView rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} ledger={ledger}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="wip"?"block":"none"}} aria-hidden={tab!=="wip"}><WipStatus rows={visibleRows} onOpen={(row,stage)=>setDrawer({row,stage})} onEntry={openEntryFromWip} clearTick={clearFiltersTick}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="entry"?"block":"none"}} aria-hidden={tab!=="entry"}><QuickEntry rows={visibleRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={entryFocus} onSharedSave={handleSharedSave}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="register"?"block":"none"}} aria-hidden={tab!=="register"}><OutputRegisterView rows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={registerFocus} clearTick={clearFiltersTick} onSharedSave={handleSharedSave}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="review"?"block":"none"}} aria-hidden={tab!=="review"}><ReviewView rows={visibleRows} ledger={ledger} planRows={planRows}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="owners"?"block":"none"}} aria-hidden={tab!=="owners"}><WhoToChase rows={visibleRows}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="monthly"?"block":"none"}} aria-hidden={tab!=="monthly"}><MonthlyComparison rows={visibleRows} ledger={ledger} clearTick={clearFiltersTick}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="styles"?"block":"none"}} aria-hidden={tab!=="styles"}><StyleManager rows={visibleRows} allRows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} clearTick={clearFiltersTick} onSharedSave={handleSharedSave}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="routes"?"block":"none"}} aria-hidden={tab!=="routes"}><ProcessRoutes rows={visibleRows} setRows={setRows}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="photos"?"block":"none"}} aria-hidden={tab!=="photos"}><PhotoManager rows={visibleRows} setRows={setRows} clearTick={clearFiltersTick}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="reports"?"block":"none"}} aria-hidden={tab!=="reports"}>{currentUserCan("production.export") ? <Reports rows={visibleRows} ledger={ledger}/> : <PermissionGate permission="production.export" label="Reports"/>}</div>
-      <div className="mt-tab-panel" style={{display:tab==="users"?"block":"none"}} aria-hidden={tab!=="users"}>{currentUserCan("production.audit_view") ? <UserAuditView profile={userProfile} onSwitchUser={()=>setShowLogin(true)} onLogout={logoutUser}/> : <PermissionGate permission="production.audit_view" label="Users / Audit"/>}</div>
-      <div className="mt-tab-panel" style={{display:tab==="settings"?"block":"none"}} aria-hidden={tab!=="settings"}>{currentUserCan("production.manage_settings") ? <SettingsView onChanged={()=>setSettingsTick(t=>t+1)}/> : <PermissionGate permission="production.manage_settings" label="Settings"/>}</div>
-    </div>
-    {drawer && <DetailDrawer row={drawer.row} rows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} stageKey={drawer.stage} onClose={()=>setDrawer(null)} onOpenRegister={openRegisterFromWip} onSharedSave={handleSharedSave}/>} 
-    {dashboardDrill && <DashboardDrillDrawer drill={dashboardDrill} rows={visibleRows} ledger={ledger} onClose={()=>setDashboardDrill(null)}/>} 
-  </div>;
-}
