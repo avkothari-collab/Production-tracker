@@ -26,8 +26,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.30";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.30 horizontal output history drilldown";
+const APP_VERSION = "V7.5.31";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.31 horizontal output history drilldown";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -1345,7 +1345,7 @@ function supabaseToOrder(row){
     if (typeof v === "number") return [k, { ...blankStage(), received:v, output:v, issued:v }];
     return [k, { ...blankStage(), ...v, reject:n(row.reject_qty?.[k] ?? v.reject), alter:n(row.alter_qty?.[k] ?? v.alter), missing:n(row.missing_qty?.[k] ?? v.missing), party:row.party_by_stage?.[k] || v.party || "", idle:n(row.idle_by_stage?.[k] ?? v.idle) }];
   }));
-  return { id:row.id, order_no:row.order_no, style_no:row.style_no, buyer:row.buyer || row.brand || "", colour:row.colour || "", component:row.component || "", photo_url:row.photo_url || "", photo_thumb_url:row.photo_thumb_url || row.photo_url || "", photo_folder_url:row.photo_folder_url || "", order_qty:n(row.order_qty), order_size_qty:normalizeSizeQtyMap(row.order_size_qty || raw.__order_size_qty || raw.order_size_qty || row.size_qty || {}, sizeList), size_set:sizeSet, set_id:row.set_id || "", line:row.default_line || raw.__default_line || "", difficulty:row.difficulty || raw.__difficulty || "Normal", priority:row.priority || raw.__priority || "Normal", daily_target:n(row.daily_target ?? raw.__daily_target), cutting_short_close_qty:n(row.cutting_short_close_qty || raw.__cutting_short_close_qty), cutting_short_close_reason:row.cutting_short_close_reason || raw.__cutting_short_close_reason || "", print_required:raw.__print_required ?? !!row.print_required || route.includes("printing"), embroidery_required:raw.__embroidery_required ?? !!row.embroidery_required || route.includes("embroidery"), route, stages };
+  return { id:row.id, order_no:row.order_no, style_no:row.style_no, buyer:row.buyer || row.brand || "", colour:row.colour || "", component:row.component || "", photo_url:row.photo_url || "", photo_thumb_url:row.photo_thumb_url || row.photo_url || "", photo_folder_url:row.photo_folder_url || "", order_qty:n(row.order_qty), order_size_qty:normalizeSizeQtyMap(row.order_size_qty || raw.__order_size_qty || raw.order_size_qty || row.size_qty || {}, sizeList), size_set:sizeSet, set_id:row.set_id || "", line:row.default_line || raw.__default_line || "", difficulty:row.difficulty || raw.__difficulty || "Normal", priority:row.priority || raw.__priority || "Normal", daily_target:n(row.daily_target ?? raw.__daily_target), cutting_short_close_qty:n(row.cutting_short_close_qty || raw.__cutting_short_close_qty), cutting_short_close_reason:row.cutting_short_close_reason || raw.__cutting_short_close_reason || "", print_required:(raw.__print_required ?? (!!row.print_required || route.includes("printing"))), embroidery_required:(raw.__embroidery_required ?? (!!row.embroidery_required || route.includes("embroidery"))), route, stages };
 }
 async function exportXlsx(filename, sheets){
   const XLSX = await import("xlsx");
