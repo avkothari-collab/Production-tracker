@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.53";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.53 Excel weekly planning cascade and live presence";
+const APP_VERSION = "V7.5.56";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.56 planning remaining-hours multi-style slots";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -400,6 +400,34 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-plan-board-wrap.printable .mt-plan-cell-actions, .mt-plan-board-wrap.printable .mt-plan-signal { display:none; }
 .mt-plan-cascade-note { border:1px solid var(--line-2); background:#fffaf1; border-radius:12px; padding:10px; font-size:10px; line-height:1.45; color:var(--muted-3); }
 
+.mt-plan-excel-table th.day-col, .mt-plan-excel-table td.day-col { min-width:285px; width:285px; }
+.mt-plan-cell-board.columnar { min-height:238px; gap:6px; }
+.mt-plan-field { display:grid; grid-template-columns:74px minmax(0,1fr); align-items:center; gap:6px; }
+.mt-plan-field label { font-size:8px; font-weight:900; color:var(--muted-2); text-transform:uppercase; letter-spacing:.35px; }
+.mt-plan-field input, .mt-plan-field select { min-width:0; }
+.mt-plan-field .style-input { grid-column:2; }
+.mt-plan-calc-box { border:1px dashed var(--line-2); background:#fffaf1; border-radius:10px; padding:6px; display:grid; gap:5px; }
+.mt-plan-calc-box .mt-plan-field { grid-template-columns:88px minmax(0,1fr); }
+.mt-plan-calc-meta { display:flex; justify-content:space-between; gap:6px; align-items:center; flex-wrap:wrap; font-size:8.5px; color:var(--muted-3); }
+.mt-plan-calc-meta b { font-family:'Archivo',sans-serif; font-size:13px; color:var(--ink); }
+.mt-plan-action-row { display:flex; gap:4px; flex-wrap:wrap; align-items:center; }
+.mt-plan-action-row .mt-btn { min-height:24px; padding:3px 6px; font-size:8.6px; }
+.mt-plan-add-style { border:1px solid #d99a45; background:#fff7ea; color:#7a4a0f; border-radius:9px; padding:6px; display:grid; gap:5px; font-size:8.8px; }
+.mt-plan-slot-card { border:1px solid var(--line-2); background:#fffdf8; border-radius:12px; padding:7px; display:grid; gap:6px; }
+.mt-plan-slot-card + .mt-plan-slot-card { margin-top:7px; }
+.mt-plan-slot-head { display:flex; align-items:center; justify-content:space-between; gap:6px; font-size:9px; font-weight:900; color:var(--muted-3); text-transform:uppercase; letter-spacing:.25px; }
+.mt-plan-day-capacity { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; font-size:8.6px; }
+.mt-plan-day-capacity span { border:1px solid var(--line-3); border-radius:8px; background:#fffaf1; padding:4px 5px; color:var(--muted-3); }
+.mt-plan-day-capacity b { display:block; font-family:'Archivo',sans-serif; font-size:12px; color:var(--ink); }
+.mt-plan-readonly { border:1px dashed var(--line-2); background:#f8f5ee; color:var(--muted-4); border-radius:8px; padding:5px 6px; min-height:28px; font-size:9.5px; display:flex; align-items:center; justify-content:space-between; gap:6px; }
+.mt-plan-auto-hint { font-size:8.5px; color:var(--muted-2); line-height:1.2; }
+.mt-plan-add-slot { width:100%; border-style:dashed; }
+
+.mt-plan-board-wrap.fit .mt-plan-excel-table th.day-col, .mt-plan-board-wrap.fit .mt-plan-excel-table td.day-col { min-width:230px; width:230px; }
+.mt-plan-board-wrap.fit .mt-plan-cell-board.columnar { min-height:210px; }
+.mt-plan-board-wrap.fit .mt-plan-field { grid-template-columns:58px minmax(0,1fr); gap:4px; }
+.mt-plan-board-wrap.fit .mt-plan-calc-box .mt-plan-field { grid-template-columns:70px minmax(0,1fr); }
+
 @media print { .mt-top,.mt-toolbar,.no-print,.mt-tabs { display:none !important; } .mt-page{padding:0;} .mt-card,.mt-table-wrap{border:0; box-shadow:none;} .mt-table th{background:#111 !important; color:#fff !important;} }
 @media (max-width:1180px){ .mt-dash-grid{grid-template-columns:repeat(3,minmax(0,1fr));} .mt-mini-board{grid-template-columns:1fr;} .mt-summary-strip,.mt-month-grid{grid-template-columns:repeat(2,minmax(0,1fr));} }
 @media (max-width:980px){ .mt-grid{grid-template-columns:repeat(2,minmax(0,1fr));} .mt-two{grid-template-columns:1fr;} }
@@ -669,7 +697,9 @@ function buildProductionPresencePayload(profile, tab, drawer=null, drill=null){
   };
 }
 function flattenProductionPresenceState(state){
-  const rows = Object.values(state || {}).flat().map((p,idx)=>({
+  // Supabase presence can keep several metas for the same user/browser when track() is called repeatedly
+  // or when React remounts during deploy/hot refresh. Show one clean row per signed-in user.
+  const rawRows = Object.values(state || {}).flat().map((p,idx)=>({
     User:p.user_name || displayNameFromEmail(p.user_email) || "Unknown user",
     Role:p.user_role || "",
     Department:p.user_department || "",
@@ -680,12 +710,18 @@ function flattenProductionPresenceState(state){
     Colour:p.colour || "",
     Component:p.component || "",
     Stage:p.stage_label || stageLabel(p.stage || ""),
-    Email:p.user_email || "",
+    Email:normalizeUserEmail(p.user_email || ""),
     Browser:p.browser_id || "",
     Seen:p.online_at || "",
     _presenceIdx:idx,
   }));
-  return rows.sort((a,b)=>String(a.User).localeCompare(String(b.User)) || String(b.Seen).localeCompare(String(a.Seen)));
+  const byUser = new Map();
+  rawRows.forEach(row=>{
+    const key = row.Email || row.User || row.Browser || `peer_${row._presenceIdx}`;
+    const prev = byUser.get(key);
+    if (!prev || String(row.Seen || "") >= String(prev.Seen || "")) byUser.set(key, row);
+  });
+  return Array.from(byUser.values()).sort((a,b)=>String(a.User).localeCompare(String(b.User)) || String(b.Seen).localeCompare(String(a.Seen)));
 }
 function presenceSummaryText(peers=[]){
   const count = (peers || []).length;
@@ -4231,14 +4267,22 @@ function demoPlanRowsFromRows(rows=[]){
   }).filter(p=>n(p.planned_qty)>0);
 }
 
+function planAutoQtyFromTarget(p){
+  const target = n(p?.eight_hr_target || p?.full_day_output || p?.daily_target || 0);
+  const hours = n(p?.remaining_hours || p?.run_hours || 8) || 8;
+  if (!target) return 0;
+  const factor = p?.changeover ? 0.70 : 1;
+  return Math.max(0, Math.round((target / 8) * hours * factor));
+}
 function planRowEffectiveQty(p){
-  const target = n(p.eight_hr_target);
-  if (!p.changeover || !target) return n(p.planned_qty);
-  const hourly = target / 8;
-  // Factory rule: on changeover, next style gets 70% of the hours it actually runs that day.
-  // Do not subtract a separate 2.5h here; remaining_hours is already the planner-entered run window.
-  const effectiveHours = Math.max(0, n(p.remaining_hours)) * 0.70;
-  return Math.round(hourly * effectiveHours);
+  if (p?.qty_auto_mode || p?.use_auto_qty) return planAutoQtyFromTarget(p);
+  return n(p?.planned_qty) || planAutoQtyFromTarget(p);
+}
+function defaultFullDayOutputForStyle(row){
+  return n(row?.daily_target || row?.plan_qty || row?.eight_hr_target || row?.target_8hr || 0) || 1200;
+}
+function defaultOpsForStyle(row){
+  return n(row?.ops || row?.operator_count || row?.operators || row?.manpower || 0);
 }
 function achievedForPlan(plan, rows, ledger=[]){
   const date = String(plan.plan_date||"").slice(0,10);
@@ -4411,6 +4455,15 @@ function nextProductionMonday(iso=today()){
 }
 function planCellLineKey(activeDept, line){ return activeDept === "stitching" ? String(line || "").trim() : `${activeDept}_total`; }
 function planCellMatches(p, activeDept, line, day){ return String(p.dept||"")===String(activeDept) && String(p.plan_date||"").slice(0,10)===String(day||"").slice(0,10) && String(p.line || planCellLineKey(activeDept,line) || "")===String(planCellLineKey(activeDept,line)||""); }
+function planSlotNo(p){ return Math.max(1, n(p?.slot_no || p?.slot || p?.sequence || p?.metadata?.slot_no || 1) || 1); }
+function lineDayPlanRows(planRows, activeDept, line, day){
+  return (planRows||[]).filter(p=>planCellMatches(p, activeDept, line, day)).sort((a,b)=>planSlotNo(a)-planSlotNo(b) || String(a.updated_at||a.created_at||"").localeCompare(String(b.updated_at||b.created_at||"")));
+}
+function planHours(p){ return Math.max(0, Math.min(8, n(p?.remaining_hours || p?.run_hours || p?.plan_hours || 0))); }
+function usedPlanHours(list=[], excludeId="", beforeSlot=999){ return (list||[]).filter(p=>p?.id!==excludeId && planSlotNo(p)<beforeSlot).reduce((a,p)=>a+planHours(p),0); }
+function remainingHoursBeforeSlot(list=[], p={}){ return Math.max(0, 8 - usedPlanHours(list, p?.id || "", planSlotNo(p))); }
+function totalUsedPlanHours(list=[], excludeId=""){ return (list||[]).filter(p=>p?.id!==excludeId).reduce((a,p)=>a+planHours(p),0); }
+function dayRemainingAfterSlot(list=[], p={}){ return Math.max(0, 8 - (usedPlanHours(list, p?.id || "", planSlotNo(p)) + planHours(p))); }
 function planStyleText(p){ return String(p?.style_input || p?.style_no || "").trim(); }
 function styleKeyOf(row){ return [row?.order_no,row?.style_no,row?.colour,row?.component].map(x=>String(x||"").trim().toUpperCase()).join("|"); }
 function resolvePlanStyle(rows, raw){
@@ -4426,118 +4479,318 @@ function plannedQtyUpTo(planRows, row, dept, iso, includeSameDay=false){
   const key = styleKeyOf(row); const day = String(iso||"").slice(0,10);
   return sumPlanQty(planRows, p=>String(p.dept)===String(dept) && String(p.plan_date||"").slice(0,10) && (includeSameDay ? String(p.plan_date).slice(0,10)<=day : String(p.plan_date).slice(0,10)<day) && (p.row_id===row?.id || styleKeyOf(p)===key));
 }
-function feedAvailableAsOf(row, dept, day, planRows){
+function ledgerEntryMatchesStyle(e, row){
+  if (!row) return false;
+  const eo = String(e.order_no || e.order || "").trim().toUpperCase();
+  const es = String(e.style_no || e.style || "").trim().toUpperCase();
+  const ec = String(e.colour || e.color || "").trim().toUpperCase();
+  const comp = String(e.component || "").trim().toUpperCase();
+  const ro = String(row.order_no || "").trim().toUpperCase();
+  const rs = String(row.style_no || "").trim().toUpperCase();
+  const rc = String(row.colour || "").trim().toUpperCase();
+  const rcomp = String(row.component || "").trim().toUpperCase();
+  return (!eo || eo === ro) && (!es || es === rs) && (!ec || ec === rc) && (!comp || comp === rcomp);
+}
+function ledgerQtyUpTo(ledger=[], row, stage, day, types=["good_output","output"]){
+  const cutoff = String(day || "").slice(0,10);
+  const typeSet = new Set(types.map(x=>String(x).toLowerCase()));
+  return (ledger||[]).filter(e=>{
+    const eDay = String(e.entry_date || e.date || e.created_at || "").slice(0,10);
+    const typ = String(e.entry_type || e.type || e.field || "").toLowerCase();
+    return String(e.stage || e.dept || "") === String(stage || "") && (!cutoff || eDay <= cutoff) && typeSet.has(typ) && ledgerEntryMatchesStyle(e, row);
+  }).reduce((a,e)=>a+n(e.qty ?? e.delta ?? e.good_qty ?? e.output),0);
+}
+function actualStageOutputAsOf(row, dept, day, ledger=[]){
+  const fromLedger = ledgerQtyUpTo(ledger, row, dept, day, ["good_output","output","receive","received"]);
+  if (fromLedger > 0) return fromLedger;
+  return n(sdata(row, dept).output);
+}
+function feedAvailableAsOf(row, dept, day, planRows, ledger=[]){
   if (!row) return { feed:0, prevStage:null, actualPrev:0, plannedPrev:0, note:"No style linked" };
   if (dept === "cutting") return { feed:n(row.order_qty), prevStage:null, actualPrev:n(row.order_qty), plannedPrev:0, note:"Order qty base" };
   const prevStage = upstreamStageFor(row, dept);
   if (!prevStage) return { feed:n(row.order_qty), prevStage:null, actualPrev:n(row.order_qty), plannedPrev:0, note:"No previous route stage" };
-  const actualPrev = n(sdata(row, prevStage).output);
+  const actualPrev = actualStageOutputAsOf(row, prevStage, day, ledger);
   const plannedPrev = plannedQtyUpTo(planRows, row, prevStage, day, true);
   const routeFeed = Math.max(actualPrev, Math.min(n(row.order_qty), actualPrev + plannedPrev));
-  return { feed:routeFeed, prevStage, actualPrev, plannedPrev, note:`${stageLabel(prevStage)} actual ${fmt(actualPrev)} + plan by date ${fmt(plannedPrev)}` };
+  return { feed:routeFeed, prevStage, actualPrev, plannedPrev, note:`${stageLabel(prevStage)} actual-as-of ${fmt(actualPrev)} + plan-by-date ${fmt(plannedPrev)}` };
 }
-function remainingForStyleAsOf(row, dept, day, planRows){
+function remainingForStyleAsOf(row, dept, day, planRows, ledger=[]){
   if (!row) return { remaining:0, feed:0, consumed:0, prevStage:null, note:"Free text style; no master quantity linked." };
-  const feedInfo = feedAvailableAsOf(row, dept, day, planRows);
-  const actualDone = n(sdata(row, dept).output);
+  const feedInfo = feedAvailableAsOf(row, dept, day, planRows, ledger);
+  const actualDone = actualStageOutputAsOf(row, dept, day, ledger);
   const plannedBefore = plannedQtyUpTo(planRows, row, dept, day, false);
   const shortClosedBefore = (planRows||[]).some(p=>(p.row_id===row.id || styleKeyOf(p)===styleKeyOf(row)) && String(p.dept)===String(dept) && String(p.plan_date||"").slice(0,10)<String(day||"").slice(0,10) && p.short_close);
   const consumed = shortClosedBefore ? feedInfo.feed : actualDone + plannedBefore;
   return { remaining:Math.max(0, n(feedInfo.feed)-n(consumed)), feed:n(feedInfo.feed), consumed:n(consumed), actualDone, plannedBefore, prevStage:feedInfo.prevStage, note:feedInfo.note, shortClosedBefore };
 }
-function planCellSignal(plan, rows, planRows, activeDept, line, day){
-  if (!plan || !planStyleText(plan)) return { tone:"muted", text:"Blank cell — type style, qty, end date and OPS directly." };
+function planCellSignal(plan, rows, planRows, activeDept, line, day, ledger=[]){
+  if (!plan || !planStyleText(plan)) return { tone:"muted", level:"blank", text:"Blank cell — type style, qty, end date and OPS directly." };
   const linked = resolvePlanStyle(rows, planStyleText(plan)) || rows.find(r=>r.id===plan.row_id);
-  if (plan.short_close) return { tone:"purple", text:"Short close override marked — next style can roll even if balance remains." };
-  const thisRemain = linked ? remainingForStyleAsOf(linked, activeDept, day, planRows) : null;
   const qty = n(plan.planned_qty);
+  if (plan.short_close) return { tone:"purple", level:"override", text:"Short close override marked — next style can roll even if balance remains." };
+  if (!linked) return { tone:"warn", level:"manual_unlinked", text:"Free text style — allowed, but no master qty/cascade check until linked to Styles." };
+  const thisRemain = remainingForStyleAsOf(linked, activeDept, day, planRows, ledger);
   const previous = (planRows||[]).filter(p=>String(p.dept)===String(activeDept) && String(p.line||"")===String(planCellLineKey(activeDept,line)) && String(p.plan_date||"").slice(0,10)<String(day||"").slice(0,10) && planStyleText(p)).sort((a,b)=>String(b.plan_date).localeCompare(String(a.plan_date)))[0];
   if (previous && !previous.short_close) {
     const prevLinked = resolvePlanStyle(rows, planStyleText(previous)) || rows.find(r=>r.id===previous.row_id);
     const different = planStyleText(previous).toUpperCase() !== planStyleText(plan).toUpperCase();
     if (prevLinked && different) {
-      const prevRemain = remainingForStyleAsOf(prevLinked, activeDept, day, planRows);
-      if (prevRemain.remaining > 0) return { tone:"late", text:`Line still has ${fmt(prevRemain.remaining)} of ${previous.style_no || previous.style_input}. Finish / consume / short-close before rolling to ${plan.style_no || plan.style_input}.` };
+      const prevRemain = remainingForStyleAsOf(prevLinked, activeDept, day, planRows, ledger);
+      if (prevRemain.remaining > 0) return { tone:"late", level:"p0_line_cascade_block", text:`Line still has ${fmt(prevRemain.remaining)} of ${previous.style_no || previous.style_input}. Finish / consume / short-close before rolling to ${plan.style_no || plan.style_input}.` };
     }
   }
-  if (!linked) return { tone:"warn", text:"Free text style — allowed, but no master qty/cascade check until linked to Styles." };
-  if (qty > thisRemain.remaining && thisRemain.remaining > 0) return { tone:"warn", text:`Qty above available cascade balance. Available as-of date ${fmt(thisRemain.remaining)} / feed ${fmt(thisRemain.feed)}. ${thisRemain.note}` };
-  if (thisRemain.remaining <= 0 && qty > 0) return { tone:"late", text:`No open cascade balance as-of this date. ${thisRemain.note}. Mark short close only if management overrides.` };
-  return { tone:"ok", text:`Cascade OK. Available before this day ${fmt(thisRemain.remaining)} / feed ${fmt(thisRemain.feed)}. ${thisRemain.note}` };
+  if (!qty) return { tone:"warn", level:"missing_qty", text:`Style linked, but Qty is blank. Available ${fmt(thisRemain.remaining)} / feed ${fmt(thisRemain.feed)}. ${thisRemain.note}` };
+  if (qty > thisRemain.remaining && thisRemain.remaining > 0) return { tone:"warn", level:"over_available_balance", text:`Qty above available cascade balance. Available as-of date ${fmt(thisRemain.remaining)} / feed ${fmt(thisRemain.feed)}. ${thisRemain.note}` };
+  if (thisRemain.remaining <= 0 && qty > 0) return { tone:"late", level:"no_open_balance", text:`No open cascade balance as-of this date. ${thisRemain.note}. Mark short close only if management overrides.` };
+  return { tone:"ok", level:"ok", text:`Cascade OK. Available before this day ${fmt(thisRemain.remaining)} / feed ${fmt(thisRemain.feed)}. ${thisRemain.note}` };
 }
-function PlanExcelLineBoard({ rows, planRows, setPlanRows, activeDept, weekDays, showTargets=false, fit=false }){
+function planValidationSnapshot(plan, rows=[], allPlanRows=[], ledger=[]){
+  const day = String(plan?.plan_date || today()).slice(0,10);
+  const dept = String(plan?.dept || "stitching");
+  const line = String(plan?.line || planCellLineKey(dept, plan?.line || "") || "");
+  const styleText = planStyleText(plan);
+  const linked = resolvePlanStyle(rows, styleText) || rows.find(r=>r.id===plan?.row_id);
+  const signal = planCellSignal(plan, rows, allPlanRows, dept, line, day, ledger);
+  const remain = linked ? remainingForStyleAsOf(linked, dept, day, allPlanRows, ledger) : null;
+  const qty = n(plan?.planned_qty);
+  const messages = [];
+  if (!styleText && qty) messages.push("Qty entered without style.");
+  if (styleText && !qty) messages.push("Style entered without plan qty.");
+  if (signal.level && !["ok","blank"].includes(signal.level)) messages.push(signal.text);
+  return {
+    level:signal.level || "ok", tone:signal.tone || "ok", message:messages.join(" | ") || signal.text || "OK",
+    day, dept, line, style_input:styleText, linked_style:linked?.style_no || "", order_no:linked?.order_no || plan?.order_no || "",
+    plan_qty:qty, feed:n(remain?.feed), available_before_day:n(remain?.remaining), consumed_before_day:n(remain?.consumed),
+    actual_done_as_of:n(remain?.actualDone), planned_before:n(remain?.plannedBefore), prev_stage:remain?.prevStage || "", short_close:!!plan?.short_close, app_version:APP_VERSION, checked_at:new Date().toISOString()
+  };
+}
+function stablePlanId(dept, line, day, slotNo=1){ return `plan_${stableHash([dept,line,day,slotNo].join("|"))}`; }
+function normalizePlanRowForState(p){
+  const dept = String(p?.dept || "stitching");
+  const day = String(p?.plan_date || today()).slice(0,10);
+  const line = String(p?.line || planCellLineKey(dept, p?.line || ""));
+  const slot_no = planSlotNo(p);
+  const hours = p?.remaining_hours !== undefined || p?.run_hours !== undefined || p?.plan_hours !== undefined ? Math.max(0, Math.min(8, n(p?.remaining_hours || p?.run_hours || p?.plan_hours))) : 0;
+  const withHours = { ...p, remaining_hours:hours };
+  const qty = (p?.qty_auto_mode || p?.use_auto_qty) ? planAutoQtyFromTarget(withHours) : n(p?.planned_qty);
+  return { ...p, id:p?.id || stablePlanId(dept,line,day,slot_no), dept, plan_date:day, line, slot_no, planned_qty:qty, ops:n(p?.ops), eight_hr_target:n(p?.eight_hr_target || p?.full_day_output), remaining_hours:hours, changeover:!!p?.changeover, qty_auto_mode:!!(p?.qty_auto_mode || p?.use_auto_qty), short_close:!!p?.short_close };
+}
+function planRowToSupabase(p, rows=[], allPlanRows=[], ledger=[]){
+  const clean = normalizePlanRowForState(p);
+  const linked = resolvePlanStyle(rows, planStyleText(clean)) || rows.find(r=>r.id===clean.row_id);
+  const validation = planValidationSnapshot(clean, rows, allPlanRows, ledger);
+  return {
+    id:clean.id || stablePlanId(clean.dept, clean.line, clean.plan_date, clean.slot_no),
+    dept:clean.dept, plan_date:clean.plan_date, line:clean.line || "", slot_no:planSlotNo(clean),
+    row_id:linked?.id || clean.row_id || null, order_no:linked?.order_no || clean.order_no || null, style_no:linked?.style_no || clean.style_no || planStyleText(clean) || null,
+    buyer:clean.buyer || linked?.buyer || null, colour:linked?.colour || clean.colour || null, component:linked?.component || clean.component || null,
+    planned_qty:n(clean.planned_qty), ops:n(clean.ops), stitching_end_date:clean.stitching_end_date || null, remarks:clean.remarks || null, short_close:!!clean.short_close,
+    source:clean.source || "manual_excel_board", source_label:clean.source_label || "Excel weekly line board", source_type:clean.source_type || "Manual / cascade checked",
+    status:clean.short_close ? "Short close override" : (clean.status || (validation.level === "ok" ? "Draft / valid" : "Draft / review")), validation_status:validation.level, validation_message:validation.message, validation_snapshot:validation,
+    metadata:{ app_version:APP_VERSION, style_input:planStyleText(clean), route:linked ? routeFor(linked) : [], p0_guard:"cascade_as_of_plan_date", slot_no:planSlotNo(clean), full_day_output:n(clean.eight_hr_target || clean.full_day_output), eight_hr_target:n(clean.eight_hr_target || clean.full_day_output), remaining_hours:n(clean.remaining_hours || clean.run_hours || 0), day_remaining_after:n(clean.day_remaining_after), changeover:!!clean.changeover, qty_auto_mode:!!clean.qty_auto_mode, auto_qty:planAutoQtyFromTarget(clean) },
+    updated_by:currentUserName(), updated_by_role:currentUserRole(), updated_at:new Date().toISOString(), created_by:clean.created_by || currentUserName(), created_at:clean.created_at || new Date().toISOString()
+  };
+}
+function supabaseToPlanRow(row){
+  const meta = row.metadata || {};
+  return normalizePlanRowForState({
+    id:row.id, dept:row.dept, plan_date:row.plan_date, line:row.line || "", slot_no:planSlotNo(row), row_id:row.row_id || "", order_no:row.order_no || "", style_no:row.style_no || "", style_input:meta.style_input || row.style_no || "", buyer:row.buyer || "", colour:row.colour || "", component:row.component || "", planned_qty:n(row.planned_qty), ops:n(row.ops), stitching_end_date:row.stitching_end_date || "", remarks:row.remarks || "", short_close:!!row.short_close, eight_hr_target:n(meta.eight_hr_target || meta.full_day_output), remaining_hours:n(meta.remaining_hours || meta.run_hours || row.remaining_hours || 0), changeover:!!meta.changeover, qty_auto_mode:!!meta.qty_auto_mode, source:row.source || "manual_excel_board", source_label:row.source_label || "Excel weekly line board", source_type:row.source_type || "Manual / cascade checked", status:row.status || "Draft", validation_status:row.validation_status || "", validation_message:row.validation_message || "", validation_snapshot:row.validation_snapshot || null, updated_at:row.updated_at, created_at:row.created_at, created_by:row.created_by
+  });
+}
+async function robustUpsertPlanRowsToSupabase(planRows, rows=[], allPlanRows=[], ledger=[]){
+  if (!hasValidSupabaseEnv()) return { skipped:true, warning:supabaseConfigWarning() };
+  const payload = (Array.isArray(planRows) ? planRows : [planRows]).filter(Boolean).map(p=>planRowToSupabase(p, rows, allPlanRows, ledger));
+  if (!payload.length) return { error:null, savedCount:0 };
+  return fetchRestUpsertToSupabase("production_plan_rows", payload, "dept,plan_date,line,slot_no");
+}
+async function fetchDeletePlanRowFromSupabase(plan){
+  if (!hasValidSupabaseEnv()) return { skipped:true, warning:supabaseConfigWarning() };
+  const p = normalizePlanRowForState(plan);
+  const q = p.id ? `id=eq.${encodeURIComponent(p.id)}` : `${urlEncodedEqQuery({ dept:p.dept, plan_date:p.plan_date, line:p.line || "" })}`;
+  return fetchRestDeleteFromSupabase("production_plan_rows", q);
+}
+function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, weekDays, showTargets=true, fit=false, ledger=[], onPlanUpsert, onPlanDelete }){
   const [search,setSearch] = useState("");
+  const saveTimersRef = useRef({});
+  useEffect(()=>()=>Object.values(saveTimersRef.current || {}).forEach(clearTimeout), []);
   const boardRows = activeDept === "stitching" ? productionLineNames() : [`${stageLabel(activeDept)} Total`];
   const datalistId = `plan-style-list-${activeDept}`;
   const filteredStyles = useMemo(()=>{
     const q=search.trim().toLowerCase();
-    return (rows||[]).filter(r=>!q || [r.style_no,r.order_no,r.buyer,r.colour,r.component].join(" ").toLowerCase().includes(q)).slice(0,120);
+    return (rows||[]).filter(r=>!q || [r.style_no,r.order_no,r.buyer,r.colour,r.component].join(" ").toLowerCase().includes(q)).slice(0,160);
   }, [rows, search]);
-  function findCell(line, day){ return (planRows||[]).find(p=>planCellMatches(p, activeDept, line, day)); }
+  function findCellSlot(line, day, slotNo=1){ return lineDayPlanRows(planRows, activeDept, line, day).find(p=>planSlotNo(p)===n(slotNo)); }
   function cleanPatchForStyle(base, patch){
     const text = patch.style_input !== undefined ? patch.style_input : planStyleText(base);
     const linked = resolvePlanStyle(rows, text) || rows.find(r=>r.id===base?.row_id);
     const out = { ...patch, style_input:text };
-    if (linked) Object.assign(out, { row_id:linked.id, order_no:linked.order_no, style_no:linked.style_no, buyer:patch.buyer !== undefined ? patch.buyer : linked.buyer, colour:linked.colour, component:linked.component });
-    else if (text) Object.assign(out, { row_id:"", style_no:text.toUpperCase(), order_no:base?.order_no || "", buyer:patch.buyer !== undefined ? patch.buyer : (base?.buyer || ""), colour:base?.colour || "", component:base?.component || "" });
+    if (linked) {
+      Object.assign(out, {
+        row_id:linked.id,
+        order_no:linked.order_no,
+        style_no:linked.style_no,
+        buyer:patch.buyer !== undefined ? patch.buyer : linked.buyer,
+        colour:linked.colour,
+        component:linked.component,
+        eight_hr_target: patch.eight_hr_target !== undefined ? patch.eight_hr_target : (base?.eight_hr_target || defaultFullDayOutputForStyle(linked)),
+        ops: patch.ops !== undefined ? patch.ops : (base?.ops || defaultOpsForStyle(linked) || "")
+      });
+    } else if (text) {
+      Object.assign(out, { row_id:"", style_no:text.toUpperCase(), order_no:base?.order_no || "", buyer:patch.buyer !== undefined ? patch.buyer : (base?.buyer || ""), colour:base?.colour || "", component:base?.component || "" });
+    }
     return out;
   }
-  function updateCell(line, day, patch){
-    setPlanRows(prev=>{
-      const existing = (prev||[]).find(p=>planCellMatches(p, activeDept, line, day));
-      const base = existing || { id:uid("plan"), plan_date:day, dept:activeDept, line:planCellLineKey(activeDept,line), source:"manual_excel_board", source_label:"Excel weekly line board", source_type:"Manual / cascade checked", remaining_hours:8, difficulty:"Normal", priority:"Normal", status:"Draft", remarks:"" };
-      const cleaned = cleanPatchForStyle(base, patch);
-      const next = { ...base, ...cleaned, plan_date:day, dept:activeDept, line:planCellLineKey(activeDept,line), planned_qty: cleaned.planned_qty !== undefined ? n(cleaned.planned_qty) : n(base.planned_qty), ops: cleaned.ops !== undefined ? n(cleaned.ops) : n(base.ops), eight_hr_target: cleaned.planned_qty !== undefined ? n(cleaned.planned_qty) : n(base.eight_hr_target || base.planned_qty), status: cleaned.short_close ? "Short close override" : "Draft", updated_at:new Date().toISOString() };
-      const hasContent = planStyleText(next) || n(next.planned_qty) || n(next.ops) || next.stitching_end_date || next.remarks || next.short_close;
-      if (!hasContent) return (prev||[]).filter(p=>p.id!==existing?.id);
-      return existing ? (prev||[]).map(p=>p.id===existing.id ? next : p) : [...(prev||[]), next];
-    });
+  function schedulePlanSave(row, line, day){
+    const key = [activeDept, planCellLineKey(activeDept,line), day, planSlotNo(row)].join("|");
+    clearTimeout(saveTimersRef.current[key]);
+    saveTimersRef.current[key] = setTimeout(()=>onPlanUpsert?.(normalizePlanRowForState(row), { dept:activeDept, line:planCellLineKey(activeDept,line), day, slot_no:planSlotNo(row) }), 650);
   }
-  function clearCell(line, day){ setPlanRows(prev=>(prev||[]).filter(p=>!planCellMatches(p, activeDept, line, day))); }
-  function carryForward(line, day){
+  function updateCell(line, day, slotNo, patch){
+    const allForDay = lineDayPlanRows(planRows, activeDept, line, day);
+    const existingNow = allForDay.find(p=>planSlotNo(p)===n(slotNo));
+    const priorHours = usedPlanHours(allForDay, existingNow?.id || "", n(slotNo));
+    const defaultHours = Math.max(0, 8 - priorHours);
+    const baseNow = existingNow || { id:stablePlanId(activeDept, planCellLineKey(activeDept,line), day, slotNo), plan_date:day, dept:activeDept, line:planCellLineKey(activeDept,line), slot_no:n(slotNo)||1, source:"manual_excel_board", source_label:"Excel weekly line board", source_type:"Manual / cascade checked", remaining_hours:defaultHours, eight_hr_target:0, qty_auto_mode:false, changeover:false, difficulty:"Normal", priority:"Normal", status:"Draft", remarks:"" };
+    const cleanedNow = cleanPatchForStyle(baseNow, patch);
+    const autoTouched = ["eight_hr_target","remaining_hours","changeover","qty_auto_mode","use_auto_qty"].some(k=>Object.prototype.hasOwnProperty.call(cleanedNow,k));
+    const willAuto = cleanedNow.qty_auto_mode !== undefined ? !!cleanedNow.qty_auto_mode : (cleanedNow.use_auto_qty !== undefined ? !!cleanedNow.use_auto_qty : !!baseNow.qty_auto_mode);
+    const finalHours = Math.max(0, Math.min(8, n(cleanedNow.remaining_hours !== undefined ? cleanedNow.remaining_hours : baseNow.remaining_hours || defaultHours)));
+    const draftBeforeQty = { ...baseNow, ...cleanedNow, plan_date:day, dept:activeDept, line:planCellLineKey(activeDept,line), slot_no:n(slotNo)||1, remaining_hours:finalHours, eight_hr_target:n(cleanedNow.eight_hr_target !== undefined ? cleanedNow.eight_hr_target : baseNow.eight_hr_target || 0), changeover: cleanedNow.changeover !== undefined ? !!cleanedNow.changeover : !!baseNow.changeover, qty_auto_mode: willAuto };
+    const plannedQty = cleanedNow.planned_qty !== undefined
+      ? n(cleanedNow.planned_qty)
+      : ((willAuto || autoTouched) ? planAutoQtyFromTarget(draftBeforeQty) : n(baseNow.planned_qty));
+    const nextNow = normalizePlanRowForState({ ...draftBeforeQty, planned_qty:plannedQty, day_remaining_after:Math.max(0, 8 - priorHours - finalHours), status: cleanedNow.short_close ? "Short close override" : "Draft", updated_at:new Date().toISOString() });
+    const hasContentNow = planStyleText(nextNow) || n(nextNow.planned_qty) || n(nextNow.ops) || n(nextNow.eight_hr_target) || n(nextNow.remaining_hours) || nextNow.stitching_end_date || nextNow.remarks || nextNow.short_close;
+    setPlanRows(prev=>{
+      const existing = (prev||[]).find(p=>p.id===existingNow?.id || (planCellMatches(p, activeDept, line, day) && planSlotNo(p)===n(slotNo)));
+      if (!hasContentNow) return (prev||[]).filter(p=>p.id!==existing?.id);
+      return existing ? (prev||[]).map(p=>p.id===existing.id ? nextNow : p) : [...(prev||[]), nextNow];
+    });
+    if (hasContentNow) schedulePlanSave(nextNow, line, day);
+    else if (existingNow) onPlanDelete?.(existingNow, { dept:activeDept, line:planCellLineKey(activeDept,line), day, slot_no:slotNo });
+  }
+  function clearCellSlot(line, day, slotNo){
+    const existing = findCellSlot(line, day, slotNo);
+    const key = [activeDept, planCellLineKey(activeDept,line), day, slotNo].join("|");
+    clearTimeout(saveTimersRef.current[key]);
+    setPlanRows(prev=>(prev||[]).filter(p=>!(planCellMatches(p, activeDept, line, day) && planSlotNo(p)===n(slotNo))));
+    if (existing) onPlanDelete?.(existing, { dept:activeDept, line:planCellLineKey(activeDept,line), day, slot_no:slotNo });
+  }
+  function carryForward(line, day, slotNo){
     const idx = weekDays.indexOf(day);
     const prevDay = idx > 0 ? weekDays[idx-1] : null;
-    const prev = prevDay ? findCell(line, prevDay) : null;
+    const prev = prevDay ? findCellSlot(line, prevDay, slotNo) : null;
     if (!prev) return;
-    updateCell(line, day, { style_input:planStyleText(prev), buyer:prev.buyer || "", planned_qty:prev.planned_qty || "", ops:prev.ops || "", stitching_end_date:prev.stitching_end_date || "", remarks:"CONTINUE RUNNING", short_close:false });
+    updateCell(line, day, slotNo, { style_input:planStyleText(prev), buyer:prev.buyer || "", planned_qty:prev.planned_qty || "", ops:prev.ops || "", eight_hr_target:prev.eight_hr_target || "", remaining_hours:prev.remaining_hours || 0, changeover:!!prev.changeover, qty_auto_mode:!!prev.qty_auto_mode, stitching_end_date:prev.stitching_end_date || "", remarks:"CONTINUE RUNNING", short_close:false });
   }
-  function fillNext(line, day){
-    const idx=weekDays.indexOf(day); const next=idx>=0 ? weekDays[idx+1] : null; const curr=findCell(line,day);
-    if (next && curr) updateCell(line,next,{ style_input:planStyleText(curr), buyer:curr.buyer||"", planned_qty:curr.planned_qty||"", ops:curr.ops||"", stitching_end_date:curr.stitching_end_date||"", remarks:"CONTINUE RUNNING", short_close:false });
+  function fillNext(line, day, slotNo){
+    const idx=weekDays.indexOf(day); const next=idx>=0 ? weekDays[idx+1] : null; const curr=findCellSlot(line,day,slotNo);
+    if (next && curr) updateCell(line,next,slotNo,{ style_input:planStyleText(curr), buyer:curr.buyer||"", planned_qty:curr.planned_qty||"", ops:curr.ops||"", eight_hr_target:curr.eight_hr_target || "", remaining_hours:curr.remaining_hours || 0, changeover:!!curr.changeover, qty_auto_mode:!!curr.qty_auto_mode, stitching_end_date:curr.stitching_end_date||"", remarks:"CONTINUE RUNNING", short_close:false });
+  }
+  function useRemainingHours(line, day, slotNo){
+    const allForDay=lineDayPlanRows(planRows, activeDept, line, day);
+    const p=findCellSlot(line,day,slotNo)||{};
+    const remainingBefore = remainingHoursBeforeSlot(allForDay, { ...p, slot_no:slotNo });
+    const linked=resolvePlanStyle(rows, planStyleText(p)) || rows.find(r=>r.id===p?.row_id) || {};
+    const target = n(p.eight_hr_target) || defaultFullDayOutputForStyle(linked);
+    updateCell(line, day, slotNo, { eight_hr_target:target, remaining_hours:remainingBefore, qty_auto_mode:true, planned_qty:planAutoQtyFromTarget({ ...p, eight_hr_target:target, remaining_hours:remainingBefore, qty_auto_mode:true }) });
+  }
+  function addNextStyleSlot(line, day){
+    const allForDay=lineDayPlanRows(planRows, activeDept, line, day);
+    const nextSlot = Math.max(0, ...allForDay.map(planSlotNo)) + 1;
+    const remaining = Math.max(0, 8 - allForDay.reduce((a,p)=>a+planHours(p),0));
+    updateCell(line, day, nextSlot, { remaining_hours:remaining, qty_auto_mode:true, remarks:"NEXT STYLE" });
+  }
+  async function quickAddStyleFromCell(line, day, slotNo){
+    const p=findCellSlot(line,day,slotNo)||{};
+    const style = planStyleText(p).toUpperCase();
+    if (!style) return window.alert("Type the style number first, then add style detail.");
+    if (resolvePlanStyle(rows, style)) return window.alert("This style already exists in Styles master.");
+    const orderNo = window.prompt("Order No / SO No for this style", p.order_no || `PLAN-${style}`) || "";
+    if (!orderNo.trim()) return;
+    const buyer = window.prompt("Buyer / Brand", p.buyer || "") || "";
+    const colour = window.prompt("Colour", p.colour || "") || "";
+    const component = window.prompt("Component / Garment", p.component || "MAIN") || "MAIN";
+    const qty = n(window.prompt("Order Qty", String(n(p.planned_qty) || ""))) || n(p.planned_qty) || 0;
+    const target = n(window.prompt("Full-day stitching output / 8hr target", String(n(p.eight_hr_target) || defaultFullDayOutputForStyle({})))) || defaultFullDayOutputForStyle({});
+    const size_set = "alpha";
+    const sizeList = getSizeSets()[size_set] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha;
+    const rowBase = { order_no:orderNo.trim().toUpperCase(), style_no:style, buyer:buyer.trim().toUpperCase(), colour:colour.trim().toUpperCase(), component:component.trim().toUpperCase(), order_qty:qty, size_set, order_size_qty:normalizeSizeQtyMap({}, sizeList), line:activeDept === "stitching" ? line : "", daily_target:target, print_required:activeDept === "printing", embroidery_required:activeDept === "embroidery", stages:{} };
+    const newRow = { ...rowBase, id:stableProductionOrderId(rowBase), stages:blankStagesForRoute(rowBase), route:routeFor(rowBase), difficulty:"Normal", priority:"Normal" };
+    setRows?.(prev=>[newRow, ...(prev||[]).filter(r=>styleCompositeKey(r)!==styleCompositeKey(newRow))]);
+    const save = await upsertOneStyleToSupabase(newRow);
+    if (save?.error) window.alert(`Style added locally but Supabase save failed: ${save.error.message}`);
+    recordProductionAudit("style_add_from_plan", { table_name:"production_orders", order_no:newRow.order_no, style_no:newRow.style_no, colour:newRow.colour, component:newRow.component, qty:newRow.order_qty, source:"Planning quick add", after_data:{ daily_target:target, line:newRow.line } });
+    updateCell(line, day, slotNo, { style_input:newRow.style_no, row_id:newRow.id, order_no:newRow.order_no, buyer:newRow.buyer, colour:newRow.colour, component:newRow.component, eight_hr_target:target, qty_auto_mode:!n(p.planned_qty) });
   }
   function exportBoard(){
     const out = [];
     boardRows.forEach(line=>{
-      const row = { Line:line };
-      weekDays.forEach(day=>{
-        const p=findCell(line,day)||{};
-        row[`${shortDayLabel(day)} Style`] = planStyleText(p);
-        row[`${shortDayLabel(day)} Brand`] = p.buyer || "";
-        row[`${shortDayLabel(day)} Qty`] = n(p.planned_qty) || "";
-        row[`${shortDayLabel(day)} End Date`] = p.stitching_end_date || "";
-        row[`${shortDayLabel(day)} OPS`] = n(p.ops) || "";
-        row[`${shortDayLabel(day)} Note`] = p.short_close ? "SHORT CLOSE" : (p.remarks || "");
-      });
-      out.push(row);
+      const maxSlot = Math.max(1, ...weekDays.flatMap(day=>lineDayPlanRows(planRows, activeDept, line, day).map(planSlotNo)));
+      for (let slot=1; slot<=maxSlot; slot++){
+        const row = { Line:line, Slot:slot };
+        weekDays.forEach(day=>{
+          const p=findCellSlot(line,day,slot)||{};
+          row[`${shortDayLabel(day)} Style`] = planStyleText(p);
+          row[`${shortDayLabel(day)} Brand`] = p.buyer || "";
+          row[`${shortDayLabel(day)} Qty`] = n(p.planned_qty) || "";
+          row[`${shortDayLabel(day)} Full_Day_Target`] = n(p.eight_hr_target) || "";
+          row[`${shortDayLabel(day)} Plan_Hours`] = n(p.remaining_hours) || "";
+          row[`${shortDayLabel(day)} Day_Remaining_After`] = p ? dayRemainingAfterSlot(lineDayPlanRows(planRows, activeDept, line, day), p) : "";
+          row[`${shortDayLabel(day)} Changeover_70`] = p.changeover ? "Yes" : "No";
+          row[`${shortDayLabel(day)} End Date`] = p.stitching_end_date || "";
+          row[`${shortDayLabel(day)} OPS`] = n(p.ops) || "";
+          row[`${shortDayLabel(day)} Note`] = p.short_close ? "SHORT CLOSE" : (p.remarks || "");
+        });
+        out.push(row);
+      }
     });
     exportXlsx(`production_${activeDept}_weekly_line_board_${weekDays[0]}.xlsx`, [{ name:"Weekly Line Board", rows:out }, { name:"Plan Rows", rows:(planRows||[]).filter(p=>p.dept===activeDept && weekDays.includes(String(p.plan_date||"").slice(0,10))) }]);
   }
   const blocks=[weekDays.slice(0,3), weekDays.slice(3,6)];
   return <div className={`mt-plan-board-wrap ${fit?"fit":""}`}>
     <datalist id={datalistId}>{filteredStyles.map(r=><option key={r.id} value={r.style_no}>{r.order_no} · {r.buyer} · {r.colour} · {r.component}</option>)}</datalist>
-    <div className="mt-plan-board-head no-print"><div><div className="mt-plan-board-title">Excel Weekly Line Board — {stageLabel(activeDept)}</div><div className="mt-panel-sub">Type directly in the line × day cells. Style is free text with typeahead; Qty, End Date and OPS total automatically. Cascade warnings look at earlier line plans and previous-department finish plans.</div></div><div className="mt-toolbar"><span className="mt-toolbar-label">Find style</span><input className="mt-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="filter typeahead styles"/><button className="mt-btn primary" onClick={exportBoard}><Download size={14}/>Export Board</button></div></div>
+    <div className="mt-plan-board-head no-print"><div><div className="mt-plan-board-title">Excel Weekly Line Board — {stageLabel(activeDept)}</div><div className="mt-panel-sub">Each line/day can now hold multiple style slots. Enter the full-day target once, choose planned hours from the day remaining balance, and the system calculates quantity. Manual Qty still overrides when needed.</div></div><div className="mt-toolbar"><span className="mt-toolbar-label">Find style</span><input className="mt-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="filter typeahead styles"/><button className="mt-btn primary" onClick={exportBoard}><Download size={14}/>Export Board</button></div></div>
     {blocks.map((days,blockIdx)=>{
-      const dayTotals = days.map(day=>({ day, qty:boardRows.reduce((a,line)=>a+n(findCell(line,day)?.planned_qty),0), ops:boardRows.reduce((a,line)=>a+n(findCell(line,day)?.ops),0) }));
-      return <div key={blockIdx} className="mt-table-wrap" style={{marginBottom:12}}><table className="mt-table mt-plan-excel-table"><thead><tr><th className="line-col">Line</th>{days.map(day=><th key={day} className="day-col"><div>{shortDayLabel(day)}</div><div className="mt-small">Style · Brand · Qty · End Date · OPS</div></th>)}</tr></thead><tbody>{boardRows.map(line=><tr key={`${blockIdx}-${line}`}><td className="line-col"><div className="mt-plan-line-name">{line}</div><div className="mt-small">Editable in Settings</div></td>{days.map(day=>{ const p=findCell(line,day); const sig=planCellSignal(p, rows, planRows, activeDept, line, day); return <td key={`${line}-${day}`} className="day-col"><div className="mt-plan-cell-board"><input className="style-input" list={datalistId} value={planStyleText(p)} onChange={e=>updateCell(line,day,{style_input:e.target.value})} placeholder="STYLE"/><div className="mt-plan-mini-row"><input value={p?.buyer || ""} onChange={e=>updateCell(line,day,{buyer:e.target.value})} placeholder="BRAND"/><input value={p?.planned_qty || ""} onChange={e=>updateCell(line,day,{planned_qty:e.target.value.replace(/[^0-9]/g,"")})} placeholder="QTY"/><input value={p?.ops || ""} onChange={e=>updateCell(line,day,{ops:e.target.value.replace(/[^0-9]/g,"")})} placeholder="OPS"/></div><div className="mt-plan-mini-row two"><input type="date" value={p?.stitching_end_date || ""} onChange={e=>updateCell(line,day,{stitching_end_date:e.target.value})} title="Stitching / department finish date"/><input value={p?.remarks || ""} onChange={e=>updateCell(line,day,{remarks:e.target.value})} placeholder="CONTINUE / HALF DAY"/></div><div className={`mt-plan-signal ${sig.tone}`}>{sig.text}</div><div className="mt-plan-cell-actions no-print"><button className="mt-btn ghost" onClick={()=>carryForward(line,day)}>← carry</button><button className="mt-btn ghost" onClick={()=>fillNext(line,day)}>carry →</button><label className="mt-small"><input type="checkbox" checked={!!p?.short_close} onChange={e=>updateCell(line,day,{short_close:e.target.checked, remarks:e.target.checked ? "SPECIAL SHORT CLOSE" : (p?.remarks || "")})}/> short close</label><button className="mt-btn ghost" onClick={()=>clearCell(line,day)}>Clear</button></div></div></td>; })}</tr>)}<tr className="mt-plan-total-row"><td>Total</td>{dayTotals.map(t=><td key={t.day}><div className="mt-plan-day-total"><span>Qty {fmt(t.qty)}</span><span>OPS {fmt(t.ops)}</span></div></td>)}</tr></tbody></table></div>;
+      const dayTotals = days.map(day=>({ day, qty:boardRows.reduce((a,line)=>a+lineDayPlanRows(planRows, activeDept, line, day).reduce((x,p)=>x+n(p.planned_qty),0),0), ops:boardRows.reduce((a,line)=>a+lineDayPlanRows(planRows, activeDept, line, day).reduce((x,p)=>x+n(p.ops),0),0), hours:boardRows.reduce((a,line)=>a+lineDayPlanRows(planRows, activeDept, line, day).reduce((x,p)=>x+planHours(p),0),0) }));
+      return <div key={blockIdx} className="mt-table-wrap" style={{marginBottom:12}}><table className="mt-table mt-plan-excel-table"><thead><tr><th className="line-col">Line</th>{days.map(day=><th key={day} className="day-col"><div>{shortDayLabel(day)}</div><div className="mt-small">Full-day target × planned hours ÷ 8 · manual qty allowed</div></th>)}</tr></thead><tbody>{boardRows.map(line=><tr key={`${blockIdx}-${line}`}><td className="line-col"><div className="mt-plan-line-name">{line}</div><div className="mt-small">Editable in Settings</div></td>{days.map(day=>{
+        let cellPlans=lineDayPlanRows(planRows, activeDept, line, day);
+        if (!cellPlans.length) cellPlans=[{ id:stablePlanId(activeDept, planCellLineKey(activeDept,line), day, 1), dept:activeDept, line:planCellLineKey(activeDept,line), plan_date:day, slot_no:1, remaining_hours:8, qty_auto_mode:false }];
+        const totalHours=cellPlans.filter(p=>planStyleText(p) || n(p.planned_qty) || n(p.remaining_hours)).reduce((a,p)=>a+planHours(p),0);
+        const dayRemain=Math.max(0, 8-totalHours);
+        return <td key={`${line}-${day}`} className="day-col"><div className="mt-plan-cell-board columnar">
+          <div className="mt-plan-day-capacity"><span><b>{fmt(Math.min(8,totalHours))}</b>hrs used</span><span><b>{fmt(dayRemain)}</b>hrs left</span><span><b>{fmt(cellPlans.reduce((a,p)=>a+n(p.planned_qty),0))}</b>qty</span></div>
+          {cellPlans.map((p,idx)=>{ const slotNo=planSlotNo(p)||idx+1; const linked=resolvePlanStyle(rows, planStyleText(p)) || rows.find(r=>r.id===p?.row_id); const sig=planCellSignal(p, rows, planRows, activeDept, line, day, ledger); const allReal=lineDayPlanRows(planRows, activeDept, line, day); const remainingBefore=remainingHoursBeforeSlot(allReal.length?allReal:cellPlans, p); const remainingAfter=dayRemainingAfterSlot(allReal.length?allReal:cellPlans, p); const autoQty=planAutoQtyFromTarget({ ...p, eight_hr_target:n(p?.eight_hr_target) || defaultFullDayOutputForStyle(linked || {}), remaining_hours:n(p?.remaining_hours || remainingBefore) }); return <div key={`${day}-${line}-${slotNo}`} className="mt-plan-slot-card">
+            <div className="mt-plan-slot-head"><span>Style slot {slotNo}</span><span>{fmt(remainingBefore)}h available before</span></div>
+            <div className="mt-plan-field"><label>Style</label><input className="style-input" list={datalistId} value={planStyleText(p)} onChange={e=>updateCell(line,day,slotNo,{style_input:e.target.value})} placeholder="STYLE NO"/></div>
+            <div className="mt-plan-field"><label>Brand</label><input value={p?.buyer || ""} onChange={e=>updateCell(line,day,slotNo,{buyer:e.target.value})} placeholder="BRAND"/></div>
+            {showTargets && <div className="mt-plan-calc-box">
+              <div className="mt-plan-field"><label>Full-day target</label><input value={p?.eight_hr_target || ""} onChange={e=>updateCell(line,day,slotNo,{eight_hr_target:e.target.value.replace(/[^0-9]/g,""), qty_auto_mode:!!p?.qty_auto_mode})} placeholder="8hr qty"/></div>
+              <div className="mt-plan-field"><label>Plan hours</label><input value={p?.remaining_hours || ""} onChange={e=>updateCell(line,day,slotNo,{remaining_hours:e.target.value.replace(/[^0-9.]/g,""), qty_auto_mode:!!p?.qty_auto_mode})} placeholder={String(remainingBefore || 8)}/></div>
+              <div className="mt-plan-readonly"><span>Remaining after this style</span><b>{fmt(remainingAfter)}h</b></div>
+              <div className="mt-plan-calc-meta"><label><input type="checkbox" checked={!!p?.changeover} onChange={e=>updateCell(line,day,slotNo,{changeover:e.target.checked, qty_auto_mode:!!p?.qty_auto_mode})}/> 70% changeover</label><span>Auto qty <b>{fmt(autoQty)}</b></span></div>
+              <div className="mt-plan-action-row"><button className="mt-btn ghost" onClick={()=>useRemainingHours(line,day,slotNo)}>Use remaining hrs</button><label className="mt-small"><input type="checkbox" checked={!!p?.qty_auto_mode} onChange={e=>updateCell(line,day,slotNo,{qty_auto_mode:e.target.checked, planned_qty:e.target.checked ? autoQty : p?.planned_qty})}/> auto qty</label></div>
+              <div className="mt-plan-auto-hint">Manual Qty below overrides auto. No half/full-day button needed — hours are the control.</div>
+            </div>}
+            <div className="mt-plan-field"><label>Qty</label><input value={p?.planned_qty || ""} onChange={e=>updateCell(line,day,slotNo,{planned_qty:e.target.value.replace(/[^0-9]/g,""), qty_auto_mode:false})} placeholder="DAY TARGET"/></div>
+            <div className="mt-plan-field"><label>OPS</label><input value={p?.ops || ""} onChange={e=>updateCell(line,day,slotNo,{ops:e.target.value.replace(/[^0-9]/g,"")})} placeholder="HEADCOUNT"/></div>
+            <div className="mt-plan-field"><label>Finish date</label><input type="date" value={p?.stitching_end_date || ""} onChange={e=>updateCell(line,day,slotNo,{stitching_end_date:e.target.value})} title="Stitching / department finish date"/></div>
+            <div className="mt-plan-field"><label>Note</label><input value={p?.remarks || ""} onChange={e=>updateCell(line,day,slotNo,{remarks:e.target.value})} placeholder="continue / reason"/></div>
+            {planStyleText(p) && !linked && <div className="mt-plan-add-style"><b>Not in Styles master.</b><button className="mt-btn primary" onClick={()=>quickAddStyleFromCell(line,day,slotNo)}>+ Add style detail</button></div>}
+            <div className={`mt-plan-signal ${sig.tone}`}>{sig.text}</div><div className="mt-plan-cell-actions no-print"><button className="mt-btn ghost" onClick={()=>carryForward(line,day,slotNo)}>Use previous day</button><button className="mt-btn ghost" onClick={()=>fillNext(line,day,slotNo)}>Copy to next</button><label className="mt-small"><input type="checkbox" checked={!!p?.short_close} onChange={e=>updateCell(line,day,slotNo,{short_close:e.target.checked, remarks:e.target.checked ? "SPECIAL SHORT CLOSE" : (p?.remarks || "")})}/> short close</label><button className="mt-btn ghost" onClick={()=>clearCellSlot(line,day,slotNo)}>Clear</button></div>
+          </div>; })}
+          <button className="mt-btn ghost mt-plan-add-slot no-print" onClick={()=>addNextStyleSlot(line,day)}>+ Add next style in remaining hours</button>
+        </div></td>; })}</tr>)}<tr className="mt-plan-total-row"><td>Total</td>{dayTotals.map(t=><td key={t.day}><div className="mt-plan-day-total"><span>Qty {fmt(t.qty)}</span><span>OPS {fmt(t.ops)}</span><span>Hours {fmt(t.hours)}</span></div></td>)}</tr></tbody></table></div>;
     })}
   </div>;
 }
 
-function PlanningView({ rows, planRows, setPlanRows, ledger, setRows }){
+function PlanningView({ rows, planRows, setPlanRows, ledger, setRows, onPlanUpsert, onPlanDelete, planSaveState }){
   const [mode,setMode] = useState("stitching");
   const [dept,setDept] = useState("printing");
   const [weekStart,setWeekStart] = useState(()=>nextProductionMonday(today()));
-  const [showTargets,setShowTargets] = useState(false);
+  const [showTargets,setShowTargets] = useState(true);
   const [fitBoard,setFitBoard] = useState(false);
   const activeDept = mode === "stitching" ? "stitching" : dept;
   const normalizedWeekStart = lineBoardWeekStart(weekStart);
@@ -4547,14 +4800,14 @@ function PlanningView({ rows, planRows, setPlanRows, ledger, setRows }){
   const pva = planVsAchievedRows(visiblePlans, rows, ledger);
   function exportWeekDetail(){
     exportXlsx(`production_${activeDept}_plan_detail_${normalizedWeekStart}.xlsx`, [
-      { name:"Plan Detail", rows:weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Style:p.style_no || p.style_input, Buyer:p.buyer, Qty:p.planned_qty, End_Date:p.stitching_end_date, OPS:p.ops, Short_Close:p.short_close?"Yes":"No", Remarks:p.remarks, Status:p.status })) },
+      { name:"Plan Detail", rows:weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Slot:p.slot_no || 1, Style:p.style_no || p.style_input, Buyer:p.buyer, Qty:p.planned_qty, Full_Day_Target:p.eight_hr_target || "", Plan_Hours:p.remaining_hours || "", Changeover_70:p.changeover?"Yes":"No", Qty_Mode:p.qty_auto_mode?"Auto":"Manual", End_Date:p.stitching_end_date, OPS:p.ops, Short_Close:p.short_close?"Yes":"No", Remarks:p.remarks, Status:p.status })) },
       { name:"Plan vs Achieved", rows:pva }
     ]);
   }
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Planning — Excel Weekly Board</h3><div className="mt-panel-sub">This replaces the rigid pool-first model. Plan like the factory sheet: line × day cells, direct typing, Qty/End Date/OPS, auto totals, continue-running carry, and cascade warnings for previous running styles and previous-department finish plans.</div></div>
-    <div className="mt-section no-print"><div className="mt-filter-row"><button className={`mt-btn ${mode==="stitching"?"primary":"ghost"}`} onClick={()=>setMode("stitching")}>Stitching line board</button><button className={`mt-btn ${mode==="dept"?"primary":"ghost"}`} onClick={()=>setMode("dept")}>Other dept board</button>{mode==="dept" && <select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.filter(s=>!['stitching'].includes(s.key)).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>}<span className="mt-toolbar-label">Week</span><input className="mt-input" type="date" value={weekStart} onChange={e=>setWeekStart(e.target.value)}/><button className="mt-btn ghost" onClick={()=>setWeekStart(lineBoardWeekStart(today()))}>This week</button><button className="mt-btn ghost" onClick={()=>setWeekStart(nextProductionMonday(today()))}>Next week</button><button className={`mt-btn ${fitBoard?"active":"ghost"}`} onClick={()=>setFitBoard(v=>!v)}>Fit board</button><button className={`mt-btn ${showTargets?"active":"ghost"}`} onClick={()=>setShowTargets(v=>!v)}>Show hidden targets</button><button className="mt-btn primary" onClick={exportWeekDetail}><Download size={14}/>Export plan detail</button></div><div className="mt-plan-cascade-note"><b>Cascade rule now used:</b> when you are sitting on Thursday and planning Monday, earlier Thu/Fri/Sat running styles on the same line consume balance first. The next style is flagged until prior quantity is finished or <b>short close</b> is marked. For Printing/Stitching/Checking/Packing, previous department actual output + previous department planned finish by the date is used as the as-of feed.</div></div>
-    <div className="mt-section"><PlanExcelLineBoard rows={rows} planRows={planRows} setPlanRows={setPlanRows} activeDept={activeDept} weekDays={weekDays} showTargets={showTargets} fit={fitBoard}/></div>
-    <div className="mt-section"><SimpleTable title={`${stageLabel(activeDept)} Week Plan Rows`} sub="Every filled line/day cell becomes a plan row underneath, so plan-vs-achieved and reports keep working without making the board rigid." rows={weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Style:p.style_no || p.style_input, Buyer:p.buyer, Plan_Qty:p.planned_qty, End_Date:p.stitching_end_date||"", OPS:p.ops||"", Short_Close:p.short_close?"Yes":"No", Source:p.source_label, Status:p.status, Remarks:p.remarks }))} empty="No weekly plan cells filled yet." /></div>
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Planning — Excel Weekly Board</h3><div className="mt-panel-sub">Plan like the factory sheet: line × day cells, direct typing, Qty/End Date/OPS, auto totals and P0 cascade warnings. Each line/day now has remaining-hours control: full-day target × planned hours calculates Qty, and manual Qty override is still allowed.</div></div>
+    <div className="mt-section no-print"><div className="mt-filter-row"><button className={`mt-btn ${mode==="stitching"?"primary":"ghost"}`} onClick={()=>setMode("stitching")}>Stitching line board</button><button className={`mt-btn ${mode==="dept"?"primary":"ghost"}`} onClick={()=>setMode("dept")}>Other dept board</button>{mode==="dept" && <select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.filter(s=>!['stitching'].includes(s.key)).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>}<span className="mt-toolbar-label">Week</span><input className="mt-input" type="date" value={weekStart} onChange={e=>setWeekStart(e.target.value)}/><button className="mt-btn ghost" onClick={()=>setWeekStart(lineBoardWeekStart(today()))}>This week</button><button className="mt-btn ghost" onClick={()=>setWeekStart(nextProductionMonday(today()))}>Next week</button><button className={`mt-btn ${fitBoard?"active":"ghost"}`} onClick={()=>setFitBoard(v=>!v)}>Compact board</button><button className={`mt-btn ${showTargets?"active":"ghost"}`} onClick={()=>setShowTargets(v=>!v)}>{showTargets ? "Auto qty calculator: on" : "Auto qty calculator: off"}</button><button className="mt-btn primary" onClick={exportWeekDetail}><Download size={14}/>Export plan detail</button>{planSaveState && <span className={`mt-chip ${statusClass(planSaveState.tone)}`}>{planSaveState.text}</span>}</div><div className="mt-plan-cascade-note"><b>P0 plan truth:</b> plan cells autosave to the shared production_plan_rows table, are audited, and carry cascade status by actual plan date. <b>Cascade rule now used:</b> when you are sitting on Thursday and planning Monday, earlier Thu/Fri/Sat running styles on the same line consume balance first. The next style is flagged until prior quantity is finished or <b>short close</b> is marked. For Printing/Stitching/Checking/Packing, previous department actual output + previous department planned finish by the date is used as the as-of feed.</div></div>
+    <div className="mt-section"><PlanExcelLineBoard rows={rows} planRows={planRows} setPlanRows={setPlanRows} setRows={setRows} activeDept={activeDept} weekDays={weekDays} showTargets={showTargets} fit={fitBoard} ledger={ledger} onPlanUpsert={onPlanUpsert} onPlanDelete={onPlanDelete}/></div>
+    <div className="mt-section"><SimpleTable title={`${stageLabel(activeDept)} Week Plan Rows`} sub="Every filled line/day cell becomes a plan row underneath, so plan-vs-achieved and reports keep working without making the board rigid." rows={weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Style:p.style_no || p.style_input, Buyer:p.buyer, Plan_Qty:p.planned_qty, End_Date:p.stitching_end_date||"", OPS:p.ops||"", Short_Close:p.short_close?"Yes":"No", Source:p.source_label, P0_Status:p.validation_status || planValidationSnapshot(p, rows, planRows, ledger).level, P0_Message:p.validation_message || planValidationSnapshot(p, rows, planRows, ledger).message, Status:p.status, Remarks:p.remarks }))} empty="No weekly plan cells filled yet." /></div>
     <div className="mt-section"><SimpleTable title="Plan vs Achieved / Style Adherence" sub="Compares planned style/date/line against actual production ledger. This keeps style adherence separate from total quantity achievement." rows={pva} empty="No plan rows yet." /></div>
   </div>;
 }
@@ -5128,6 +5381,17 @@ async function fetchRestSelectFromSupabase(table, query="select=*&limit=1"){
     return { error:{ message:e?.message || String(e) } };
   }
 }
+async function fetchRestDeleteFromSupabase(table, query){
+  const base = supabaseEnvBaseUrl();
+  const anon = supabaseEnvAnonKey();
+  if (!base || !anon) return { skipped:true, warning:supabaseConfigWarning() };
+  try {
+    const res = await fetch(`${base}/rest/v1/${encodeURIComponent(table)}?${query}`, { method:"DELETE", headers:{ apikey:anon, Authorization:`Bearer ${anon}`, Prefer:"return=minimal" } });
+    if (!res.ok) { const text = await res.text().catch(()=>""); return { error:{ message:text || `REST delete HTTP ${res.status}` } }; }
+    return { error:null, via:"rest", deleted:true };
+  } catch(e) { return { error:{ message:e?.message || String(e) } }; }
+}
+
 async function fetchRestSelectByNaturalKey(table, row){
   const key = styleNaturalKey(row);
   if (!key.order_no || !key.style_no || !key.colour || !key.component) return { error:{ message:"Select needs Order No, Style No, Colour and Component." } };
@@ -5865,6 +6129,7 @@ export default function App(){
   const [entryFocus,setEntryFocus] = useState(null);
   const [notice,setNotice] = useState(null);
   const [sharedSync,setSharedSync] = useState(()=>hasValidSupabaseEnv() ? { tone:"warn", text:"Shared sync starting…" } : { tone:"late", text:"Supabase not configured" });
+  const [planSaveState,setPlanSaveState] = useState(()=>hasValidSupabaseEnv() ? { tone:"warn", text:"Plan sync starting…" } : { tone:"warn", text:"Plan browser-only" });
   const [clearFiltersTick,setClearFiltersTick] = useState(0);
   const [showUpdatePopup,setShowUpdatePopup] = useState(()=>{
     try { return localStorage.getItem("production_app_seen_version") !== APP_VERSION; } catch { return true; }
@@ -5934,6 +6199,29 @@ export default function App(){
     const hay = [r.order_no,r.style_no,r.buyer,r.colour,r.component,r.set_id].join(" ").toLowerCase();
     return okBuyer && okOrder && hay.includes(q);
   }),[calcRows,query,buyer,order]);
+  async function savePlanRowShared(planRow, ctx={}){
+    const row = normalizePlanRowForState(planRow);
+    const validation = planValidationSnapshot(row, calcRows, planRows, ledger);
+    if (!hasValidSupabaseEnv()) { setPlanSaveState({ tone:"warn", text:"Plan saved locally only — Supabase missing" }); return { skipped:true }; }
+    setPlanSaveState({ tone:"warn", text:"Saving plan…" });
+    const result = await robustUpsertPlanRowsToSupabase([{ ...row, validation_status:validation.level, validation_message:validation.message }], calcRows, planRows, ledger);
+    if (result?.error) { setPlanSaveState({ tone:"late", text:`Plan not shared: ${result.error.message}` }); return result; }
+    if (result?.warning || result?.skipped) { setPlanSaveState({ tone:"warn", text:"Plan saved locally only" }); return result; }
+    setPlanSaveState({ tone:validation.tone === "late" ? "warn" : "ok", text:`Plan shared · ${validation.level}` });
+    recordProductionAudit("plan_upsert", { table_name:"production_plan_rows", order_no:row.order_no, style_no:row.style_no || row.style_input, colour:row.colour, component:row.component, stage:row.dept, entry_type:"plan", entry_date:row.plan_date, qty:row.planned_qty, source:"Planning", metadata:{ line:row.line, validation, ctx } });
+    return result;
+  }
+  async function deletePlanCellShared(planRow, ctx={}){
+    const row = normalizePlanRowForState(planRow);
+    if (!hasValidSupabaseEnv()) { setPlanSaveState({ tone:"warn", text:"Plan cleared locally only — Supabase missing" }); return { skipped:true }; }
+    setPlanSaveState({ tone:"warn", text:"Clearing plan…" });
+    const result = await fetchDeletePlanRowFromSupabase(row);
+    if (result?.error) { setPlanSaveState({ tone:"late", text:`Plan clear not shared: ${result.error.message}` }); return result; }
+    setPlanSaveState({ tone:"ok", text:"Plan cleared/shared" });
+    recordProductionAudit("plan_delete", { table_name:"production_plan_rows", order_no:row.order_no, style_no:row.style_no || row.style_input, colour:row.colour, component:row.component, stage:row.dept, entry_type:"plan", entry_date:row.plan_date, qty:row.planned_qty, source:"Planning", metadata:{ line:row.line, ctx } });
+    return result;
+  }
+
   function markVersionSeen(){
     try { localStorage.setItem("production_app_seen_version", APP_VERSION); } catch {}
     setShowUpdatePopup(false);
@@ -5959,12 +6247,23 @@ export default function App(){
         setSharedSync({tone:"warn", text:`Orders shared · entries pull failed`});
         return { error:entryError };
       }
+      let planData = null, planError = null;
+      try {
+        const planRes = await supabase.from("production_plan_rows").select("*").limit(5000).order("plan_date",{ascending:false});
+        planData = planRes.data; planError = planRes.error;
+      } catch(e) { planError = { message:e?.message || String(e) }; }
       setRows(filterDeletedStyles((data || []).map(supabaseToOrder)));
       setLedger(entryData || []);
+      if (!planError) {
+        setPlanRows((planData || []).map(supabaseToPlanRow));
+        setPlanSaveState({ tone:"ok", text:`Plan shared · ${planData?.length || 0} rows` });
+      } else {
+        setPlanSaveState({ tone:"warn", text:"Plan local only — run V7.5.54 SQL" });
+      }
       const stamp = new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" });
-      setSharedSync({tone:"ok", text:`Shared live · ${data?.length || 0} orders · ${entryData?.length || 0} entries · ${stamp}`});
-      if (!silent) setNotice({ tone:"ok", text:`Pulled shared Supabase data: ${data?.length || 0} orders, ${entryData?.length || 0} entries. Reason: ${reason}.` });
-      return { error:null, orders:data || [], entries:entryData || [] };
+      setSharedSync({tone:planError?"warn":"ok", text:`Shared live · ${data?.length || 0} orders · ${entryData?.length || 0} entries · ${planError?"plan SQL pending":`${planData?.length || 0} plans`} · ${stamp}`});
+      if (!silent) setNotice({ tone:planError?"warn":"ok", text:`Pulled shared Supabase data: ${data?.length || 0} orders, ${entryData?.length || 0} entries${planError ? "; planning table not ready — run V7.5.54 SQL" : `, ${planData?.length || 0} plan rows`}. Reason: ${reason}.` });
+      return { error:null, orders:data || [], entries:entryData || [], plans:planData || [] };
     } catch(e) {
       const msg = e?.message || "Shared pull failed";
       if (!silent) setNotice({tone:"late", text:msg});
@@ -5992,6 +6291,7 @@ export default function App(){
       channel = supabase.channel("production-dpr-shared-sync")
         .on("postgres_changes", { event:"*", schema:"public", table:"production_orders" }, ()=>requestPull("orders realtime"))
         .on("postgres_changes", { event:"*", schema:"public", table:"production_entries" }, ()=>requestPull("entries realtime"))
+        .on("postgres_changes", { event:"*", schema:"public", table:"production_plan_rows" }, ()=>requestPull("plan realtime"))
         .subscribe(status=>{
           if (status === "SUBSCRIBED") setSharedSync({ tone:"ok", text:"Shared live sync ON" });
           if (["CHANNEL_ERROR","TIMED_OUT"].includes(status)) setSharedSync({ tone:"warn", text:`Realtime ${status}; 10s polling still ON` });
@@ -6110,7 +6410,7 @@ export default function App(){
   return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
     <style>{FONT + CSS}</style>
     <LoginDialog open={showLogin} force={!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
-    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Excel-style weekly line planning, cascade consumption checks, short-close override, realtime presence, WIP/grid parity and dashboard hyperlink audit notes. P0 quantity truth remains strict.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
+    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Planning remaining-hours upgrade: multiple style slots per line/day, full-day target × planned-hours auto qty, no half/full-day button, manual Qty override, day remaining-hours visibility, shared P0 plan autosave and cascade checks.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
     <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Review · Reports. Supabase-first autosave · email login · audit/cell history · Excel-like exports.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className="mt-chip mt-info">{presenceSummaryText(presenceRows)}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${navCollapsed?"active":"ghost"}`} onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand left navigation"><Layers size={14}/>{navCollapsed?"Expand tabs":"Collapse tabs"}</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div></div><PresenceStrip peers={presenceRows}/></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
@@ -6120,7 +6420,7 @@ export default function App(){
       <PageFilters tab={tab} query={query} setQuery={setQuery} buyer={buyer} setBuyer={setBuyer} buyers={buyers} order={order} setOrder={setOrder} orders={orders} visibleRows={visibleRows}/>
       <div className="mt-keepalive-note slim no-print"><span className="mt-chip mt-info">Remembered tab/draft</span><span className="mt-small">This browser remembers your tab/drafts. Saved production data is shared through Supabase and refreshes by realtime/polling.</span></div>
       <div className="mt-tab-panel" style={{display:tab==="dashboard"?"block":"none"}} aria-hidden={tab!=="dashboard"}><Dashboard rows={visibleRows} ledger={ledger} onDrill={setDashboardDrill} clearTick={clearFiltersTick}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="planning"?"block":"none"}} aria-hidden={tab!=="planning"}><PlanningView rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} ledger={ledger}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="planning"?"block":"none"}} aria-hidden={tab!=="planning"}><PlanningView rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} setRows={setRows} ledger={ledger} onPlanUpsert={savePlanRowShared} onPlanDelete={deletePlanCellShared} planSaveState={planSaveState}/></div>
       <div className="mt-tab-panel" style={{display:tab==="wip"?"block":"none"}} aria-hidden={tab!=="wip"}><WipStatus rows={visibleRows} onOpen={(row,stage)=>setDrawer({row,stage})} onEntry={openEntryFromWip} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="entry"?"block":"none"}} aria-hidden={tab!=="entry"}><QuickEntry rows={visibleRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={entryFocus} onSharedSave={handleSharedSave}/></div>
       <div className="mt-tab-panel" style={{display:tab==="register"?"block":"none"}} aria-hidden={tab!=="register"}><OutputRegisterView rows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={registerFocus} clearTick={clearFiltersTick} onSharedSave={handleSharedSave}/></div>
