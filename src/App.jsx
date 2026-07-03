@@ -26,8 +26,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.31";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.31 horizontal output history drilldown";
+const APP_VERSION = "V7.5.35";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.35 WIP to register edit links";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -51,13 +51,18 @@ button { min-height:34px; min-width:34px; touch-action:manipulation; }
 .mt-shell { max-width:1560px; margin:0 auto; }
 .mt-header { display:flex; align-items:flex-end; justify-content:space-between; gap:14px; padding:18px 22px 12px; flex-wrap:wrap; }
 .mt-title { font-family:'Archivo',sans-serif; font-weight:800; font-size:24px; letter-spacing:-0.4px; }
-.mt-sub { font-size:11px; color:var(--on-dark-2); margin-top:3px; line-height:1.4; }
+.mt-sub { font-size:10.5px; color:var(--on-dark-2); margin-top:3px; line-height:1.35; max-width:760px; }
 .mt-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
 .mt-tabs { display:flex; gap:6px; overflow-x:auto; overflow-y:hidden; padding:7px 22px 0; scrollbar-width:thin; }
 .mt-tabs button { flex:0 0 auto; border:1px solid transparent; border-bottom:3px solid transparent; border-radius:9px 9px 0 0; background:transparent; color:#b8afa3; padding:10px 15px; min-height:38px; font-family:'Archivo',sans-serif; font-size:12px; font-weight:800; letter-spacing:0.3px; cursor:pointer; }
 .mt-tabs button:hover { background:rgba(255,255,255,0.06); color:var(--bg); }
 .mt-tabs button.active { color:var(--bg); border-color:var(--accent); border-bottom-color:var(--accent); background:rgba(255,255,255,0.08); }
-.mt-keepalive-note { display:flex; align-items:center; gap:8px; margin:-2px 0 10px; padding:8px 10px; border:1px dashed var(--line-2); background:#fffaf1; }
+.mt-keepalive-note { display:flex; align-items:center; gap:8px; margin:-2px 0 10px; padding:6px 9px; border:1px dashed var(--line-2); background:#fffaf1; }
+.mt-keepalive-note.slim { padding:4px 8px; opacity:.88; }
+.mt-clean-hint { font-size:10px; color:var(--muted-2); line-height:1.35; }
+.mt-app.clean-mode .mt-panel-sub, .mt-app.clean-mode .mt-clean-hint, .mt-app.clean-mode .mt-speed-note { display:none !important; }
+.mt-app.clean-mode .mt-section { padding-top:10px; padding-bottom:10px; }
+.mt-app.clean-mode .mt-sub { max-width:640px; }
 .mt-tab-panel { min-height:260px; }
 .mt-page { padding:18px 22px 34px; }
 .mt-card { background:var(--surface); border:1px solid var(--line-2); border-radius:14px; box-shadow:var(--card-shadow); }
@@ -569,7 +574,12 @@ function hodAndCoordinator(k){ return `${stageOwner(k)} + Production Coordinator
 function sizesFor(row){ const sets = getSizeSets(); return sets[row?.size_set] || sets.alpha || DEFAULT_SIZE_SETS.alpha; }
 function normalizeSizeQtyMap(map, sizes){
   const out = {};
-  (sizes || []).forEach(size=>{ out[size] = Math.max(0, n(map?.[size] ?? map?.[String(size).toLowerCase()] ?? 0)); });
+  const sizeList = Array.isArray(sizes) ? sizes : [];
+  sizeList.forEach(size=>{
+    const directVal = map?.[size];
+    const lowerVal = map?.[String(size).toLowerCase()];
+    out[size] = Math.max(0, n(directVal ?? lowerVal ?? 0));
+  });
   return out;
 }
 function qtyMapTotal(map){ return Object.values(map || {}).reduce((a,b)=>a+n(b),0); }
@@ -1248,7 +1258,10 @@ function lineEfficiencyRows(rows, ledger=[], start=today(), end=today()){
       const row = findRowForLedger(rows, e) || {};
       const line = e.line || row.line || "Unassigned";
       const curr = map.get(line) || { Line:line, Plan_Target:n(e.plan_qty || e.target_qty), Achieved:0, Styles:new Set(), Dept:"Stitching" };
-      curr.Achieved += Math.max(0,n(e.qty ?? e.delta)); curr.Plan_Target += n(e.plan_qty || e.target_qty); curr.Styles.add(row.id || e.style_no || e.style);
+      const entryQty = e.qty ?? e.delta;
+      curr.Achieved += Math.max(0,n(entryQty));
+      curr.Plan_Target += n(e.plan_qty || e.target_qty);
+      curr.Styles.add(row.id || e.style_no || e.style);
       map.set(line,curr);
     });
   } else {
@@ -1343,9 +1356,28 @@ function supabaseToOrder(row){
   const stages = Object.fromEntries(route.map(k=>{
     const v = raw[k] || {};
     if (typeof v === "number") return [k, { ...blankStage(), received:v, output:v, issued:v }];
-    return [k, { ...blankStage(), ...v, reject:n(row.reject_qty?.[k] ?? v.reject), alter:n(row.alter_qty?.[k] ?? v.alter), missing:n(row.missing_qty?.[k] ?? v.missing), party:row.party_by_stage?.[k] || v.party || "", idle:n(row.idle_by_stage?.[k] ?? v.idle) }];
+    const rejectVal = row.reject_qty?.[k] ?? v.reject;
+    const alterVal = row.alter_qty?.[k] ?? v.alter;
+    const missingVal = row.missing_qty?.[k] ?? v.missing;
+    const idleVal = row.idle_by_stage?.[k] ?? v.idle;
+    return [k, { ...blankStage(), ...v, reject:n(rejectVal), alter:n(alterVal), missing:n(missingVal), party:row.party_by_stage?.[k] || v.party || "", idle:n(idleVal) }];
   }));
-  return { id:row.id, order_no:row.order_no, style_no:row.style_no, buyer:row.buyer || row.brand || "", colour:row.colour || "", component:row.component || "", photo_url:row.photo_url || "", photo_thumb_url:row.photo_thumb_url || row.photo_url || "", photo_folder_url:row.photo_folder_url || "", order_qty:n(row.order_qty), order_size_qty:normalizeSizeQtyMap(row.order_size_qty || raw.__order_size_qty || raw.order_size_qty || row.size_qty || {}, sizeList), size_set:sizeSet, set_id:row.set_id || "", line:row.default_line || raw.__default_line || "", difficulty:row.difficulty || raw.__difficulty || "Normal", priority:row.priority || raw.__priority || "Normal", daily_target:n(row.daily_target ?? raw.__daily_target), cutting_short_close_qty:n(row.cutting_short_close_qty || raw.__cutting_short_close_qty), cutting_short_close_reason:row.cutting_short_close_reason || raw.__cutting_short_close_reason || "", print_required:(raw.__print_required ?? (!!row.print_required || route.includes("printing"))), embroidery_required:(raw.__embroidery_required ?? (!!row.embroidery_required || route.includes("embroidery"))), route, stages };
+  const orderSizeRaw = row.order_size_qty || raw.__order_size_qty || raw.order_size_qty || row.size_qty || {};
+  const dailyTargetRaw = row.daily_target ?? raw.__daily_target;
+  const printRequiredRaw = raw.__print_required;
+  const embroideryRequiredRaw = raw.__embroidery_required;
+  const printFallback = !!row.print_required || route.includes("printing");
+  const embroideryFallback = !!row.embroidery_required || route.includes("embroidery");
+  return {
+    id:row.id, order_no:row.order_no, style_no:row.style_no, buyer:row.buyer || row.brand || "", colour:row.colour || "", component:row.component || "",
+    photo_url:row.photo_url || "", photo_thumb_url:row.photo_thumb_url || row.photo_url || "", photo_folder_url:row.photo_folder_url || "",
+    order_qty:n(row.order_qty), order_size_qty:normalizeSizeQtyMap(orderSizeRaw, sizeList), size_set:sizeSet, set_id:row.set_id || "",
+    line:row.default_line || raw.__default_line || "", difficulty:row.difficulty || raw.__difficulty || "Normal", priority:row.priority || raw.__priority || "Normal",
+    daily_target:n(dailyTargetRaw), cutting_short_close_qty:n(row.cutting_short_close_qty || raw.__cutting_short_close_qty), cutting_short_close_reason:row.cutting_short_close_reason || raw.__cutting_short_close_reason || "",
+    print_required:(printRequiredRaw ?? printFallback),
+    embroidery_required:(embroideryRequiredRaw ?? embroideryFallback),
+    route, stages
+  };
 }
 async function exportXlsx(filename, sheets){
   const XLSX = await import("xlsx");
@@ -1433,6 +1465,10 @@ const demoRows = [
 const LOCAL_ROWS_KEY = "production_dpr_rows_local_v1";
 const LOCAL_LEDGER_KEY = "production_dpr_ledger_local_v1";
 const LOCAL_PLAN_KEY = "production_dpr_plan_rows_local_v1";
+function uiStorageKey(name){
+  const user = String(currentUserName()).replace(/[^a-z0-9]+/gi,"_").toLowerCase() || "current_user";
+  return `production_dpr_ui_${user}_${name}`;
+}
 function safeJsonLoad(key, fallback){
   try {
     const raw = localStorage.getItem(key);
@@ -2039,8 +2075,9 @@ function DonutCard({ title, sub, rows, labelKey="label", valueKey="value", onRow
 }
 function Dashboard({ rows, ledger=[], onDrill }){
   const activityDate = latestActivityDate(ledger);
-  const [selectedDate, setSelectedDate] = useState(activityDate);
+  const [selectedDate, setSelectedDate] = useState(()=>safeJsonLoad(uiStorageKey("dashboard_selected_date"), activityDate));
   useEffect(()=>{ setSelectedDate(d => d || activityDate); }, [activityDate]);
+  useEffect(()=>safeJsonSave(uiStorageKey("dashboard_selected_date"), selectedDate), [selectedDate]);
   const cal = productionCalendar445(selectedDate || activityDate);
   const buckets = rows.flatMap(row => issueBuckets(row).map(bucket => ({ ...bucket, row })));
   const openBuckets = buckets.filter(b=>b.type!=="extra_cut" && b.type!=="dispatch_hold");
@@ -2063,7 +2100,8 @@ function Dashboard({ rows, ledger=[], onDrill }){
   const setRows = setConvergenceRows(rows);
   const setsUnmatched = setRows.reduce((a,r)=>a+n(r.Unmatched),0);
   const orderRows = orderSummaryRows(rows);
-  const [dashView, setDashView] = useState("summary");
+  const [dashView, setDashView] = useState(()=>safeJsonLoad(uiStorageKey("dashboard_view"), "summary"));
+  useEffect(()=>safeJsonSave(uiStorageKey("dashboard_view"), dashView), [dashView]);
   const issueMixRows = [
     { Issue:"With Dept", Qty:receivedNotProcessed, kind:"received_not_processed" },
     { Issue:"Ready / Not Issued", Qty:completedNotIssued, kind:"completed_not_issued" },
@@ -2153,8 +2191,10 @@ function DashboardDrillDrawer({ drill, rows, ledger=[], onClose }){
         const an = Number(String(av ?? "").replace(/,/g,""));
         const bn = Number(String(bv ?? "").replace(/,/g,""));
         let cmp;
-        if (!Number.isNaN(an) && !Number.isNaN(bn) && String(av ?? "").trim() !== "" && String(bv ?? "").trim() !== "") cmp = an - bn;
-        else cmp = String(av ?? "").localeCompare(String(bv ?? ""), undefined, { numeric:true, sensitivity:"base" });
+        const avText = String(av ?? "");
+        const bvText = String(bv ?? "");
+        if (!Number.isNaN(an) && !Number.isNaN(bn) && avText.trim() !== "" && bvText.trim() !== "") cmp = an - bn;
+        else cmp = avText.localeCompare(bvText, undefined, { numeric:true, sensitivity:"base" });
         return sort.dir === "asc" ? cmp : -cmp;
       });
     }
@@ -2185,12 +2225,18 @@ function DashboardDrillDrawer({ drill, rows, ledger=[], onClose }){
 }
 
 function WipStatus({ rows, onOpen }){
-  const [localSearch,setLocalSearch] = useState("");
-  const [dept,setDept] = useState("all");
-  const [issue,setIssue] = useState("all");
-  const [owner,setOwner] = useState("all");
-  const [route,setRoute] = useState("all");
-  const [viewMode,setViewMode] = useState("matrix");
+  const [localSearch,setLocalSearch] = useState(()=>safeJsonLoad(uiStorageKey("wip_search"), ""));
+  const [dept,setDept] = useState(()=>safeJsonLoad(uiStorageKey("wip_dept"), "all"));
+  const [issue,setIssue] = useState(()=>safeJsonLoad(uiStorageKey("wip_issue"), "all"));
+  const [owner,setOwner] = useState(()=>safeJsonLoad(uiStorageKey("wip_owner"), "all"));
+  const [route,setRoute] = useState(()=>safeJsonLoad(uiStorageKey("wip_route"), "all"));
+  const [viewMode,setViewMode] = useState(()=>safeJsonLoad(uiStorageKey("wip_view_mode"), "matrix"));
+  useEffect(()=>safeJsonSave(uiStorageKey("wip_search"), localSearch), [localSearch]);
+  useEffect(()=>safeJsonSave(uiStorageKey("wip_dept"), dept), [dept]);
+  useEffect(()=>safeJsonSave(uiStorageKey("wip_issue"), issue), [issue]);
+  useEffect(()=>safeJsonSave(uiStorageKey("wip_owner"), owner), [owner]);
+  useEffect(()=>safeJsonSave(uiStorageKey("wip_route"), route), [route]);
+  useEffect(()=>safeJsonSave(uiStorageKey("wip_view_mode"), viewMode), [viewMode]);
   const [showCutActivity,setShowCutActivity] = useState(false);
   const [sizeBreak,setSizeBreak] = useState(false);
   const [sort,setSort] = useState({ key:"open", dir:"desc" });
@@ -2273,10 +2319,14 @@ function ownerRowsFromBuckets(buckets){
   return Array.from(map.values()).map(x=>({ Owner:x.Owner, OpenStyles:x.OpenStyles.size, OpenQty:x.OpenQty, OldestIdle:`${x.OldestIdle}d`, Critical:x.Critical, MainReason:x.MainReason })).sort((a,b)=>n(b.OpenQty)-n(a.OpenQty));
 }
 function WhoToChase({ rows }){
-  const [selectedOwner, setSelectedOwner] = useState(null);
-  const [q, setQ] = useState("");
-  const [issue, setIssue] = useState("all");
-  const [dept, setDept] = useState("all");
+  const [selectedOwner, setSelectedOwner] = useState(()=>safeJsonLoad(uiStorageKey("chase_selected_owner"), null));
+  const [q, setQ] = useState(()=>safeJsonLoad(uiStorageKey("chase_q"), ""));
+  const [issue, setIssue] = useState(()=>safeJsonLoad(uiStorageKey("chase_issue"), "all"));
+  const [dept, setDept] = useState(()=>safeJsonLoad(uiStorageKey("chase_dept"), "all"));
+  useEffect(()=>safeJsonSave(uiStorageKey("chase_selected_owner"), selectedOwner), [selectedOwner]);
+  useEffect(()=>safeJsonSave(uiStorageKey("chase_q"), q), [q]);
+  useEffect(()=>safeJsonSave(uiStorageKey("chase_issue"), issue), [issue]);
+  useEffect(()=>safeJsonSave(uiStorageKey("chase_dept"), dept), [dept]);
   const search = q.trim().toLowerCase();
   const baseBuckets = rows.flatMap(row => issueBuckets(row).map(b=>({ ...b, row })) ).filter(b=>b.type!=="extra_cut" || b.qty>0);
   const buckets = baseBuckets.filter(b=>{
@@ -2358,6 +2408,33 @@ function confirmEntryChecks({ entryDate, changes, stage, field, reason }){
   if (risk.locked) notes.push("Older backdated entry: manager approval will be required and audit will record the actual created time.");
   if (changes.some(c=>c.delta < 0)) notes.push("Negative delta/correction: this reduces a previously recorded value and should go through approval.");
   if (["reject","alter","missing"].includes(field)) notes.push(`${fieldLabel(field)} entry: confirm the R/A/M quantity has been checked department-wise.`);
+  if (stage === "cutting" && ["output","good_output"].includes(field)) {
+    const byRow = new Map();
+    (changes || []).forEach(c=>{
+      const key = c?.row?.id || styleNaturalKey(c?.row || {});
+      const prev = byRow.get(key) || { row:c.row, delta:0, sizes:[] };
+      prev.delta += n(c.delta);
+      prev.sizes.push(c);
+      byRow.set(key, prev);
+    });
+    const overNotes = [];
+    byRow.forEach(group=>{
+      const row = group.row || {};
+      const oldTotal = sizeMatrix(row, "cutting", "output").reduce((a,x)=>a+n(x.qty),0);
+      const newTotal = oldTotal + n(group.delta);
+      const orderQty = n(row.order_qty);
+      const overOverall = Math.max(0, newTotal - orderQty);
+      const sizePlan = normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row));
+      const overSizes = group.sizes.map(c=>{
+        const planned = n(sizePlan[c.size]);
+        return planned && n(c.newQty) > planned ? `${c.size}: ${fmt(c.newQty)} / ${fmt(planned)} (+${fmt(n(c.newQty)-planned)})` : null;
+      }).filter(Boolean);
+      if (overOverall > 0 || overSizes.length) {
+        overNotes.push(`${row.order_no || ""} · ${row.style_no || ""}: cut after entry ${fmt(newTotal)} / order ${fmt(orderQty)}${overOverall>0 ? `, overall extra ${fmt(overOverall)}` : ""}${overSizes.length ? `; size extra: ${overSizes.join(", ")}` : ""}`);
+      }
+    });
+    if (overNotes.length) notes.push(`OVER-CUT ALERT: ${overNotes.join(" | ")}. Confirm extra cutting size-wise/overall is intentional.`);
+  }
   if (risk.locked && !window.confirm(`MANAGER APPROVAL REQUIRED\n\nThis entry is backdated ${risk.days} days (${entryDate}). It is validated against stock/WIP as-of that date and is stamped manager-approval-required in the audit ledger.\n\nProceed only if this has been approved.`)) return false;
   if (!notes.length) return true;
   return window.confirm(`Confirm production entry before saving\n\n${notes.map((x,i)=>`${i+1}. ${x}`).join("\n")}\n\nStage: ${stageLabel(stage)}\nField: ${fieldLabel(field)}\nEntry date: ${entryDate}${reason ? `\nReason: ${reason}` : ""}`);
@@ -2677,17 +2754,22 @@ function SizeCumulativeEditor({ row, rows, setRows, ledger, setLedger, stage, in
   return <div className="mt-edit-panel">
     <div className="mt-edit-panel-head"><h3 className="mt-panel-title">{stageLabel(stage)} — {fieldLabel(field)}</h3><div className="mt-panel-sub">Selected department only. Enter new quantity by size for the selected date. The updated total is shown as a cross-check, not as editable cumulative entry.</div></div>
     <div className="mt-section no-print"><div className="mt-backdate-box"><span className="mt-toolbar-label">Entry Date</span><input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /><span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span><span className="mt-toolbar-label">Dept</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-toolbar-label">Entry Field</span><select className="mt-select" value={field} onChange={e=>setField(e.target.value)}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>{needsReason && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate reason required" style={{minWidth:250}} />}</div><div className="mt-ram-action-bar"><span className="mt-toolbar-label">R/A/M closure rows</span>{RAM_ENTRY_FIELDS.map(f=><button key={f.key} className={`mt-btn ghost ${field===f.key?"active":""}`} onClick={()=>{setField(f.key); setDraft({});}}>{f.label}</button>)}<span className="mt-small">Use these only to close/explain small balances; normal production entry stays Output / Issue.</span></div>{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated date: validated against stock/WIP as-of this entry date and stamped manager-approval-required. Requires explicit approval confirmation before save.</div>}</div>
-    <div className="mt-section"><div className="mt-entry-hero"><div className="mt-entry-hero-title"><span>{row.style_no}</span><span className="mt-chip mt-muted">{row.order_no}</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-chip mt-warn">{fieldLabel(field)}</span></div><div className="mt-entry-hero-sub">{ctx.note} Reductions/corrections are not normal entry and must go through approval.</div>{orderVariance.diff !== 0 && <div className={`mt-chip ${statusClass(orderVariance.tone)}`} style={{marginTop:8}}>{orderVariance.text}</div>}<div className="mt-mandatory-note"><AlertTriangle size={14}/> Highlighted size boxes are open/mandatory when entering this row. Blank means no quantity entered for that size.</div></div><div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">{ctx.availableLabel}</div><div className="value">{fmt(ctx.available)}</div><div className="note">source / feed</div></div><div className="mt-entry-metric"><div className="label">{ctx.previousLabel}</div><div className="value">{fmt(ctx.previous)}</div><div className="note">already entered</div></div><div className="mt-entry-metric"><div className="label">{ctx.openLabel}</div><div className="value">{fmt(ctx.open)}</div><div className="note">balance before entry</div></div><div className="mt-entry-metric"><div className="label">New Entry</div><div className="value">{fmt(newQty)}</div><div className="note">selected date</div></div><div className="mt-entry-metric"><div className="label">Remaining After</div><div className="value">{fmt(Math.max(0, n(ctx.open)-newQty))}</div><div className="note">after saving</div></div></div><div className="mt-entry-row-actions"><button className="mt-btn" onClick={fillOpen}>Auto-fill open qty</button><button className="mt-btn ghost" onClick={clear}>Clear entry</button><button className="mt-btn primary" onClick={save} disabled={!changes.length || validation.blocked || reasonMissing}><CheckCircle2 size={14}/>Save Day Entry</button></div></div>
+    <div className="mt-section"><div className="mt-entry-hero"><div className="mt-entry-hero-title"><span>{row.style_no}</span><span className="mt-chip mt-muted">{row.order_no}</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-chip mt-warn">{fieldLabel(field)}</span></div><div className="mt-entry-hero-sub">{ctx.note} Reductions/corrections are not normal entry and must go through approval.</div>{orderVariance.diff !== 0 && <div className={`mt-chip ${statusClass(orderVariance.tone)}`} style={{marginTop:8}}>{orderVariance.text}</div>}<div className="mt-mandatory-note"><AlertTriangle size={14}/> Highlighted size boxes are open/mandatory when entering this row. Blank means no quantity entered for that size.</div></div><div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">{ctx.availableLabel}</div><div className="value">{fmt(ctx.available)}</div><div className="note">source / feed</div></div><div className="mt-entry-metric"><div className="label">{ctx.previousLabel}</div><div className="value">{fmt(ctx.previous)}</div><div className="note">already entered</div></div><div className="mt-entry-metric"><div className="label">{ctx.openLabel}</div><div className="value">{fmt(ctx.open)}</div><div className="note">balance before entry</div></div><div className="mt-entry-metric"><div className="label">New Entry</div><div className="value">{fmt(newQty)}</div><div className="note">selected date</div></div><div className="mt-entry-metric"><div className="label">Cumulative After</div><div className="value">{fmt(validation.updatedTotal)}</div><div className="note">{fmt(validation.updatedTotal)} / {fmt(ctx.available)} total</div></div><div className="mt-entry-metric"><div className="label">Remaining After</div><div className="value">{fmt(Math.max(0, n(ctx.open)-newQty))}</div><div className="note">after saving</div></div></div><div className="mt-entry-row-actions"><button className="mt-btn" onClick={fillOpen}>Auto-fill open qty</button><button className="mt-btn ghost" onClick={clear}>Clear entry</button><button className="mt-btn primary" onClick={save} disabled={!changes.length || validation.blocked || reasonMissing}><CheckCircle2 size={14}/>Save Day Entry</button></div></div>
     <div className="mt-section"><div className="mt-dept-size-grid">{sizeContexts.map(x=>{ const remaining=Math.max(0,n(x.open)-n(x.entry)); const baseField=field==="alter_clear"?"output":field; const prev=n(sizeMatrix(row,stage,baseField).find(v=>v.size===x.size)?.qty); const updated=prev+n(x.entry); const blocked=field==="alter_clear" && n(x.entry)>n(x.open); return <div key={x.size} className="mt-dept-size-box"><div className="size">{x.size}</div><div className="line"><span>Open</span><b>{fmt(x.open)}</b></div><input className={`mt-cell-input ${n(x.open)>0?"mandatory":""} ${draft[`${row.id}|${x.size}`]!==undefined?"dirty":""} ${blocked||validation.blocked?"blocked":""}`} value={getVal(row,x.size)} onChange={e=>setVal(x.size,e.target.value)} placeholder="0" style={{width:"100%", marginTop:6}}/><div className="line"><span>Remaining</span><b>{fmt(remaining)}</b></div><div className="line"><span>Updated total</span><b>{fmt(updated)}</b></div></div>;})}</div>{validation.blocked && <div className="mt-locked-note" style={{marginTop:10}}>Blocked: {validation.messages.join("; ")}</div>}</div>
   </div>;
 }
 
 function QuickEntry({ rows, setRows, ledger, setLedger }){
-  const [stage, setStage] = useState("stitching");
-  const [field, setField] = useState("output");
-  const [entryDate, setEntryDate] = useState(defaultEntryDate(ledger));
-  const [reason, setReason] = useState("");
-  const [draft, setDraft] = useState({});
+  const [stage, setStage] = useState(()=>safeJsonLoad(uiStorageKey("entry_stage"), "stitching"));
+  const [field, setField] = useState(()=>safeJsonLoad(uiStorageKey("entry_field"), "output"));
+  const [entryDate, setEntryDate] = useState(()=>safeJsonLoad(uiStorageKey("entry_date"), defaultEntryDate(ledger)));
+  const [reason, setReason] = useState(()=>safeJsonLoad(uiStorageKey("entry_reason"), ""));
+  const [draft, setDraft] = useState(()=>safeJsonLoad(uiStorageKey("entry_draft"), {}));
+  useEffect(()=>safeJsonSave(uiStorageKey("entry_stage"), stage), [stage]);
+  useEffect(()=>safeJsonSave(uiStorageKey("entry_field"), field), [field]);
+  useEffect(()=>safeJsonSave(uiStorageKey("entry_date"), entryDate), [entryDate]);
+  useEffect(()=>safeJsonSave(uiStorageKey("entry_reason"), reason), [reason]);
+  useEffect(()=>safeJsonSave(uiStorageKey("entry_draft"), draft), [draft]);
   const allStageRows = rows.filter(r => routeFor(r).includes(stage));
   const activeRows = allStageRows.filter(r => entryOpenQty(r, stage, field) > 0);
   const risk = backdateRisk(entryDate);
@@ -2719,11 +2801,215 @@ function QuickEntry({ rows, setRows, ledger, setLedger }){
   return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">DPR Quick Entry — Open Styles Only</h3><div className="mt-panel-sub">Select date, department and entry field. The sheet shows only rows with open quantity for that exact action. Enter new quantity by size; updated totals are shown only for cross-check.</div></div>
     <div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-toolbar-label">Entry Date</span><input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /><span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span><span className="mt-toolbar-label">Dept</span><select className="mt-select" value={stage} onChange={e=>{setStage(e.target.value); setDraft({});}}>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select><span className="mt-toolbar-label">Entry Field</span><select className="mt-select" value={field} onChange={e=>{setField(e.target.value); setDraft({});}}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>{risk.days>1 && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate reason required" style={{minWidth:240}}/>}<button className="mt-btn" onClick={fillAllOpen}>Auto-fill all open</button><button className="mt-btn primary" onClick={save}><CheckCircle2 size={14}/>Save Day Entry</button></div><div className="mt-ram-action-bar"><span className="mt-toolbar-label">R/A/M closure rows</span>{RAM_ENTRY_FIELDS.map(f=><button key={f.key} className={`mt-btn ghost ${field===f.key?"active":""}`} onClick={()=>{setField(f.key); setDraft({});}}>{f.label}</button>)}<span className="mt-small">Rejection / Missing / Alter are not in the main dropdown; use these rows when closing/explaining balance.</span></div>{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated entries are validated as-of the selected date and stamped manager-approval-required; explicit approval confirmation is required before save.</div>}
     <div className="mt-entry-hero" style={{marginTop:10}}><div className="mt-entry-hero-title"><span>{entryDate}</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-chip mt-warn">{fieldLabel(field)}</span><span className="mt-chip mt-muted">{activeRows.length} open rows</span></div><div className="mt-entry-hero-sub">{fieldHelp(field)} Showing only styles where this action still has open quantity. Normal entry is positive/new quantity only; reductions go to approval.</div><div className="mt-mandatory-note"><AlertTriangle size={14}/> Mandatory entry context: confirm Date, Dept and Action before saving. Highlighted cells are open quantities.</div></div>
-    <div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">Available / source</div><div className="value">{fmt(totals.available)}</div><div className="note">previous dept or feed</div></div><div className="mt-entry-metric"><div className="label">Already entered</div><div className="value">{fmt(totals.previous)}</div><div className="note">same field before entry</div></div><div className="mt-entry-metric"><div className="label">Open now</div><div className="value">{fmt(totalOpenForField)}</div><div className="note">only shown rows</div></div><div className="mt-entry-metric"><div className="label">New entry</div><div className="value">{fmt(totalNewEntry)}</div><div className="note">selected date</div></div><div className="mt-entry-metric"><div className="label">Remaining after</div><div className="value">{fmt(remainingAfter)}</div><div className="note">after save</div></div></div></div>
-    <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Open Style / Order</th><th>Open Qty</th>{allSizes.map(sz=><th key={sz}>{sz}</th>)}<th>New Entry</th><th>Remaining</th><th>Save Status</th></tr></thead><tbody>{activeRows.length ? activeRows.map(row=>{ const sizes = sizesFor(row); const v=validate(row); const ctx=entryFieldContext(row,stage,field); const rowNew=v.entryTotal; const rowRemaining=Math.max(0,n(ctx.open)-rowNew); return <tr key={row.id}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{(()=>{ const ov=sizeVarianceInfo(row.order_qty, normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row))); return ov.diff!==0 ? <div className={`mt-chip ${statusClass(ov.tone)}`} style={{marginTop:4}}>{ov.text}</div> : null; })()}<div className="mt-entry-row-actions"><button className="mt-btn" onClick={()=>fillRowOpen(row)}>Fill row open</button><button className="mt-btn ghost" onClick={()=>clearRow(row)}>Clear</button></div></div></div></td><td><div className="mt-open-big">{fmt(ctx.open)}</div><div className="mt-small">{ctx.openLabel}</div><div className="mt-small">{ctx.availableLabel}: {fmt(ctx.available)}</div></td>{allSizes.map(sz=> sizes.includes(sz) ? <td key={sz} className="mt-entry-size-cell">{(()=>{ const szCtx=entryFieldSizeContext(row,stage,field,sz); const entry=n(getVal(row,sz)); const remain=Math.max(0,n(szCtx.open)-entry); return <><div className="mt-entry-size-open">Open <b>{fmt(szCtx.open)}</b><br/>Prev {fmt(szCtx.previous)} · Avl {fmt(szCtx.available)}</div><input className={`mt-cell-input ${n(szCtx.open)>0?"mandatory":""} ${draft[`${row.id}|${sz}`]!==undefined?"dirty":""} ${v.blocked?"blocked":""}`} value={getVal(row,sz)} onChange={e=>setVal(row,sz,e.target.value)} placeholder="0" /><div className={`mt-entry-remain ${entry?"warn":""}`}>Rem {fmt(remain)}</div></>; })()}</td> : <td key={sz} className="mt-small">—</td>)}<td><b>{fmt(rowNew)}</b></td><td><b>{fmt(rowRemaining)}</b><div className="mt-small">updated total {fmt(v.updatedTotal)}</div></td><td>{v.blocked ? <span className="mt-chip mt-late">Blocked</span> : v.overCut ? <span className="mt-chip mt-purple">Extra cut warning</span> : v.entryTotal ? <span className="mt-chip mt-warn">Ready to save</span> : <span className="mt-chip mt-ok">OK</span>}<div className="mt-small">{v.messages?.join("; ") || "Positive day entry only"}</div></td></tr>;}) : <tr><td colSpan={allSizes.length+5} style={{padding:18}}>No open styles for {stageLabel(stage)} · {fieldLabel(field)} in the current filter.</td></tr>}</tbody></table></div>
+    <div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">Available / source</div><div className="value">{fmt(totals.available)}</div><div className="note">previous dept or feed</div></div><div className="mt-entry-metric"><div className="label">Already entered</div><div className="value">{fmt(totals.previous)}</div><div className="note">same field before entry</div></div><div className="mt-entry-metric"><div className="label">Open now</div><div className="value">{fmt(totalOpenForField)}</div><div className="note">only shown rows</div></div><div className="mt-entry-metric"><div className="label">New entry</div><div className="value">{fmt(totalNewEntry)}</div><div className="note">selected date</div></div><div className="mt-entry-metric"><div className="label">Cumulative after</div><div className="value">{fmt(totals.previous + totalNewEntry)}</div><div className="note">{fmt(totals.previous + totalNewEntry)} / {fmt(totals.available)} total</div></div><div className="mt-entry-metric"><div className="label">Remaining after</div><div className="value">{fmt(remainingAfter)}</div><div className="note">after save</div></div></div></div>
+    <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Open Style / Order</th><th>Open Qty</th>{allSizes.map(sz=><th key={sz}>{sz}</th>)}<th>New Entry</th><th>Remaining</th><th>Save Status</th></tr></thead><tbody>{activeRows.length ? activeRows.map(row=>{ const sizes = sizesFor(row); const v=validate(row); const ctx=entryFieldContext(row,stage,field); const rowNew=v.entryTotal; const rowRemaining=Math.max(0,n(ctx.open)-rowNew); return <tr key={row.id}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{(()=>{ const ov=sizeVarianceInfo(row.order_qty, normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row))); return ov.diff!==0 ? <div className={`mt-chip ${statusClass(ov.tone)}`} style={{marginTop:4}}>{ov.text}</div> : null; })()}<div className="mt-entry-row-actions"><button className="mt-btn" onClick={()=>fillRowOpen(row)}>Fill row open</button><button className="mt-btn ghost" onClick={()=>clearRow(row)}>Clear</button></div></div></div></td><td><div className="mt-open-big">{fmt(ctx.open)}</div><div className="mt-small">{ctx.openLabel}</div><div className="mt-small">{ctx.availableLabel}: {fmt(ctx.available)}</div></td>{allSizes.map(sz=> sizes.includes(sz) ? <td key={sz} className="mt-entry-size-cell">{(()=>{ const szCtx=entryFieldSizeContext(row,stage,field,sz); const entry=n(getVal(row,sz)); const remain=Math.max(0,n(szCtx.open)-entry); return <><div className="mt-entry-size-open">Open <b>{fmt(szCtx.open)}</b><br/>Prev {fmt(szCtx.previous)} · Avl {fmt(szCtx.available)}</div><input className={`mt-cell-input ${n(szCtx.open)>0?"mandatory":""} ${draft[`${row.id}|${sz}`]!==undefined?"dirty":""} ${v.blocked?"blocked":""}`} value={getVal(row,sz)} onChange={e=>setVal(row,sz,e.target.value)} placeholder="0" /><div className={`mt-entry-remain ${entry?"warn":""}`}>Rem {fmt(remain)}</div></>; })()}</td> : <td key={sz} className="mt-small">—</td>)}<td><b>{fmt(rowNew)}</b></td><td><b>{fmt(rowRemaining)}</b><div className="mt-small">cumulative after {fmt(v.updatedTotal)} / {fmt(ctx.available)}</div></td><td>{v.blocked ? <span className="mt-chip mt-late">Blocked</span> : v.overCut ? <span className="mt-chip mt-purple">Extra cut warning</span> : v.entryTotal ? <span className="mt-chip mt-warn">Ready to save</span> : <span className="mt-chip mt-ok">OK</span>}<div className="mt-small">{v.messages?.join("; ") || "Positive day entry only"}</div></td></tr>;}) : <tr><td colSpan={allSizes.length+5} style={{padding:18}}>No open styles for {stageLabel(stage)} · {fieldLabel(field)} in the current filter.</td></tr>}</tbody></table></div>
   </div>;
 }
 
+
+
+function registerActivityLabel(type){
+  const t = String(type || "").toLowerCase();
+  if (["good_output","output","completed","complete","done"].includes(t)) return "Completed / Output";
+  if (["issue","issued"].includes(t)) return "Dept Issue Forward";
+  if (["receive","received"].includes(t)) return "Dept Receive";
+  if (["reject","rejection"].includes(t)) return "Rejection";
+  if (t === "missing") return "Missing";
+  if (t === "alter" || t === "alter_issue") return "Alter Defect";
+  if (t === "alter_clear") return "Alter Clear";
+  return t || "Entry";
+}
+function correctionFieldToEntryType(field){
+  if (field === "output") return "good_output";
+  if (field === "issued") return "issue";
+  if (field === "received") return "receive";
+  if (field === "reject") return "reject";
+  if (field === "missing") return "missing";
+  if (field === "alter") return "alter";
+  if (field === "alter_clear") return "alter_clear";
+  return "good_output";
+}
+function parseRegisterSizeQtyText(text=""){
+  const out = {};
+  String(text || "").split(/[;,\n]+/).forEach(part=>{
+    const m = part.trim().match(/^([^=:\s]+)\s*[=:]\s*([+-]?\d+(?:\.\d+)?)$/);
+    if (m) out[m[1].trim().toUpperCase()] = n(m[2]);
+  });
+  return out;
+}
+function applyRegisterCorrectionToRows({ rows, target, stage, field, sizeMap }){
+  return (rows||[]).map(row=>{
+    const same = String(row.order_no||"")===String(target.Order||"") && String(row.style_no||"")===String(target.Style||"") && String(row.colour||"")===String(target.Colour||"") && String(row.component||"")===String(target.Component||"");
+    if (!same) return row;
+    const baseField = field === "alter_clear" ? "output" : field;
+    const stages = { ...(row.stages || {}) };
+    const prevStage = { ...blankStage(), ...sdata(row, stage) };
+    const nextStage = { ...prevStage };
+    const sizeStage = { ...(row.size_stage || {}) };
+    const stageSizes = { ...(sizeStage[stage] || {}) };
+    const oldMap = Object.fromEntries(sizeMatrix(row, stage, baseField).map(x=>[String(x.size).toUpperCase(), n(x.qty)]));
+    const newMap = { ...oldMap };
+    Object.entries(sizeMap || {}).forEach(([size, delta])=>{ newMap[String(size).toUpperCase()] = n(newMap[String(size).toUpperCase()]) + n(delta); });
+    if (field === "alter_clear") {
+      const oldAlter = Object.fromEntries(sizeMatrix(row, stage, "alter").map(x=>[String(x.size).toUpperCase(), n(x.qty)]));
+      const newAlter = { ...oldAlter };
+      Object.entries(sizeMap || {}).forEach(([size, delta])=>{ newAlter[String(size).toUpperCase()] = Math.max(0, n(newAlter[String(size).toUpperCase()]) - n(delta)); });
+      nextStage.output = Object.values(newMap).reduce((a,b)=>a+n(b),0);
+      nextStage.alter = Object.values(newAlter).reduce((a,b)=>a+n(b),0);
+      stageSizes.output = newMap;
+      stageSizes.alter = newAlter;
+    } else {
+      nextStage[baseField] = Object.values(newMap).reduce((a,b)=>a+n(b),0);
+      if (stage !== "cutting" && baseField === "output") nextStage.received = Math.max(n(prevStage.received), stageFeed(row, stage));
+      stageSizes[baseField] = newMap;
+    }
+    stages[stage] = nextStage;
+    sizeStage[stage] = stageSizes;
+    return { ...row, stages, size_stage:sizeStage };
+  });
+}
+function outputRegisterRows(rows, ledger=[], filters={}){
+  const allSizes = allReportSizes(rows);
+  const visibleKeys = new Set((rows||[]).map(r=>styleNaturalKey(r)));
+  const q = String(filters.query || "").trim().toLowerCase();
+  const from = filters.from || "0000-01-01";
+  const to = filters.to || "9999-12-31";
+  const dept = filters.dept || "all";
+  const activity = filters.activity || "all";
+  const map = new Map();
+  (ledger||[]).forEach(entry=>{
+    const row = findRowForLedger(rows, entry) || {};
+    const keyRow = row.id ? row : { order_no:entry.order_no||entry.order, style_no:entry.style_no||entry.style, colour:entry.colour, component:entry.component };
+    if (rows?.length && !visibleKeys.has(styleNaturalKey(keyRow))) return;
+    const entryDate = String(entry.entry_date || entry.entryDate || entry.date || "").slice(0,10);
+    if (!entryDate || entryDate < from || entryDate > to) return;
+    const stage = String(entry.stage || "").toLowerCase();
+    const typ = String(entry.entry_type || entry.entryType || entry.type || "").toLowerCase();
+    const label = registerActivityLabel(typ);
+    if (dept !== "all" && stage !== dept) return;
+    if (activity !== "all" && label !== activity) return;
+    const hay = [entry.order_no||entry.order||row.order_no, entry.style_no||entry.style||row.style_no, entry.buyer||row.buyer, entry.colour||row.colour, entry.component||row.component, stageLabel(stage), label].join(" ").toLowerCase();
+    if (q) {
+      const tokens = q.split(/\s+/).filter(Boolean);
+      if (!tokens.every(token => hay.includes(token))) return;
+    }
+    const groupKey = [entryDate, stage, entry.order_no||entry.order||row.order_no||"", entry.style_no||entry.style||row.style_no||"", entry.colour||row.colour||"", entry.component||row.component||"", entry.entry_source||entry.source||""].join("|::|");
+    if (!map.has(groupKey)) {
+      map.set(groupKey, {
+        Entry_Date:entryDate,
+        Department:stageLabel(stage),
+        Order:entry.order_no || entry.order || row.order_no || "",
+        Style:entry.style_no || entry.style || row.style_no || "",
+        Buyer:entry.buyer || row.buyer || "",
+        Colour:entry.colour || row.colour || "",
+        Component:entry.component || row.component || "",
+        Source:entry.entry_source || entry.source || "",
+        Completed_Output:0,
+        Issue_Forward:0,
+        Receive:0,
+        Rejection:0,
+        Missing:0,
+        Alter_Defect:0,
+        Alter_Clear:0,
+        R_A_M_Total:0,
+        Total_Activity:0,
+        _sizes:{},
+        _stage:stage,
+        Created_At:entry.created_at || entry.createdAt || "",
+        By:entry.changed_by || entry.created_by || entry.user || "—",
+        Reason:entry.backdate_reason || entry.reason || "",
+      });
+    }
+    const g = map.get(groupKey);
+    const size = String(entry.size || "NO_SIZE").toUpperCase();
+    const qty = n(entry.qty ?? entry.delta ?? entry.good_qty ?? entry.reject_qty ?? entry.alter_qty ?? entry.missing_qty);
+    if (["Completed / Output"].includes(label)) g.Completed_Output += qty;
+    else if (label === "Dept Issue Forward") g.Issue_Forward += qty;
+    else if (label === "Dept Receive") g.Receive += qty;
+    else if (label === "Rejection") { g.Rejection += qty; g.R_A_M_Total += qty; }
+    else if (label === "Missing") { g.Missing += qty; g.R_A_M_Total += qty; }
+    else if (label === "Alter Defect") { g.Alter_Defect += qty; g.R_A_M_Total += qty; }
+    else if (label === "Alter Clear") g.Alter_Clear += qty;
+    g.Total_Activity += qty;
+    g._sizes[size] = n(g._sizes[size]) + qty;
+    if (!g.Created_At || String(entry.created_at || entry.createdAt || "") < g.Created_At) g.Created_At = entry.created_at || entry.createdAt || g.Created_At;
+  });
+  return Array.from(map.values()).map(r=>{
+    const sizeCols = withHorizontalSizes({}, r._sizes, allSizes);
+    const {_sizes, ...core} = r;
+    return { ...core, ...sizeCols };
+  }).sort((a,b)=>String(a.Entry_Date).localeCompare(String(b.Entry_Date)) || String(a.Department).localeCompare(String(b.Department)) || String(a.Style).localeCompare(String(b.Style)));
+}
+function OutputRegisterView({ rows, setRows, ledger, setLedger, focus }){
+  const defaultFrom = today().slice(0,7) + "-01";
+  const [from,setFrom] = useState(()=>safeJsonLoad(uiStorageKey("register_from"), defaultFrom));
+  const [to,setTo] = useState(()=>safeJsonLoad(uiStorageKey("register_to"), today()));
+  const [dept,setDept] = useState(()=>safeJsonLoad(uiStorageKey("register_dept"), "all"));
+  const [activity,setActivity] = useState(()=>safeJsonLoad(uiStorageKey("register_activity"), "all"));
+  const [query,setQuery] = useState(()=>safeJsonLoad(uiStorageKey("register_query"), ""));
+  useEffect(()=>safeJsonSave(uiStorageKey("register_from"), from), [from]);
+  useEffect(()=>safeJsonSave(uiStorageKey("register_to"), to), [to]);
+  useEffect(()=>safeJsonSave(uiStorageKey("register_dept"), dept), [dept]);
+  useEffect(()=>safeJsonSave(uiStorageKey("register_activity"), activity), [activity]);
+  useEffect(()=>safeJsonSave(uiStorageKey("register_query"), query), [query]);
+  useEffect(()=>{
+    if (!focus) return;
+    const nextDept = focus.stage || "all";
+    setDept(nextDept);
+    setActivity(focus.activity || "all");
+    const nextQuery = [focus.order_no, focus.style_no, focus.colour, focus.component].filter(Boolean).join(" ");
+    setQuery(nextQuery);
+    const matchingDates = (ledger || []).filter(e=>{
+      const sameOrder = String(e.order_no || e.order || "") === String(focus.order_no || "");
+      const sameStyle = String(e.style_no || e.style || "") === String(focus.style_no || "");
+      const sameColour = String(e.colour || "") === String(focus.colour || "");
+      const sameComponent = String(e.component || "") === String(focus.component || "");
+      const sameStage = nextDept === "all" || String(e.stage || "").toLowerCase() === String(nextDept).toLowerCase();
+      return sameOrder && sameStyle && sameColour && sameComponent && sameStage;
+    }).map(e=>String(e.entry_date || e.entryDate || e.date || "").slice(0,10)).filter(Boolean).sort();
+    if (matchingDates.length) {
+      setFrom(matchingDates[0]);
+      setTo(matchingDates[matchingDates.length - 1] > today() ? matchingDates[matchingDates.length - 1] : today());
+    }
+  }, [focus?.id]);
+  const activities = useMemo(()=>["all", ...Array.from(new Set((ledger||[]).map(e=>registerActivityLabel(e.entry_type || e.entryType || e.type)).filter(Boolean))).sort()], [ledger]);
+  const registerRows = useMemo(()=>outputRegisterRows(rows, ledger, {from,to,dept,activity,query}), [rows, ledger, from, to, dept, activity, query]);
+  const totalOutput = registerRows.reduce((a,r)=>a+n(r.Completed_Output),0);
+  const totalIssue = registerRows.reduce((a,r)=>a+n(r.Issue_Forward),0);
+  const totalRAM = registerRows.reduce((a,r)=>a+n(r.R_A_M_Total),0);
+  const allSizes = allReportSizes(rows);
+  function exportRegister(){ exportXlsx(`production_output_register_${from}_to_${to}.xlsx`, [{name:"Output Register", rows:registerRows.map(({_stage, ...r})=>r)}]); }
+  function correctOldEntry(r){
+    const stage = r._stage || STAGES.find(s=>s.label===r.Department)?.key || "cutting";
+    const field = (window.prompt(`Correction field for ${r.Style} on ${r.Entry_Date}: output / issued / received / reject / missing / alter / alter_clear`, "output") || "").trim().toLowerCase();
+    if (!["output","issued","received","reject","missing","alter","alter_clear"].includes(field)) { alert("Correction cancelled: invalid field."); return; }
+    const text = window.prompt(`Enter size corrections for ${r.Style} (${stageLabel(stage)} ${fieldLabel(field)}). Use + or - by size, e.g. S=+10, M=-5`, "");
+    const sizeMap = parseRegisterSizeQtyText(text || "");
+    const total = Object.values(sizeMap).reduce((a,b)=>a+n(b),0);
+    if (!Object.keys(sizeMap).length || !total) { alert("No correction quantity entered."); return; }
+    const reason = window.prompt("Reason / approval note for editing old entry:", "Register correction") || "Register correction";
+    if (!window.confirm(`Create audit-safe correction?\n\nDate: ${r.Entry_Date}\nDept: ${stageLabel(stage)}\nField: ${fieldLabel(field)}\nCorrection total: ${fmt(total)}\nReason: ${reason}\n\nThis adds a correction ledger row and updates current WIP immediately; it does not silently overwrite history.`)) return;
+    const targetRow = rows.find(x=>String(x.order_no||"")===String(r.Order||"") && String(x.style_no||"")===String(r.Style||"") && String(x.colour||"")===String(r.Colour||"") && String(x.component||"")===String(r.Component||""));
+    if (!targetRow) { alert("Matching style row not found in current filtered rows."); return; }
+    const changes = Object.entries(sizeMap).map(([size, delta])=>{
+      const baseField = field === "alter_clear" ? "output" : field;
+      const oldQty = sizeMatrix(targetRow, stage, baseField).find(x=>String(x.size).toUpperCase()===String(size).toUpperCase())?.qty || 0;
+      return { row:targetRow, size:String(size).toUpperCase(), oldQty:n(oldQty), newQty:n(oldQty)+n(delta), delta:n(delta), entryQty:n(delta) };
+    });
+    const newLedger = buildLedgerRows({ changes, stage, field, entryDate:r.Entry_Date, reason, source:"register_old_entry_correction" });
+    setRows(prev=>applyRegisterCorrectionToRows({ rows:prev, target:r, stage, field, sizeMap }));
+    setLedger(prev=>[...newLedger, ...(prev||[])]);
+    saveLedgerToSupabase(newLedger, field);
+  }
+  const displayRows = registerRows.map(({_stage, ...r})=>r);
+  const cols = displayRows.length ? Object.keys(displayRows[0]) : ["Entry_Date","Department","Order","Style","Completed_Output","Issue_Forward","R_A_M_Total"];
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Output / Issue-Receive Register</h3><div className="mt-panel-sub">Precise horizontal register for all departments. One row per date + department + order/style/component. R/A/M is shown in simple columns, not separate rows. Old entries are corrected through audit-safe correction rows.</div>{focus && <div className="mt-context-strip" style={{marginTop:8}}><span className="mt-chip mt-info">Opened from WIP</span><span className="mt-chip mt-muted">{focus.order_no}</span><span className="mt-chip mt-muted">{focus.style_no}</span><span className="mt-chip mt-muted">{stageLabel(focus.stage)}</span><span className="mt-small">Use Correct on the matching row to edit by audit-safe correction.</span></div>}</div>
+    <div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-toolbar-label">From</span><input className="mt-input" type="date" value={from} onChange={e=>setFrom(e.target.value)} /><span className="mt-toolbar-label">To</span><input className="mt-input" type="date" value={to} onChange={e=>setTo(e.target.value)} /><span className="mt-toolbar-label">Dept</span><select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}><option value="all">All departments</option>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select><span className="mt-toolbar-label">Activity</span><select className="mt-select" value={activity} onChange={e=>setActivity(e.target.value)}>{activities.map(a=><option key={a} value={a}>{a==="all"?"All activities":a}</option>)}</select><input className="mt-input" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search order / style / buyer / colour" style={{minWidth:260}}/><button className="mt-btn" onClick={()=>{setDept("all");setActivity("all");setQuery("");}}>Clear</button><button className="mt-btn" onClick={exportRegister}><Download size={14}/>Export</button></div></div>
+    <div className="mt-section"><div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">Rows</div><div className="value">{fmt(registerRows.length)}</div><div className="note">date first</div></div><div className="mt-entry-metric"><div className="label">Completed / Output</div><div className="value">{fmt(totalOutput)}</div><div className="note">filtered period</div></div><div className="mt-entry-metric"><div className="label">Issue Forward</div><div className="value">{fmt(totalIssue)}</div><div className="note">filtered period</div></div><div className="mt-entry-metric"><div className="label">R/A/M</div><div className="value">{fmt(totalRAM)}</div><div className="note">simple columns</div></div></div></div>
+    <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}<th className="no-print">Edit</th></tr></thead><tbody>{displayRows.length ? displayRows.map((r,i)=><tr key={`${r.Entry_Date}-${r.Order}-${r.Style}-${i}`}>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] ?? "")}</td>)}<td className="no-print"><button className="mt-btn ghost" onClick={()=>correctOldEntry(registerRows[i])}>Correct</button></td></tr>) : <tr><td colSpan={cols.length+1} style={{padding:18}}>No activity entries found for this filter.</td></tr>}</tbody></table></div>
+    <div className="mt-speed-note"><b>Correction rule:</b> old output/issue/R/A/M entries are edited by adding a dated correction ledger row, so history remains auditable and WIP updates immediately.</div>
+  </div>;
+}
 
 function stagePlanSources(row, dept){
   const route = routeFor(row);
@@ -2850,7 +3136,11 @@ function reviewBuckets(rows, ledger=[], planRows=[]){
       if (n(c.ram)>0) ram.push({ ...base, Issue_Type:"R/A/M", Total_RAM:n(c.ram), Action:"Close rejection / alter / missing reason and recovery" });
     });
   });
-  const risky = (ledger||[]).filter(e=>e.is_backdated || e.backdate_reason || e.approval_status || e.validation_snapshot?.backdate_reason).map(e=>({ Entry_Date:e.entry_date, Created_At:e.created_at, User:e.changed_by || e.created_by || e.validation_snapshot?.changed_by || "—", Dept:stageLabel(e.stage), Style:e.style_no || e.style, Size:e.size || "Total", Qty:e.qty ?? e.delta, Reason:e.backdate_reason || e.validation_snapshot?.backdate_reason || "", Approval:e.approval_status || e.validation_snapshot?.approval_status || "" }));
+  const riskyLedger = ledger || [];
+  const risky = riskyLedger.filter(e=>e.is_backdated || e.backdate_reason || e.approval_status || e.validation_snapshot?.backdate_reason).map(e=>{
+    const qtyVal = e.qty ?? e.delta;
+    return { Entry_Date:e.entry_date, Created_At:e.created_at, User:e.changed_by || e.created_by || e.validation_snapshot?.changed_by || "—", Dept:stageLabel(e.stage), Style:e.style_no || e.style, Size:e.size || "Total", Qty:qtyVal, Reason:e.backdate_reason || e.validation_snapshot?.backdate_reason || "", Approval:e.approval_status || e.validation_snapshot?.approval_status || "" };
+  });
   return { ready, cannotClose, reconcile, ram, risky, planDev:planDeviationRows(planRows, rows, ledger) };
 }
 
@@ -3034,10 +3324,14 @@ function ReviewView({ rows, ledger, planRows }){
 }
 
 function MonthlyComparison({ rows, ledger=[] }){
-  const [month,setMonth] = useState(()=>latestActivityDate(ledger).slice(0,7));
-  const [buyer,setBuyer] = useState("All");
-  const [focus,setFocus] = useState("all");
-  const [route,setRoute] = useState("all");
+  const [month,setMonth] = useState(()=>safeJsonLoad(uiStorageKey("monthly_month"), latestActivityDate(ledger).slice(0,7)));
+  const [buyer,setBuyer] = useState(()=>safeJsonLoad(uiStorageKey("monthly_buyer"), "All"));
+  const [focus,setFocus] = useState(()=>safeJsonLoad(uiStorageKey("monthly_focus"), "all"));
+  const [route,setRoute] = useState(()=>safeJsonLoad(uiStorageKey("monthly_route"), "all"));
+  useEffect(()=>safeJsonSave(uiStorageKey("monthly_month"), month), [month]);
+  useEffect(()=>safeJsonSave(uiStorageKey("monthly_buyer"), buyer), [buyer]);
+  useEffect(()=>safeJsonSave(uiStorageKey("monthly_focus"), focus), [focus]);
+  useEffect(()=>safeJsonSave(uiStorageKey("monthly_route"), route), [route]);
   const [sizeBreak,setSizeBreak] = useState(true);
   const buyers = ["All", ...uniqueList(rows.map(r=>r.buyer))];
   const { start, end, label } = monthRangeFromYm(month);
@@ -3183,7 +3477,7 @@ function SimpleTable({ title, sub, rows, empty, onRowClick }){
   return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{sub}</div></div><div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{rows.length ? rows.map((r,i)=><tr key={i} className={onRowClick ? "drillable" : ""} onClick={()=>onRowClick?.(r)}>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] ?? "")}</td>)}</tr>) : <tr><td style={{padding:18}}>{empty}</td></tr>}</tbody></table></div></div>;
 }
 
-function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose }){
+function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose, onOpenRegister }){
   const rs = rowStatus(row);
   const stage = stageKey || rs.stage;
   const st = sdata(row,stage);
@@ -3200,6 +3494,7 @@ function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose
   const primaryBucket = buckets.find(b=>b.type!=="extra_cut") || buckets[0];
   const receivingRows = receivingHistoryRows(row, stage, ledger);
   const outputHistoryRows = departmentOutputHistoryRows(row, stage, ledger);
+  const openRegisterForEdit = (activity="all") => onOpenRegister?.(row, stage, activity);
   const sizeRows = sizesFor(row).map(size=>{
     const feedSz = n(stageFeedBySize(row,stage)[size]);
     const out = n(sizeMatrix(row,stage,"output").find(x=>x.size===size)?.qty);
@@ -3233,8 +3528,9 @@ function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose
     </div>
     <div className="mt-section mt-card" style={{marginBottom:12}}><h3 className="mt-panel-title">{stageLabel(stage)} breakup</h3><div className="mt-context-strip"><span className="mt-chip mt-ok">Done {fmt(c.received)}</span><span className="mt-chip mt-warn">Open {fmt(c.open)}</span><span className="mt-chip mt-late">R/A/M {fmt(c.ram)}</span>{c.shortClose ? <span className="mt-chip mt-purple">Short Closed {fmt(c.shortClose)}</span> : null}{c.extra ? <span className="mt-chip mt-purple">Extra/Over {fmt(c.extra)}</span> : null}<span className="mt-chip mt-info">Owner {primaryBucket?.owner || stageOwner(stage)}</span></div>{stage==="cutting" && c.open>0 ? <div style={{marginTop:10}}><button className="mt-btn ghost" onClick={shortCloseCutting}>Short close cutting balance</button><div className="mt-small">Use only when management approves cutting less than order qty. This removes balance from Cutting Pending; it does not add production.</div></div> : null}</div>
     <SizeCumulativeEditor row={row} rows={rows} setRows={setRows} ledger={ledger} setLedger={setLedger} stage={stage} initialField={c.open ? "output" : readyToIssue ? "issued" : "output"} source="wip_view_cell_day_entry" />
-    {stage!=="cutting" && <details className="mt-fold" open={stage==="stitching"}><summary>Receiving / previous department issue history for {stageLabel(stage)}</summary><SimpleTable title={`${stageLabel(stage)} receiving history`} sub="Previous department issue / receiving trail, horizontal by date/activity with size columns across. Vertical one-size-per-row is reserved only for raw audit ledgers." rows={receivingRows} empty="No receiving / issue history found in ledger yet." /></details>}
-    <details className="mt-fold" open={false}><summary>Complete {stageLabel(stage)} output / issue / R-A-M history</summary><SimpleTable title={`${stageLabel(stage)} complete output history`} sub="Good output, issue-forward, rejection, missing, alter defect and alter clear entries for this department. Always grouped horizontally by activity/date with sizes across." rows={outputHistoryRows} empty="No output / issue / R-A-M ledger history found for this department yet." /></details>
+    <div className="mt-section no-print" style={{paddingLeft:0,paddingRight:0}}><button className="mt-btn ghost" onClick={()=>openRegisterForEdit("all")}><FileSpreadsheet size={14}/>Open Register to edit this dept history</button><span className="mt-small" style={{marginLeft:8}}>Register opens filtered to this order/style/department; use Correct for audit-safe edits.</span></div>
+    {stage!=="cutting" && <details className="mt-fold" open={stage==="stitching"}><summary>Receiving / previous department issue history for {stageLabel(stage)}</summary><div className="mt-section no-print" style={{paddingLeft:0,paddingRight:0}}><button className="mt-btn ghost" onClick={()=>onOpenRegister?.(row, "all", "all")}><FileSpreadsheet size={14}/>Open Register for full receive trail</button></div><SimpleTable title={`${stageLabel(stage)} receiving history`} sub="Previous department issue / receiving trail, horizontal by date/activity with size columns across. Vertical one-size-per-row is reserved only for raw audit ledgers." rows={receivingRows} empty="No receiving / issue history found in ledger yet." /></details>}
+    <details className="mt-fold" open={false}><summary>Complete {stageLabel(stage)} output / issue / R-A-M history</summary><div className="mt-section no-print" style={{paddingLeft:0,paddingRight:0}}><button className="mt-btn ghost" onClick={()=>openRegisterForEdit("all")}><FileSpreadsheet size={14}/>Open Register to correct output / issue / R-A-M</button></div><SimpleTable title={`${stageLabel(stage)} complete output history`} sub="Good output, issue-forward, rejection, missing, alter defect and alter clear entries for this department. Always grouped horizontally by activity/date with sizes across." rows={outputHistoryRows} empty="No output / issue / R-A-M ledger history found for this department yet." /></details>
     <details className="mt-fold"><summary>View {stageLabel(stage)} size breakup</summary><SimpleTable title={`${stageLabel(stage)} size-wise open quantities`} sub="Only the selected/clicked department. Use this to see what is open by size before entering." rows={sizeRows} empty="No size rows." /></details>
     <details className="mt-fold"><summary>View full style detail / route / history</summary><div className="mt-section"><LazyStylePhoto row={row} large/><div className="mt-grid" style={{gridTemplateColumns:"repeat(3,minmax(0,1fr))", marginBottom:12}}><Kpi label="Overall Status" value={rs.status} note={rs.action} tone={rs.tone}/><Kpi label="Overall Owner" value={rs.owner} note={rs.support || "Primary owner"}/><Kpi label="Overall Open Qty" value={fmt(rs.qty)} note={`${rs.idle || 0} days idle`}/></div></div><SimpleTable title="Open buckets for selected department" sub="Owner chase items for this department." rows={buckets.map(b=>({ Status:b.status, Qty:b.qty, Percent:`${bucketPct(row,b)}%`, Owner:b.owner, Support:b.support, Action:b.action, Idle:`${b.idle||0}d` }))} empty="No open bucket for this department." /><div style={{height:12}}/><SimpleTable title="Full current status drilldown" sub="Full status logic across this style/component." rows={statusBreakdown(row).map(b=>({ Status:b.status, Stage:stageLabel(b.stage), Qty:b.qty, Percent:`${bucketPct(row,b)}%`, Owner:b.owner, Support:b.support, Action:b.action, Idle:`${b.idle||0}d` }))} empty="No open status bucket." /></details>
   </div></div>;
@@ -3658,7 +3954,10 @@ function excelValue(raw, aliases){
   });
   for (const alias of aliases) {
     const key = String(alias || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (Object.prototype.hasOwnProperty.call(map, key) && String(map[key] ?? "").trim() !== "") return map[key];
+    if (Object.prototype.hasOwnProperty.call(map, key)) {
+      const mappedVal = map[key] ?? "";
+      if (String(mappedVal).trim() !== "") return mappedVal;
+    }
   }
   return "";
 }
@@ -4068,21 +4367,24 @@ function PageFilters({ tab, query, setQuery, buyer, setBuyer, buyers, order, set
     {tab === "dashboard" && <span className="mt-chip mt-info">Order filter controls all dashboard boards/drills</span>}
     {tab === "entry" && <span className="mt-chip mt-warn">Filter order/style before entry to avoid wrong posting</span>}
     {tab === "reports" && <span className="mt-chip mt-info">Horizontal Excel exports</span>}
+    {tab === "register" && <span className="mt-chip mt-info">Output / Issue-Receive Register</span>}
     <span className="mt-chip mt-muted">{visibleRows.length} rows</span>
   </div>;
 }
 
 export default function App(){
-  const [tab,setTab] = useState("dashboard");
+  const [tab,setTab] = useState(()=>safeJsonLoad(uiStorageKey("active_tab"), "dashboard"));
   const [settingsTick,setSettingsTick] = useState(0);
   const [rows,setRows] = useState(()=>loadInitialRows());
   const [ledger,setLedger] = useState(()=>loadInitialLedger());
   const [planRows,setPlanRows] = useState(()=>loadInitialPlanRows());
-  const [query,setQuery] = useState("");
-  const [buyer,setBuyer] = useState("All");
-  const [order,setOrder] = useState("All");
+  const [query,setQuery] = useState(()=>safeJsonLoad(uiStorageKey("global_query"), ""));
+  const [buyer,setBuyer] = useState(()=>safeJsonLoad(uiStorageKey("global_buyer"), "All"));
+  const [order,setOrder] = useState(()=>safeJsonLoad(uiStorageKey("global_order"), "All"));
+  const [cleanMode,setCleanMode] = useState(()=>safeJsonLoad(uiStorageKey("clean_mode"), true));
   const [drawer,setDrawer] = useState(null);
   const [dashboardDrill,setDashboardDrill] = useState(null);
+  const [registerFocus,setRegisterFocus] = useState(null);
   const [notice,setNotice] = useState(null);
   const [showUpdatePopup,setShowUpdatePopup] = useState(()=>{
     try { return localStorage.getItem("production_app_seen_version") !== APP_VERSION; } catch { return true; }
@@ -4090,6 +4392,16 @@ export default function App(){
   useEffect(()=>{ safeJsonSave(LOCAL_ROWS_KEY, rows); }, [rows]);
   useEffect(()=>{ safeJsonSave(LOCAL_LEDGER_KEY, ledger); }, [ledger]);
   useEffect(()=>{ safeJsonSave(LOCAL_PLAN_KEY, planRows); }, [planRows]);
+  useEffect(()=>safeJsonSave(uiStorageKey("global_query"), query), [query]);
+  useEffect(()=>safeJsonSave(uiStorageKey("global_buyer"), buyer), [buyer]);
+  useEffect(()=>safeJsonSave(uiStorageKey("global_order"), order), [order]);
+  useEffect(()=>safeJsonSave(uiStorageKey("clean_mode"), cleanMode), [cleanMode]);
+  useEffect(()=>{
+    safeJsonSave(uiStorageKey("active_tab"), tab);
+    const history = safeJsonLoad(uiStorageKey("tab_history"), []);
+    const next = [tab, ...history.filter(x=>x!==tab)].slice(0,8);
+    safeJsonSave(uiStorageKey("tab_history"), next);
+  }, [tab]);
   const calcRows = useMemo(()=>withLiveIdle(rows, ledger, today()), [rows, ledger]);
   const buyers = ["All", ...Array.from(new Set(calcRows.map(r=>r.buyer).filter(Boolean))).sort()];
   const orders = Array.from(new Set(calcRows.map(r=>r.order_no).filter(Boolean))).sort();
@@ -4131,6 +4443,19 @@ export default function App(){
     const result = await runSupabaseSmokeTest();
     setNotice(result);
   }
+  function openRegisterFromWip(row, stage, activity="all"){
+    setRegisterFocus({
+      id:uid("regfocus"),
+      order_no:row?.order_no || "",
+      style_no:row?.style_no || "",
+      colour:row?.colour || "",
+      component:row?.component || "",
+      stage:stage || "all",
+      activity
+    });
+    setDrawer(null);
+    setTab("register");
+  }
   function exportAll(){
     const pack = buildReportSheets(visibleRows, ledger);
     exportXlsx(`production_dpr_${APP_VERSION.toLowerCase().replace(/[^a-z0-9]+/g,"_")}_horizontal_quick_export.xlsx`,[
@@ -4145,17 +4470,18 @@ export default function App(){
     ]);
   }
   const tabs = [
-    ["dashboard","Dashboard",BarChart3], ["planning","Planning",ClipboardList], ["wip","Live WIP",Warehouse], ["entry","DPR Entry",ClipboardList], ["review","Review",ShieldCheck], ["owners","Who to Chase",Users], ["monthly","Monthly",FileSpreadsheet], ["styles","Styles",Shirt], ["routes","Routes",Filter], ["photos","Photos",ImageIcon], ["reports","Reports",FileSpreadsheet], ["settings","Settings",Settings]
+    ["dashboard","Dashboard",BarChart3], ["planning","Planning",ClipboardList], ["wip","Live WIP",Warehouse], ["entry","DPR Entry",ClipboardList], ["register","Register",FileSpreadsheet], ["review","Review",ShieldCheck], ["owners","Who to Chase",Users], ["monthly","Monthly",FileSpreadsheet], ["styles","Styles",Shirt], ["routes","Routes",Filter], ["photos","Photos",ImageIcon], ["reports","Reports",FileSpreadsheet], ["settings","Settings",Settings]
   ];
-  return <div className="mt-app" data-theme="paper" data-settings-tick={settingsTick}><style>{FONT + CSS}</style>{showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">This update clarifies Supabase saving: Add/Edit Style and DPR Entry save directly when you press their Save buttons; the top Sync Browser Rows button is only a manual backup/push for current browser/demo rows after connection or bulk work. Style saves now send a stable production_orders id so the Supabase not-null id constraint is not hit, and non-table fields stay inside stage_qty JSON. Test Supabase still checks read, save, read-back and verified delete. After Vercel deploy, refresh once if an older cached screen is visible.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}<div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Auto-save on Add/Edit/DPR · browser rows sync only for demo/bulk recovery · stable Supabase IDs · schema-safe saves · Cutting Pending clarity · grid-first WIP · horizontal histories.</div></div><div className="mt-actions"><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase} title="Manual backup/sync of current browser rows. Normal Add/Edit Style and DPR Entry save to Supabase when you press their Save buttons."><Upload size={14}/>Sync Browser Rows</button><button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
+  return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}><style>{FONT + CSS}</style>{showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Cleaner precise screens, remembered active tab/filters/drafts, cumulative-before/after entry totals, horizontal output register, audit-safe old-entry corrections, WIP-to-Register edit links, and over-cut confirmation.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}<div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Reports. Precise views, horizontal data, remembered tab/drafts.</div></div><div className="mt-actions"><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase} title="Manual backup/sync of current browser rows. Normal Add/Edit Style and DPR Entry save to Supabase when you press their Save buttons."><Upload size={14}/>Sync Browser Rows</button><button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
       <PageFilters tab={tab} query={query} setQuery={setQuery} buyer={buyer} setBuyer={setBuyer} buyers={buyers} order={order} setOrder={setOrder} orders={orders} visibleRows={visibleRows}/>
-      <div className="mt-keepalive-note no-print"><span className="mt-chip mt-info">Draft-safe tabs</span><span className="mt-small">Switching tabs keeps unsaved form/cell data alive until you save, clear, or refresh.</span></div>
+      <div className="mt-keepalive-note slim no-print"><span className="mt-chip mt-info">Remembered tab/draft</span><span className="mt-small">This browser remembers your last tab and DPR entry draft by user until saved or cleared.</span></div>
       <div className="mt-tab-panel" style={{display:tab==="dashboard"?"block":"none"}} aria-hidden={tab!=="dashboard"}><Dashboard rows={visibleRows} ledger={ledger} onDrill={setDashboardDrill}/></div>
       <div className="mt-tab-panel" style={{display:tab==="planning"?"block":"none"}} aria-hidden={tab!=="planning"}><PlanningView rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} ledger={ledger}/></div>
       <div className="mt-tab-panel" style={{display:tab==="wip"?"block":"none"}} aria-hidden={tab!=="wip"}><WipStatus rows={visibleRows} onOpen={(row,stage)=>setDrawer({row,stage})}/></div>
       <div className="mt-tab-panel" style={{display:tab==="entry"?"block":"none"}} aria-hidden={tab!=="entry"}><QuickEntry rows={visibleRows} setRows={setRows} ledger={ledger} setLedger={setLedger}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="register"?"block":"none"}} aria-hidden={tab!=="register"}><OutputRegisterView rows={visibleRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={registerFocus}/></div>
       <div className="mt-tab-panel" style={{display:tab==="review"?"block":"none"}} aria-hidden={tab!=="review"}><ReviewView rows={visibleRows} ledger={ledger} planRows={planRows}/></div>
       <div className="mt-tab-panel" style={{display:tab==="owners"?"block":"none"}} aria-hidden={tab!=="owners"}><WhoToChase rows={visibleRows}/></div>
       <div className="mt-tab-panel" style={{display:tab==="monthly"?"block":"none"}} aria-hidden={tab!=="monthly"}><MonthlyComparison rows={visibleRows} ledger={ledger}/></div>
@@ -4165,7 +4491,7 @@ export default function App(){
       <div className="mt-tab-panel" style={{display:tab==="reports"?"block":"none"}} aria-hidden={tab!=="reports"}><Reports rows={visibleRows} ledger={ledger}/></div>
       <div className="mt-tab-panel" style={{display:tab==="settings"?"block":"none"}} aria-hidden={tab!=="settings"}><SettingsView onChanged={()=>setSettingsTick(t=>t+1)}/></div>
     </div>
-    {drawer && <DetailDrawer row={drawer.row} rows={rows} setRows={setRows} ledger={ledger} setLedger={setLedger} stageKey={drawer.stage} onClose={()=>setDrawer(null)}/>} 
+    {drawer && <DetailDrawer row={drawer.row} rows={rows} setRows={setRows} ledger={ledger} setLedger={setLedger} stageKey={drawer.stage} onClose={()=>setDrawer(null)} onOpenRegister={openRegisterFromWip}/>} 
     {dashboardDrill && <DashboardDrillDrawer drill={dashboardDrill} rows={visibleRows} ledger={ledger} onClose={()=>setDashboardDrill(null)}/>} 
   </div>;
 }
