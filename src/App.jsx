@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.62";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.62 manual 70 percent changeover override";
+const APP_VERSION = "V7.5.64";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.63 manual 70 percent changeover override";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -355,12 +355,12 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-login-access-panel { margin-top:14px; border:1px solid var(--line-2); border-radius:12px; background:#fffaf1; padding:12px; }
 .mt-login-access-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .mt-wip-sticky-tools { position:sticky; top:0; z-index:18; background:var(--surface); border-bottom:1px solid var(--line-3); box-shadow:0 2px 10px rgba(31,31,29,.04); }
-.mt-wip-table-wrap { max-height:calc(100vh - 260px); }
+.mt-wip-table-wrap { max-height:calc(100vh - 260px); overflow:auto; }
 .mt-wip-table-wrap .mt-table th { top:0; }
 .mt-wip-table-wrap .mt-col-filter-row th { top:34px; }
-.mt-wip-fit-table table.mt-table { min-width:0; table-layout:fixed; }
+.mt-wip-fit-table table.mt-table { min-width:max(100%, 1380px); table-layout:auto; }
 .mt-wip-fit-table .mt-style-main { min-width:170px; }
-.mt-wip-fit-table .mt-table th, .mt-wip-fit-table .mt-table td { white-space:normal; overflow-wrap:anywhere; padding:6px; }
+.mt-wip-fit-table .mt-table th, .mt-wip-fit-table .mt-table td { white-space:normal; overflow-wrap:anywhere; padding:8px; }
 .mt-wip-fit-table .mt-stage-cell { min-width:86px; }
 .mt-sticky-col { position:sticky !important; left:var(--sticky-left,0px); z-index:6; background:var(--surface) !important; box-shadow:2px 0 0 var(--line-2); min-width:var(--sticky-width,auto); width:var(--sticky-width,auto); }
 .mt-table th.mt-sticky-col { z-index:12; background:var(--ink) !important; }
@@ -369,6 +369,23 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-col-filter-row th.mt-sticky-col { z-index:11; background:#2b2722 !important; }
 .mt-wip-table-wrap.freeze-active { isolation:isolate; }
 .mt-wip-table-wrap.freeze-active .mt-style-main { min-width:0; }
+
+.mt-wip-resizable { --wip-default-col:132px; --wip-stage-col:150px; --wip-style-col:320px; --wip-status-col:230px; --wip-owner-col:190px; --wip-route-col:170px; --wip-action-col:220px; }
+.mt-wip-compact { --wip-default-col:108px; --wip-stage-col:122px; --wip-style-col:260px; --wip-status-col:190px; --wip-owner-col:150px; --wip-route-col:140px; --wip-action-col:180px; }
+.mt-wip-comfort { --wip-default-col:132px; --wip-stage-col:150px; --wip-style-col:320px; --wip-status-col:230px; --wip-owner-col:190px; --wip-route-col:170px; --wip-action-col:220px; }
+.mt-wip-wide { --wip-default-col:162px; --wip-stage-col:184px; --wip-style-col:400px; --wip-status-col:280px; --wip-owner-col:230px; --wip-route-col:210px; --wip-action-col:280px; }
+.mt-wip-resizable .mt-table th { resize:horizontal; overflow:auto; min-width:var(--wip-default-col); }
+.mt-wip-resizable .mt-table td { min-width:var(--wip-default-col); }
+.mt-wip-resizable .mt-table th:first-child, .mt-wip-resizable .mt-table td:first-child { min-width:var(--wip-style-col); }
+.mt-wip-resizable .mt-stage-cell { min-width:var(--wip-stage-col); }
+.mt-wip-resizable .mt-status-link { min-width:0; }
+.mt-wip-resizable .mt-style-main { min-width:calc(var(--wip-style-col) - 30px); }
+.mt-wip-resizable .mt-table td { line-height:1.35; }
+.mt-wip-resizable .mt-table th { line-height:1.25; }
+.mt-wip-resizable .mt-table td .mt-small { line-height:1.35; }
+.mt-wip-resizable .mt-table th::-webkit-resizer { background:var(--accent); }
+.mt-wip-fit-table.mt-wip-resizable .mt-table th, .mt-wip-fit-table.mt-wip-resizable .mt-table td { vertical-align:top; }
+.mt-wip-resize-hint { border-color:#bfd7f2 !important; background:#eef6ff !important; color:#174a7c !important; }
 .mt-column-menu { border:1px solid var(--line-2); background:#fffaf1; border-radius:10px; padding:7px 9px; }
 .mt-column-menu summary { cursor:pointer; font-size:10px; font-weight:900; text-transform:uppercase; letter-spacing:.3px; }
 .mt-column-choice { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--line-2); background:white; border-radius:999px; padding:5px 8px; font-size:9.5px; font-weight:900; margin:6px 5px 0 0; }
@@ -3010,6 +3027,7 @@ function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
   const [columnFilters,setColumnFilters] = useState(()=>safeJsonLoad(uiStorageKey("wip_column_filters"), {}));
   const [fitColumns,setFitColumns] = useState(()=>safeJsonLoad(uiStorageKey("wip_fit_columns"), true));
   const [freezeCols,setFreezeCols] = useState(()=>safeJsonLoad(uiStorageKey("wip_freeze_cols"), 1));
+  const [widthMode,setWidthMode] = useState(()=>safeJsonLoad(uiStorageKey("wip_width_mode"), "comfort"));
   const [visibleCols,setVisibleCols] = useState(()=>({ status:true, owner:true, route:true, stages:true, open:true, idle:false, action:true, ...safeJsonLoad(uiStorageKey("wip_visible_cols"), {}) }));
   useEffect(()=>safeJsonSave(uiStorageKey("wip_search"), localSearch), [localSearch]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_dept"), dept), [dept]);
@@ -3020,6 +3038,7 @@ function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
   useEffect(()=>safeJsonSave(uiStorageKey("wip_column_filters"), columnFilters), [columnFilters]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_fit_columns"), fitColumns), [fitColumns]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_freeze_cols"), freezeCols), [freezeCols]);
+  useEffect(()=>safeJsonSave(uiStorageKey("wip_width_mode"), widthMode), [widthMode]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_visible_cols"), visibleCols), [visibleCols]);
   useEffect(()=>{ if (!clearTick) return; setLocalSearch(""); setDept("all"); setIssue("all"); setOwner("all"); setRoute("all"); setViewMode("matrix"); setColumnFilters({}); setFreezeCols(1); setVisibleCols({ status:true, owner:true, route:true, stages:true, open:true, idle:false, action:true }); setSort({key:"open",dir:"desc"}); }, [clearTick]);
   const [showCutActivity,setShowCutActivity] = useState(false);
@@ -3070,7 +3089,8 @@ function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
   function exportStageWip(){ exportXlsx(`production_wip_stage_detail_${dept}_${today()}.xlsx`, [{ name:"Style Stage Detail", rows:stageWipExportRows() }]); }
   const matrixColumnCount = 1 + (visibleCols.status?1:0) + (showCutActivity?1:0) + (visibleCols.owner?1:0) + (visibleCols.route?1:0) + (visibleCols.stages?STAGES.length:0) + (visibleCols.open?1:0) + (visibleCols.idle?1:0) + (visibleCols.action?1:0);
   const controlColumnCount = showCutActivity ? 8 : 7;
-  const stickyWidth = (key) => fitColumns ? ({ style:220, status:190, routeProgress:190, owner:145, route:150, next:160 }[key] || 120) : ({ style:310, status:220, routeProgress:240, owner:170, route:170, next:220 }[key] || 140);
+  const widthProfiles = { compact:{ style:260, status:190, routeProgress:190, owner:150, route:140, next:180 }, comfort:{ style:320, status:230, routeProgress:230, owner:190, route:170, next:220 }, wide:{ style:400, status:280, routeProgress:280, owner:230, route:210, next:280 } };
+  const stickyWidth = (key) => (widthProfiles[widthMode] || widthProfiles.comfort)[key] || (widthMode === "wide" ? 162 : widthMode === "compact" ? 108 : 132);
   const buildStickyMap = (cols) => { let left=0, count=0, map={}; cols.filter(c=>c.visible).forEach(c=>{ if (count < n(freezeCols)) { const width=stickyWidth(c.key); map[c.key]={ className:"mt-sticky-col", style:{ "--sticky-left":`${left}px`, "--sticky-width":`${width}px`, left:`${left}px`, minWidth:`${width}px`, width:`${width}px` } }; left += width; count += 1; } }); return map; };
   const stickyClass = (map,key,base="") => `${base ? `${base} ` : ""}${map[key]?.className || ""}`.trim();
   const stickyStyle = (map,key) => map[key]?.style || undefined;
@@ -3090,9 +3110,9 @@ function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
         <button className={`mt-btn ${hasGridColumnFilters ? "primary" : "ghost"}`} onClick={clearWipFilters}>Clear WIP Filters</button>
         <span className="mt-page-filter-note">{filtered.length} rows · {controlRows.length} open/control rows</span>
       </div>
-      <div className="mt-view-mode-bar mt-wip-sticky-tools"><span className="mt-toolbar-label">Sheet View</span>{[["matrix","Grid View"],["control","Open Control"],["order","Order View"],["department","Department View"],["issue","Issue View"]].map(([k,l])=><button key={k} className={`mt-btn ${viewMode===k?"active":"ghost"}`} onClick={()=>setViewMode(k)}>{l}</button>)}<button className={`mt-btn ${showCutActivity?"active":"ghost"}`} onClick={()=>setShowCutActivity(v=>!v)}>{showCutActivity ? "Hide Route Progress" : "Show Route Progress"}</button><button className={`mt-btn ${fitColumns?"active":"ghost"}`} onClick={()=>setFitColumns(v=>!v)} title="Fit visible columns into screen like the Merch Tracker grid">{fitColumns ? "Fit columns: on" : "Fit columns: off"}</button><span className="mt-toolbar-label">Freeze</span><select className="mt-select" value={freezeCols} onChange={e=>setFreezeCols(Number(e.target.value))} title="Freeze first N visible columns"><option value={0}>No freeze</option><option value={1}>1 column</option><option value={2}>2 columns</option><option value={3}>3 columns</option><option value={4}>4 columns</option><option value={5}>5 columns</option></select><details className="mt-column-menu"><summary>Columns</summary><div>{[["status","Current Status"],["owner","Owner"],["route","Route"],["stages","Stage cells"],["open","Open Qty"],["idle","Idle"],["action","Next Action"]].map(([k,l])=><label key={k} className="mt-column-choice"><input type="checkbox" checked={!!visibleCols[k]} onChange={()=>toggleWipCol(k)} />{l}</label>)}<button className="mt-btn ghost" style={{marginTop:6}} onClick={resetWipCols}>Reset columns</button></div></details>{currentUserCan("production.export") && <button className="mt-btn primary" onClick={exportCurrentWip}><Download size={14}/>Export Current View</button>}{currentUserCan("production.export") && <button className="mt-btn" onClick={exportStageWip}><Download size={14}/>Export Style Stage Detail</button>}<span className="mt-chip mt-info">Excel-like: frozen header + sort + select filters + column chooser + export</span></div>
+      <div className="mt-view-mode-bar mt-wip-sticky-tools"><span className="mt-toolbar-label">Sheet View</span>{[["matrix","Grid View"],["control","Open Control"],["order","Order View"],["department","Department View"],["issue","Issue View"]].map(([k,l])=><button key={k} className={`mt-btn ${viewMode===k?"active":"ghost"}`} onClick={()=>setViewMode(k)}>{l}</button>)}<button className={`mt-btn ${showCutActivity?"active":"ghost"}`} onClick={()=>setShowCutActivity(v=>!v)}>{showCutActivity ? "Hide Route Progress" : "Show Route Progress"}</button><button className={`mt-btn ${fitColumns?"active":"ghost"}`} onClick={()=>setFitColumns(v=>!v)} title="Fit visible columns into screen like the Merch Tracker grid">{fitColumns ? "Fit columns: on" : "Fit columns: off"}</button><span className="mt-toolbar-label">Width</span><select className="mt-select" value={widthMode} onChange={e=>setWidthMode(e.target.value)} title="Readable column width preset"><option value="compact">Compact</option><option value="comfort">Comfort</option><option value="wide">Wide</option></select><span className="mt-toolbar-label">Freeze</span><select className="mt-select" value={freezeCols} onChange={e=>setFreezeCols(Number(e.target.value))} title="Freeze first N visible columns"><option value={0}>No freeze</option><option value={1}>1 column</option><option value={2}>2 columns</option><option value={3}>3 columns</option><option value={4}>4 columns</option><option value={5}>5 columns</option></select><details className="mt-column-menu"><summary>Columns</summary><div>{[["status","Current Status"],["owner","Owner"],["route","Route"],["stages","Stage cells"],["open","Open Qty"],["idle","Idle"],["action","Next Action"]].map(([k,l])=><label key={k} className="mt-column-choice"><input type="checkbox" checked={!!visibleCols[k]} onChange={()=>toggleWipCol(k)} />{l}</label>)}<button className="mt-btn ghost" style={{marginTop:6}} onClick={resetWipCols}>Reset columns</button></div></details>{currentUserCan("production.export") && <button className="mt-btn primary" onClick={exportCurrentWip}><Download size={14}/>Export Current View</button>}{currentUserCan("production.export") && <button className="mt-btn" onClick={exportStageWip}><Download size={14}/>Export Style Stage Detail</button>}<span className="mt-chip mt-info">Excel-like: frozen header + sort + select filters + column chooser + drag header edge to resize</span></div>
     </div>
-    {viewMode === "order" || viewMode === "department" || viewMode === "issue" ? <SimpleTable title={viewMode==="order"?"Order-wise WIP summary":viewMode==="department"?"Department open summary":"Issue-wise open summary"} sub="Summary view first. Click Full Matrix or drill dashboards only when style-level detail is needed." rows={modeRows} empty="No rows in this view." /> : viewMode === "control" ? <div className={`mt-table-wrap mt-wip-table-wrap ${fitColumns?"mt-wip-fit-table":""} ${freezeCols>0?"freeze-active":""}`}><table className="mt-table mt-compact-wip-table"><thead><tr><th className={stickyClass(controlSticky,"style")} style={stickyStyle(controlSticky,"style")}>Open Style / Order</th><th className={stickyClass(controlSticky,"status")} style={stickyStyle(controlSticky,"status")}>Current Status / Entry</th><th className={stickyClass(controlSticky,"next")} style={stickyStyle(controlSticky,"next")}>Next Action</th>{showCutActivity && <th className={stickyClass(controlSticky,"routeProgress")} style={stickyStyle(controlSticky,"routeProgress")}>Route Progress / Balance</th>}<th>Open Qty</th><th>R/A/M</th><th>Idle</th><th>Owner</th></tr></thead><tbody>{controlRows.length ? controlRows.map(({row,status})=>{ const stage=status.stage || routeFor(row)[0] || "cutting"; const st=sdata(row,stage); const c=cellBreakup(row,stage); return <React.Fragment key={row.id}><tr className="drillable" onClick={()=>openRowDrill(row,stage)}><td className={stickyClass(controlSticky,"style")} style={stickyStyle(controlSticky,"style")}><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}</div></div></td><td className={stickyClass(controlSticky,"status")} style={stickyStyle(controlSticky,"status")}><PrimaryPendingStage row={row} onOpen={(st)=>openRowDrill(row,st)} onEntry={onEntry}/></td><td className={stickyClass(controlSticky,"next")} style={stickyStyle(controlSticky,"next")}><div className="mt-small">{status.action}</div></td>{showCutActivity && <td className={stickyClass(controlSticky,"routeProgress")} style={stickyStyle(controlSticky,"routeProgress")}><RouteProgressSnapshot row={row} compact={true} onOpen={(st)=>openRowDrill(row,st)}/></td>}<td><div className="mt-open-big">{fmt(status.qty)}</div><div className="mt-small">{c.note}</div></td><td>{fmt(c.ram)}</td><td>{status.idle}d</td><td><b>{status.owner}</b>{status.support ? <div className="mt-small">Support: {status.support}</div> : null}</td></tr>{sizeBreak && <tr className="mt-subrow"><td colSpan={controlColumnCount}><SizeBreakupStrip row={row} stage={selectedDeptForSize || stage}/></td></tr>}</React.Fragment>; }) : <tr><td colSpan={controlColumnCount} style={{padding:18}}>No open/control rows in the current WIP filters.</td></tr>}</tbody></table></div> : <div className={`mt-table-wrap mt-wip-table-wrap ${fitColumns?"mt-wip-fit-table":""} ${freezeCols>0?"freeze-active":""}`}><table className="mt-table"><thead><tr><SortTh label="Style" sortKey="style" sort={sort} setSort={setSort} extraClassName={stickyClass(matrixSticky,"style")} stickyStyle={stickyStyle(matrixSticky,"style")}/>{visibleCols.status && <SortTh label="Current Status / Entry" sortKey="status" sort={sort} setSort={setSort} extraClassName={stickyClass(matrixSticky,"status")} stickyStyle={stickyStyle(matrixSticky,"status")}/>}  {showCutActivity && <th className={stickyClass(matrixSticky,"routeProgress")} style={stickyStyle(matrixSticky,"routeProgress")}>Route Progress / Balance</th>} {visibleCols.owner && <SortTh label="Owner" sortKey="owner" sort={sort} setSort={setSort} extraClassName={stickyClass(matrixSticky,"owner")} stickyStyle={stickyStyle(matrixSticky,"owner")}/>}  {visibleCols.route && <SortTh label="Route" sortKey="route" sort={sort} setSort={setSort} extraClassName={stickyClass(matrixSticky,"route")} stickyStyle={stickyStyle(matrixSticky,"route")}/>}  {visibleCols.stages && STAGES.map(stage=><th key={stage.key}>{stage.short}</th>)} {visibleCols.open && <SortTh label="Open" sortKey="open" sort={sort} setSort={setSort}/>} {visibleCols.idle && <SortTh label="Idle" sortKey="idle" sort={sort} setSort={setSort}/>} {visibleCols.action && <th>Next Action</th>}</tr><tr className="mt-col-filter-row"><th className={stickyClass(matrixSticky,"style")} style={stickyStyle(matrixSticky,"style")}><input className="mt-col-filter-input" value={columnFilters.style || ""} onChange={e=>setGridColumnFilter("style", e.target.value)} placeholder="order/style/buyer/colour" /></th>{visibleCols.status && <th className={stickyClass(matrixSticky,"status")} style={stickyStyle(matrixSticky,"status")}><select className="mt-col-filter-select mt-excel-filter-pick" value={columnFilters.status || ""} onChange={e=>setGridColumnFilter("status", e.target.value)}><option value="">All status</option><option value="with">With dept</option><option value="ready">Ready next</option><option value="issued">Issued</option><option value="reconcile">Reconcile</option><option value="ram">R/A/M</option><option value="closed">Closed</option></select></th>} {showCutActivity && <th className={stickyClass(matrixSticky,"routeProgress")} style={stickyStyle(matrixSticky,"routeProgress")}><input className="mt-col-filter-input" value={columnFilters.other || ""} onChange={e=>setGridColumnFilter("other", e.target.value)} placeholder="route progress" /></th>} {visibleCols.owner && <th className={stickyClass(matrixSticky,"owner")} style={stickyStyle(matrixSticky,"owner")}><input className="mt-col-filter-input" value={columnFilters.owner || ""} onChange={e=>setGridColumnFilter("owner", e.target.value)} placeholder="owner" /></th>} {visibleCols.route && <th className={stickyClass(matrixSticky,"route")} style={stickyStyle(matrixSticky,"route")}><input className="mt-col-filter-input" value={columnFilters.route || ""} onChange={e=>setGridColumnFilter("route", e.target.value)} placeholder="route" /></th>} {visibleCols.stages && STAGES.map(stage=><th key={`filter-${stage.key}`}><select className="mt-col-filter-select stage" value={columnFilters[`stage:${stage.key}`] || ""} onChange={e=>setGridColumnFilter(`stage:${stage.key}`, e.target.value)} title={`Filter ${stage.label} cell`}><option value="">All</option><option value="open">Open</option><option value="0R">R/A/M</option><option value="skip">Skip</option><option value="over">Over</option><option value="feed">Feed</option><option value="good">Good</option></select></th>)} {visibleCols.open && <th><input className="mt-col-filter-input" value={columnFilters.open || ""} onChange={e=>setGridColumnFilter("open", e.target.value)} placeholder="qty" /></th>} {visibleCols.idle && <th><input className="mt-col-filter-input" value={columnFilters.idle || ""} onChange={e=>setGridColumnFilter("idle", e.target.value)} placeholder="idle" /></th>} {visibleCols.action && <th><div style={{display:"flex",gap:4}}><input className="mt-col-filter-input" value={columnFilters.action || ""} onChange={e=>setGridColumnFilter("action", e.target.value)} placeholder="action" /><button className="mt-btn ghost mt-col-filter-clear" onClick={()=>setColumnFilters({})} title="Clear only grid column filters">Clear</button></div></th>}</tr></thead><tbody>
+    {viewMode === "order" || viewMode === "department" || viewMode === "issue" ? <SimpleTable title={viewMode==="order"?"Order-wise WIP summary":viewMode==="department"?"Department open summary":"Issue-wise open summary"} sub="Summary view first. Click Full Matrix or drill dashboards only when style-level detail is needed." rows={modeRows} empty="No rows in this view." /> : viewMode === "control" ? <div className={`mt-table-wrap mt-wip-table-wrap mt-wip-resizable mt-wip-${widthMode} ${fitColumns?"mt-wip-fit-table":""} ${freezeCols>0?"freeze-active":""}`}><table className="mt-table mt-compact-wip-table"><thead><tr><th className={stickyClass(controlSticky,"style")} style={stickyStyle(controlSticky,"style")}>Open Style / Order</th><th className={stickyClass(controlSticky,"status")} style={stickyStyle(controlSticky,"status")}>Current Status / Entry</th><th className={stickyClass(controlSticky,"next")} style={stickyStyle(controlSticky,"next")}>Next Action</th>{showCutActivity && <th className={stickyClass(controlSticky,"routeProgress")} style={stickyStyle(controlSticky,"routeProgress")}>Route Progress / Balance</th>}<th>Open Qty</th><th>R/A/M</th><th>Idle</th><th>Owner</th></tr></thead><tbody>{controlRows.length ? controlRows.map(({row,status})=>{ const stage=status.stage || routeFor(row)[0] || "cutting"; const st=sdata(row,stage); const c=cellBreakup(row,stage); return <React.Fragment key={row.id}><tr className="drillable" onClick={()=>openRowDrill(row,stage)}><td className={stickyClass(controlSticky,"style")} style={stickyStyle(controlSticky,"style")}><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}</div></div></td><td className={stickyClass(controlSticky,"status")} style={stickyStyle(controlSticky,"status")}><PrimaryPendingStage row={row} onOpen={(st)=>openRowDrill(row,st)} onEntry={onEntry}/></td><td className={stickyClass(controlSticky,"next")} style={stickyStyle(controlSticky,"next")}><div className="mt-small">{status.action}</div></td>{showCutActivity && <td className={stickyClass(controlSticky,"routeProgress")} style={stickyStyle(controlSticky,"routeProgress")}><RouteProgressSnapshot row={row} compact={true} onOpen={(st)=>openRowDrill(row,st)}/></td>}<td><div className="mt-open-big">{fmt(status.qty)}</div><div className="mt-small">{c.note}</div></td><td>{fmt(c.ram)}</td><td>{status.idle}d</td><td><b>{status.owner}</b>{status.support ? <div className="mt-small">Support: {status.support}</div> : null}</td></tr>{sizeBreak && <tr className="mt-subrow"><td colSpan={controlColumnCount}><SizeBreakupStrip row={row} stage={selectedDeptForSize || stage}/></td></tr>}</React.Fragment>; }) : <tr><td colSpan={controlColumnCount} style={{padding:18}}>No open/control rows in the current WIP filters.</td></tr>}</tbody></table></div> : <div className={`mt-table-wrap mt-wip-table-wrap mt-wip-resizable mt-wip-${widthMode} ${fitColumns?"mt-wip-fit-table":""} ${freezeCols>0?"freeze-active":""}`}><table className="mt-table"><thead><tr><SortTh label="Style" sortKey="style" sort={sort} setSort={setSort} extraClassName={stickyClass(matrixSticky,"style")} stickyStyle={stickyStyle(matrixSticky,"style")}/>{visibleCols.status && <SortTh label="Current Status / Entry" sortKey="status" sort={sort} setSort={setSort} extraClassName={stickyClass(matrixSticky,"status")} stickyStyle={stickyStyle(matrixSticky,"status")}/>}  {showCutActivity && <th className={stickyClass(matrixSticky,"routeProgress")} style={stickyStyle(matrixSticky,"routeProgress")}>Route Progress / Balance</th>} {visibleCols.owner && <SortTh label="Owner" sortKey="owner" sort={sort} setSort={setSort} extraClassName={stickyClass(matrixSticky,"owner")} stickyStyle={stickyStyle(matrixSticky,"owner")}/>}  {visibleCols.route && <SortTh label="Route" sortKey="route" sort={sort} setSort={setSort} extraClassName={stickyClass(matrixSticky,"route")} stickyStyle={stickyStyle(matrixSticky,"route")}/>}  {visibleCols.stages && STAGES.map(stage=><th key={stage.key}>{stage.short}</th>)} {visibleCols.open && <SortTh label="Open" sortKey="open" sort={sort} setSort={setSort}/>} {visibleCols.idle && <SortTh label="Idle" sortKey="idle" sort={sort} setSort={setSort}/>} {visibleCols.action && <th>Next Action</th>}</tr><tr className="mt-col-filter-row"><th className={stickyClass(matrixSticky,"style")} style={stickyStyle(matrixSticky,"style")}><input className="mt-col-filter-input" value={columnFilters.style || ""} onChange={e=>setGridColumnFilter("style", e.target.value)} placeholder="order/style/buyer/colour" /></th>{visibleCols.status && <th className={stickyClass(matrixSticky,"status")} style={stickyStyle(matrixSticky,"status")}><select className="mt-col-filter-select mt-excel-filter-pick" value={columnFilters.status || ""} onChange={e=>setGridColumnFilter("status", e.target.value)}><option value="">All status</option><option value="with">With dept</option><option value="ready">Ready next</option><option value="issued">Issued</option><option value="reconcile">Reconcile</option><option value="ram">R/A/M</option><option value="closed">Closed</option></select></th>} {showCutActivity && <th className={stickyClass(matrixSticky,"routeProgress")} style={stickyStyle(matrixSticky,"routeProgress")}><input className="mt-col-filter-input" value={columnFilters.other || ""} onChange={e=>setGridColumnFilter("other", e.target.value)} placeholder="route progress" /></th>} {visibleCols.owner && <th className={stickyClass(matrixSticky,"owner")} style={stickyStyle(matrixSticky,"owner")}><input className="mt-col-filter-input" value={columnFilters.owner || ""} onChange={e=>setGridColumnFilter("owner", e.target.value)} placeholder="owner" /></th>} {visibleCols.route && <th className={stickyClass(matrixSticky,"route")} style={stickyStyle(matrixSticky,"route")}><input className="mt-col-filter-input" value={columnFilters.route || ""} onChange={e=>setGridColumnFilter("route", e.target.value)} placeholder="route" /></th>} {visibleCols.stages && STAGES.map(stage=><th key={`filter-${stage.key}`}><select className="mt-col-filter-select stage" value={columnFilters[`stage:${stage.key}`] || ""} onChange={e=>setGridColumnFilter(`stage:${stage.key}`, e.target.value)} title={`Filter ${stage.label} cell`}><option value="">All</option><option value="open">Open</option><option value="0R">R/A/M</option><option value="skip">Skip</option><option value="over">Over</option><option value="feed">Feed</option><option value="good">Good</option></select></th>)} {visibleCols.open && <th><input className="mt-col-filter-input" value={columnFilters.open || ""} onChange={e=>setGridColumnFilter("open", e.target.value)} placeholder="qty" /></th>} {visibleCols.idle && <th><input className="mt-col-filter-input" value={columnFilters.idle || ""} onChange={e=>setGridColumnFilter("idle", e.target.value)} placeholder="idle" /></th>} {visibleCols.action && <th><div style={{display:"flex",gap:4}}><input className="mt-col-filter-input" value={columnFilters.action || ""} onChange={e=>setGridColumnFilter("action", e.target.value)} placeholder="action" /><button className="mt-btn ghost mt-col-filter-clear" onClick={()=>setColumnFilters({})} title="Clear only grid column filters">Clear</button></div></th>}</tr></thead><tbody>
       {filtered.map(row => { const rs = rowStatus(row); const sizeStage = selectedDeptForSize || rs.stage; const openDrill = () => openRowDrill(row, rs.stage || routeFor(row)[0] || "cutting"); return <React.Fragment key={row.id}>
         <tr>
           <td className={stickyClass(matrixSticky,"style","mt-clickable-cell")} style={stickyStyle(matrixSticky,"style")} onClick={openDrill} title="Click to open selected/current department"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}<div className="mt-drill-hint">Open detail</div></div></div></td>
@@ -4515,6 +4535,35 @@ function plannedQtyUpTo(planRows, row, dept, iso, includeSameDay=false){
   const key = styleKeyOf(row); const day = String(iso||"").slice(0,10);
   return sumPlanQty(planRows, p=>String(p.dept)===String(dept) && String(p.plan_date||"").slice(0,10) && (includeSameDay ? String(p.plan_date).slice(0,10)<=day : String(p.plan_date).slice(0,10)<day) && (p.row_id===row?.id || styleKeyOf(p)===key));
 }
+const DEFAULT_PLAN_FEED_BUFFERS = { cutting:0, printing:2, embroidery:1, stitching:0, checking:0, packing:0, dispatch:0 };
+function planFeedBufferDays(stage){
+  try {
+    const saved = JSON.parse(localStorage.getItem("production_plan_feed_buffers") || "{}");
+    if (saved && saved[stage] !== undefined) return Math.max(0, n(saved[stage]));
+  } catch {}
+  return DEFAULT_PLAN_FEED_BUFFERS[stage] ?? 0;
+}
+function addCalendarDaysIso(iso, days){
+  const d = parseYmd(iso || today());
+  d.setDate(d.getDate() + n(days));
+  return ymd(d);
+}
+function planReadyDateForDownstream(prevStage, planDate){
+  return addCalendarDaysIso(planDate, planFeedBufferDays(prevStage));
+}
+function projectedPlanQtyReadyBy(planRows, row, prevStage, downstreamDept, downstreamDay){
+  const key = styleKeyOf(row);
+  const cutoff = String(downstreamDay || "").slice(0,10);
+  const matches = (planRows||[]).filter(p=>{
+    const pday = String(p.plan_date||"").slice(0,10);
+    if (!pday || String(p.dept) !== String(prevStage)) return false;
+    if (!(p.row_id===row?.id || styleKeyOf(p)===key)) return false;
+    return planReadyDateForDownstream(prevStage, pday) <= cutoff;
+  });
+  const qty = matches.reduce((a,p)=>a+planRowEffectiveQty(p),0);
+  const lastDate = matches.map(p=>String(p.plan_date||"").slice(0,10)).sort().pop() || "";
+  return { qty, rows:matches.length, last_plan_date:lastDate, buffer_days:planFeedBufferDays(prevStage), stage:prevStage, downstream:downstreamDept };
+}
 function ledgerEntryMatchesStyle(e, row){
   if (!row) return false;
   const eo = String(e.order_no || e.order || "").trim().toUpperCase();
@@ -4542,14 +4591,17 @@ function actualStageOutputAsOf(row, dept, day, ledger=[]){
   return n(sdata(row, dept).output);
 }
 function feedAvailableAsOf(row, dept, day, planRows, ledger=[]){
-  if (!row) return { feed:0, prevStage:null, actualPrev:0, plannedPrev:0, note:"No style linked" };
-  if (dept === "cutting") return { feed:n(row.order_qty), prevStage:null, actualPrev:n(row.order_qty), plannedPrev:0, note:"Order qty base" };
+  if (!row) return { feed:0, prevStage:null, actualPrev:0, plannedPrev:0, projectedPrev:0, note:"No style linked", confidence:"unlinked" };
+  if (dept === "cutting") return { feed:n(row.order_qty), prevStage:null, actualPrev:n(row.order_qty), plannedPrev:0, projectedPrev:0, note:"Order qty base", confidence:"actual" };
   const prevStage = upstreamStageFor(row, dept);
-  if (!prevStage) return { feed:n(row.order_qty), prevStage:null, actualPrev:n(row.order_qty), plannedPrev:0, note:"No previous route stage" };
+  if (!prevStage) return { feed:n(row.order_qty), prevStage:null, actualPrev:n(row.order_qty), plannedPrev:0, projectedPrev:0, note:"No previous route stage", confidence:"actual" };
   const actualPrev = actualStageOutputAsOf(row, prevStage, day, ledger);
-  const plannedPrev = plannedQtyUpTo(planRows, row, prevStage, day, true);
-  const routeFeed = Math.max(actualPrev, Math.min(n(row.order_qty), actualPrev + plannedPrev));
-  return { feed:routeFeed, prevStage, actualPrev, plannedPrev, note:`${stageLabel(prevStage)} actual-as-of ${fmt(actualPrev)} + plan-by-date ${fmt(plannedPrev)}` };
+  const projected = projectedPlanQtyReadyBy(planRows, row, prevStage, dept, day);
+  const projectedPrev = n(projected.qty);
+  const feed = Math.min(n(row.order_qty), actualPrev + projectedPrev);
+  const confidence = n(feed) <= n(actualPrev) ? "actual_ready" : "depends_on_upstream_plan";
+  const note = `${stageLabel(prevStage)} actual ready ${fmt(actualPrev)} + projected from ${stageLabel(prevStage)} plan ready by ${day} ${fmt(projectedPrev)} (${projected.buffer_days}d buffer) = possible feed ${fmt(feed)}`;
+  return { feed, prevStage, actualPrev, plannedPrev:projectedPrev, projectedPrev, projectedRows:projected.rows, projectedLastPlanDate:projected.last_plan_date, bufferDays:projected.buffer_days, note, confidence };
 }
 function remainingForStyleAsOf(row, dept, day, planRows, ledger=[]){
   if (!row) return { remaining:0, feed:0, consumed:0, prevStage:null, note:"Free text style; no master quantity linked." };
@@ -4576,11 +4628,69 @@ function planCellSignal(plan, rows, planRows, activeDept, line, day, ledger=[]){
       if (prevRemain.remaining > 0) return { tone:"late", level:"p0_line_cascade_block", text:`Line still has ${fmt(prevRemain.remaining)} of ${previous.style_no || previous.style_input}. Finish / consume / short-close before rolling to ${plan.style_no || plan.style_input}.` };
     }
   }
-  if (!qty) return { tone:"warn", level:"missing_qty", text:`Style linked, but Qty is blank. Available ${fmt(thisRemain.remaining)} / feed ${fmt(thisRemain.feed)}. ${thisRemain.note}` };
-  if (qty > thisRemain.remaining && thisRemain.remaining > 0) return { tone:"warn", level:"over_available_balance", text:`Qty above available cascade balance. Available as-of date ${fmt(thisRemain.remaining)} / feed ${fmt(thisRemain.feed)}. ${thisRemain.note}` };
+  const dependsOnPlan = thisRemain.note && thisRemain.note.includes("projected from");
+  if (!qty) return { tone:"warn", level:"missing_qty", text:`Style linked, but Qty is blank. Available ${fmt(thisRemain.remaining)} / projected feed ${fmt(thisRemain.feed)}. ${thisRemain.note}` };
+  if (qty > thisRemain.remaining && thisRemain.remaining > 0) return { tone:"warn", level:"over_available_balance", text:`Qty above available cascade balance. Available as-of date ${fmt(thisRemain.remaining)} / projected feed ${fmt(thisRemain.feed)}. ${thisRemain.note}` };
   if (thisRemain.remaining <= 0 && qty > 0) return { tone:"late", level:"no_open_balance", text:`No open cascade balance as-of this date. ${thisRemain.note}. Mark short close only if management overrides.` };
+  if (dependsOnPlan && thisRemain.feed > thisRemain.actualDone) return { tone:"warn", level:"depends_on_upstream_plan", text:`Projected feed OK, but depends on upstream plan being achieved. Available ${fmt(thisRemain.remaining)} / projected feed ${fmt(thisRemain.feed)}. ${thisRemain.note}` };
   return { tone:"ok", level:"ok", text:`Cascade OK. Available before this day ${fmt(thisRemain.remaining)} / feed ${fmt(thisRemain.feed)}. ${thisRemain.note}` };
 }
+
+function planImpactReviewRows(planRows=[], rows=[], ledger=[]){
+  const todayIso = today();
+  return (planRows||[])
+    .filter(p=>planStyleText(p) && String(p.plan_date||"").slice(0,10) <= todayIso)
+    .map(p=>{
+      const planned = planRowEffectiveQty(p);
+      const achieved = achievedForPlan(p, rows, ledger);
+      const variance = achieved - planned;
+      const short = Math.max(0, planned - achieved);
+      const excess = Math.max(0, achieved - planned);
+      const linked = resolvePlanStyle(rows, planStyleText(p)) || rows.find(r=>r.id===p.row_id);
+      const futureSlots = (planRows||[]).filter(f=>
+        planStyleText(f).toUpperCase() === planStyleText(p).toUpperCase()
+        && String(f.dept)===String(p.dept)
+        && String(f.plan_date||"").slice(0,10) > String(p.plan_date||"").slice(0,10)
+      ).length;
+      const futureQty = (planRows||[]).filter(f=>
+        planStyleText(f).toUpperCase() === planStyleText(p).toUpperCase()
+        && String(f.dept)===String(p.dept)
+        && String(f.plan_date||"").slice(0,10) > String(p.plan_date||"").slice(0,10)
+      ).reduce((a,f)=>a+planRowEffectiveQty(f),0);
+      const status = !planned ? "No plan qty" : short>0 ? "Pending manager review — short" : excess>0 ? "Pending manager review — excess" : "Matched";
+      const suggested = short>0
+        ? `Short ${fmt(short)}. Manager: apply cascade, line cover promise, short close, manual edit, or no plan change.`
+        : excess>0
+          ? `Excess ${fmt(excess)}. Manager can reduce future balance or keep as early recovery.`
+          : "No action needed.";
+      return {
+        Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Style:planStyleText(p), Buyer:p.buyer || linked?.buyer || "",
+        Planned:planned, Actual:achieved, Variance:variance, Short_Qty:short, Excess_Qty:excess,
+        Future_Slots:futureSlots, Future_Qty:futureQty, Review_Status:status, Manager_Options:"Apply cascade | Part qty cover | Short close | No plan change | Manual edit", Suggested_Action:suggested,
+        Data_Operator_Note:"DPR entry only records actual. Future plan changes require manager review."
+      };
+    })
+    .filter(r=>r.Review_Status !== "Matched")
+    .sort((a,b)=>String(b.Date).localeCompare(String(a.Date)) || Math.abs(n(b.Variance))-Math.abs(n(a.Variance)));
+}
+function projectedFeedRows(planRows=[], rows=[], activeDept="stitching", weekDays=[]){
+  return (planRows||[]).filter(p=>String(p.dept)===String(activeDept) && weekDays.includes(String(p.plan_date||"").slice(0,10)) && planStyleText(p)).map(p=>{
+    const linked = resolvePlanStyle(rows, planStyleText(p)) || rows.find(r=>r.id===p.row_id);
+    const feed = linked ? feedAvailableAsOf(linked, activeDept, p.plan_date, planRows, []) : null;
+    const remain = linked ? remainingForStyleAsOf(linked, activeDept, p.plan_date, planRows, []) : null;
+    const qty = planRowEffectiveQty(p);
+    const over = Math.max(0, qty - n(remain?.remaining));
+    const depends = n(feed?.projectedPrev) > 0 && n(feed?.actualPrev) < qty;
+    return {
+      Date:p.plan_date, Dept:stageLabel(activeDept), Line:p.line||"Dept total", Style:planStyleText(p), Plan_Qty:qty,
+      Actual_Ready_Feed:n(feed?.actualPrev), Projected_Upstream_Feed:n(feed?.projectedPrev), Projected_Available_Feed:n(feed?.feed), Available_After_Earlier_Plans:n(remain?.remaining),
+      Feed_Status: over>0 ? `Over projected feed by ${fmt(over)}` : depends ? "Depends on upstream plan" : "Actual ready / OK",
+      Upstream_Rule: feed?.prevStage ? `${stageLabel(feed.prevStage)} plan + ${feed.bufferDays} day buffer` : "Order/cutting base",
+      Reading: feed?.note || "No linked style"
+    };
+  });
+}
+
 function planValidationSnapshot(plan, rows=[], allPlanRows=[], ledger=[]){
   const day = String(plan?.plan_date || today()).slice(0,10);
   const dept = String(plan?.dept || "stitching");
@@ -4989,15 +5099,21 @@ function PlanningView({ rows, planRows, setPlanRows, ledger, setRows, onPlanUpse
   const visiblePlans = (planRows||[]).filter(p=>p.dept===activeDept).sort((a,b)=>String(a.plan_date).localeCompare(String(b.plan_date)) || String(a.line).localeCompare(String(b.line)));
   const weekPlanRows = visiblePlans.filter(p=>weekDays.includes(String(p.plan_date||"").slice(0,10)));
   const pva = planVsAchievedRows(visiblePlans, rows, ledger);
+  const impactRows = planImpactReviewRows(planRows, rows, ledger).filter(r=>String(r.Dept)===stageLabel(activeDept));
+  const projectedRows = projectedFeedRows(planRows, rows, activeDept, weekDays);
   function exportWeekDetail(){
     exportXlsx(`production_${activeDept}_plan_detail_${normalizedWeekStart}.xlsx`, [
       { name:"Plan Detail", rows:weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Slot:p.slot_no || 1, Style:p.style_no || p.style_input, Buyer:p.buyer, Qty:p.planned_qty, Full_Day_Target:p.eight_hr_target || "", Plan_Hours:p.remaining_hours || "", Changeover_70:p.changeover?"Yes":"No", Qty_Mode:p.qty_auto_mode?"Auto":"Manual", End_Date:p.stitching_end_date, OPS:p.ops, Short_Close:p.short_close?"Yes":"No", Remarks:p.remarks, Status:p.status })) },
-      { name:"Plan vs Achieved", rows:pva }
+      { name:"Plan vs Achieved", rows:pva },
+      { name:"Plan Impact Review", rows:impactRows },
+      { name:"Projected Feed", rows:projectedRows }
     ]);
   }
   return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Planning — Excel Weekly Board</h3><div className="mt-panel-sub">Plan like the factory sheet: line × day cells, direct typing, Qty/End Date/OPS, auto totals and P0 cascade warnings. Each line/day now has remaining-hours control: full-day target × planned hours calculates Qty, and manual Qty override is still allowed.</div></div>
-    <div className="mt-section no-print"><div className="mt-filter-row"><button className={`mt-btn ${mode==="stitching"?"primary":"ghost"}`} onClick={()=>setMode("stitching")}>Stitching line board</button><button className={`mt-btn ${mode==="dept"?"primary":"ghost"}`} onClick={()=>setMode("dept")}>Other dept board</button>{mode==="dept" && <select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.filter(s=>!['stitching'].includes(s.key)).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>}<span className="mt-toolbar-label">Week</span><input className="mt-input" type="date" value={weekStart} onChange={e=>setWeekStart(e.target.value)}/><button className="mt-btn ghost" onClick={()=>setWeekStart(lineBoardWeekStart(today()))}>This week</button><button className="mt-btn ghost" onClick={()=>setWeekStart(nextProductionMonday(today()))}>Next week</button><button className={`mt-btn ${fitBoard?"active":"ghost"}`} onClick={()=>setFitBoard(v=>!v)}>Compact board</button><button className={`mt-btn ${showTargets?"active":"ghost"}`} onClick={()=>setShowTargets(v=>!v)}>{showTargets ? "Auto qty calculator: on" : "Auto qty calculator: off"}</button><button className="mt-btn primary" onClick={exportWeekDetail}><Download size={14}/>Export plan detail</button>{planSaveState && <span className={`mt-chip ${statusClass(planSaveState.tone)}`}>{planSaveState.text}</span>}</div><div className="mt-plan-cascade-note"><b>P0 plan truth:</b> plan cells autosave to the shared production_plan_rows table, are audited, and carry cascade status by actual plan date. <b>Cascade rule now used:</b> when you are sitting on Thursday and planning Monday, earlier Thu/Fri/Sat running styles on the same line consume balance first. <b>70% auto-applies only when the style changes; continue-running days stay 100%, with manual checkbox override available.</b> The next style is flagged until prior quantity is finished or <b>short close</b> is marked. For Printing/Stitching/Checking/Packing, previous department actual output + previous department planned finish by the date is used as the as-of feed.</div></div>
+    <div className="mt-section no-print"><div className="mt-filter-row"><button className={`mt-btn ${mode==="stitching"?"primary":"ghost"}`} onClick={()=>setMode("stitching")}>Stitching line board</button><button className={`mt-btn ${mode==="dept"?"primary":"ghost"}`} onClick={()=>setMode("dept")}>Other dept board</button>{mode==="dept" && <select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.filter(s=>!['stitching'].includes(s.key)).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>}<span className="mt-toolbar-label">Week</span><input className="mt-input" type="date" value={weekStart} onChange={e=>setWeekStart(e.target.value)}/><button className="mt-btn ghost" onClick={()=>setWeekStart(lineBoardWeekStart(today()))}>This week</button><button className="mt-btn ghost" onClick={()=>setWeekStart(nextProductionMonday(today()))}>Next week</button><button className={`mt-btn ${fitBoard?"active":"ghost"}`} onClick={()=>setFitBoard(v=>!v)}>Compact board</button><button className={`mt-btn ${showTargets?"active":"ghost"}`} onClick={()=>setShowTargets(v=>!v)}>{showTargets ? "Auto qty calculator: on" : "Auto qty calculator: off"}</button><button className="mt-btn primary" onClick={exportWeekDetail}><Download size={14}/>Export plan detail</button>{planSaveState && <span className={`mt-chip ${statusClass(planSaveState.tone)}`}>{planSaveState.text}</span>}</div><div className="mt-plan-cascade-note"><b>P0 plan truth:</b> plan cells autosave to the shared production_plan_rows table, are audited, and carry cascade status by actual plan date. <b>Cascade rule now used:</b> when you are sitting on Thursday and planning Monday, earlier Thu/Fri/Sat running styles on the same line consume balance first. <b>70% auto-applies only when the style changes; continue-running days stay 100%, with manual checkbox override available.</b> The next style is flagged until prior quantity is finished or <b>short close</b> is marked. For Printing/Stitching/Checking/Packing, previous department actual output + upstream planned output ready by the plan date is used as projected feed; projected feed is shown separately from actual-ready feed.</div></div>
     <div className="mt-section"><PlanExcelLineBoard rows={rows} planRows={planRows} setPlanRows={setPlanRows} setRows={setRows} activeDept={activeDept} weekDays={weekDays} showTargets={showTargets} fit={fitBoard} ledger={ledger} onPlanUpsert={onPlanUpsert} onPlanDelete={onPlanDelete}/></div>
+    <div className="mt-section"><SimpleTable title="Plan Impact Review — Manager Approval Queue" sub="DPR entry by data operator does not auto-change future plan. This queue shows shortages/excess after actual output so Production Manager can apply cascade, part-cover promise, short close, no-change or manual edit." rows={impactRows} empty="No pending plan impacts for this department." /></div>
+    <div className="mt-section"><SimpleTable title="Projected Feed Check" sub="Shows actual ready feed plus upstream planned feed that should be ready by this plan date using department buffer days. Yellow readings mean stitching/checking/packing depends on earlier plan being achieved, not only actual feed already posted." rows={projectedRows} empty="No projected feed rows for this week." /></div>
     <div className="mt-section"><SimpleTable title={`${stageLabel(activeDept)} Week Plan Rows`} sub="Every filled line/day cell becomes a plan row underneath, so plan-vs-achieved and reports keep working without making the board rigid." rows={weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Style:p.style_no || p.style_input, Buyer:p.buyer, Plan_Qty:p.planned_qty, End_Date:p.stitching_end_date||"", OPS:p.ops||"", Short_Close:p.short_close?"Yes":"No", Source:p.source_label, P0_Status:p.validation_status || planValidationSnapshot(p, rows, planRows, ledger).level, P0_Message:p.validation_message || planValidationSnapshot(p, rows, planRows, ledger).message, Status:p.status, Remarks:p.remarks }))} empty="No weekly plan cells filled yet." /></div>
     <div className="mt-section"><SimpleTable title="Plan vs Achieved / Style Adherence" sub="Compares planned style/date/line against actual production ledger. This keeps style adherence separate from total quantity achievement." rows={pva} empty="No plan rows yet." /></div>
   </div>;
