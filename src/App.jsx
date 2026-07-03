@@ -26,8 +26,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.39";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.39 UUID save fix and set component entry";
+const APP_VERSION = "V7.5.40";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.40 register summary toggle and cut percent status";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -942,14 +942,15 @@ function StatusCell({ row, onOpen }){
 function PrimaryPendingStage({ row, onOpen }){
   const bucket = statusDistribution(row)[0];
   if (!bucket) return <button className="mt-primary-stage-card mt-dept-dispatch" onClick={(e)=>e.stopPropagation()} title="No pending stage"><span><b>Closed</b><br/><span className="mt-small">Balanced</span></span><span className="big">100%</span></button>;
-  const base = statusCutBaseQty(row);
-  const pctBase = base > 0 ? Math.round((n(bucket.qty) * 1000) / base) / 10 : bucketPct(row,bucket);
+  const orderBase = statusOrderBaseQty(row);
+  const cutBase = statusCutBaseQty(row);
+  const pctBase = pctOf(bucket.qty, isFinite(cutBase) ? cutBase : orderBase);
   const isCutPending = bucket.type === "cutting_pending";
-  const cutDonePct = base > 0 ? Math.round((n(sdata(row,"cutting").output) * 1000) / base) / 10 : 0;
-  const pctText = isCutPending ? `${pctBase}% pending` : `${pctBase}% of cut/order`;
+  const cutDonePct = orderBase > 0 ? pctOf(sdata(row,"cutting").output, orderBase) : 0;
+  const pctText = isCutPending ? `${pctOf(bucket.qty, orderBase)}% pending` : dualBaseText(row, bucket.qty);
   const title = isCutPending
-    ? `Cutting pending · ${fmt(bucket.qty)} pcs still not cut/short-closed · Cut done ${cutDonePct}%`
-    : `Primary pending stage · ${fmt(bucket.qty)} pcs · ${pctBase}% of cut/order`;
+    ? `Cutting pending · ${fmt(bucket.qty)} pcs still not cut/short-closed · Cut done ${cutDonePct}% of order`
+    : `Primary pending stage · ${fmt(bucket.qty)} pcs · ${dualBaseText(row, bucket.qty)}. Order base ${fmt(orderBase)}, cut base ${fmt(cutBase)}.`;
   return <button className={`mt-primary-stage-card ${deptClass(bucket.stage)}`} onClick={(e)=>{e.stopPropagation(); onOpen?.(bucket.stage,bucket);}} title={title}>
     <span><b>{stageLabel(bucket.stage)}</b><br/><span className="mt-small">{isCutPending ? "Pending to Cut" : shortStatusLabel(bucket)}</span></span>
     <span style={{textAlign:"right"}}><span className="big">{fmt(bucket.qty)}</span><br/><span className="mt-small">{pctText}</span>{isCutPending ? <><br/><span className="mt-small">Cut done {cutDonePct}%</span></> : null}</span>
@@ -967,16 +968,30 @@ function statusDistribution(row){
     return pri(b)-pri(a) || n(b.qty)-n(a.qty);
   });
 }
+function statusOrderBaseQty(row){ return n(row.order_qty) || statusCutBaseQty(row) || 1; }
 function statusCutBaseQty(row){
   const cut = sdata(row, "cutting");
-  return Math.max(n(cut.output), n(cut.issued), n(cut.received), n(row.order_qty));
+  const actualCut = Math.max(n(cut.output), n(cut.issued), n(cut.received));
+  return actualCut > 0 ? actualCut : (n(row.order_qty) || 1);
+}
+function pctOf(qty, base){ return n(base) > 0 ? Math.round((n(qty) * 1000) / n(base)) / 10 : 0; }
+function dualBaseText(row, qty){
+  const orderBase = statusOrderBaseQty(row);
+  const cutBase = statusCutBaseQty(row);
+  const orderPct = pctOf(qty, orderBase);
+  const cutPct = pctOf(qty, cutBase);
+  if (Math.abs(orderBase - cutBase) > 0.001) return `${orderPct}% order · ${cutPct}% cut`;
+  return `${orderPct}% order/cut`;
 }
 function statusDistributionByCut(row){
-  const base = statusCutBaseQty(row);
+  const orderBase = statusOrderBaseQty(row);
+  const cutBase = statusCutBaseQty(row);
   return statusDistribution(row).map(b => ({
     ...b,
-    cutBase: base,
-    pctCut: base > 0 ? Math.round((n(b.qty) * 1000) / base) / 10 : 0,
+    orderBase,
+    cutBase,
+    pctOrder: pctOf(b.qty, orderBase),
+    pctCut: pctOf(b.qty, cutBase),
   }));
 }
 function StatusDeptLinks({ row, onOpen, compact=false }){
@@ -988,16 +1003,18 @@ function StatusDeptLinks({ row, onOpen, compact=false }){
   </button>)}{parts.length>1 && <div className="mt-current-split-note">Split across {parts.length} departments · click dept to open</div>}</div>;
 }
 function StatusByCutQty({ row, onOpen, compact=false, excludePrimary=false }){
-  const base = statusCutBaseQty(row);
+  const orderBase = statusOrderBaseQty(row);
+  const cutBase = statusCutBaseQty(row);
   const rawParts = statusDistributionByCut(row);
   const allParts = excludePrimary ? rawParts.slice(1) : rawParts;
   const parts = allParts.slice(0, compact ? 4 : 8);
-  if (!parts.length) return <div className="mt-cut-breakup-mini"><span className="mt-chip mt-ok">No other open split</span><div className="mt-small">Base: {fmt(base)} cut/order</div></div>;
+  const baseLabel = Math.abs(orderBase - cutBase) > 0.001 ? `Order ${fmt(orderBase)} · Cut ${fmt(cutBase)}` : `Order/Cut ${fmt(orderBase)}`;
+  if (!parts.length) return <div className="mt-cut-breakup-mini"><span className="mt-chip mt-ok">No other open split</span><div className="mt-small">Base: {baseLabel}</div></div>;
   return <div className="mt-status-cell-wrap compact-wrap mt-cut-status-wrap mt-cut-breakup-mini">
-    <div className="mt-current-split-note" style={{width:"100%"}}>{excludePrimary ? "Other open split" : "All open split"} vs cut/order: {fmt(base)}</div>
-    {parts.map((b,idx)=><button key={`cut-${b.type}-${b.stage}-${idx}`} className={`mt-status-link compact ${deptClass(b.stage)}`} onClick={(e)=>{e.stopPropagation(); onOpen?.(b.stage,b);}} title={`Open ${stageLabel(b.stage)} detail · ${fmt(b.qty)} = ${b.pctCut}% of cut/order`}>
+    <div className="mt-current-split-note" style={{width:"100%"}}>{excludePrimary ? "Other open split" : "All open split"}: {baseLabel}</div>
+    {parts.map((b,idx)=><button key={`cut-${b.type}-${b.stage}-${idx}`} className={`mt-status-link compact ${deptClass(b.stage)}`} onClick={(e)=>{e.stopPropagation(); onOpen?.(b.stage,b);}} title={`Open ${stageLabel(b.stage)} detail · ${fmt(b.qty)} = ${b.pctOrder}% of order / ${b.pctCut}% of cut`}>
       <span><span className="dept-name">{STAGE_BY_KEY[b.stage]?.short || stageLabel(b.stage)}</span><br/><span className="mt-small">{bucketTypeLabel(b.type)}</span></span>
-      <span style={{textAlign:"right"}}><span className="dept-qty">{fmt(b.qty)}</span><br/><span className="dept-pct">{b.pctCut}%</span></span>
+      <span style={{textAlign:"right"}}><span className="dept-qty">{fmt(b.qty)}</span><br/><span className="dept-pct">{Math.abs(orderBase-cutBase)>0.001 ? `${b.pctOrder}% ord` : `${b.pctCut}%`}</span>{Math.abs(orderBase-cutBase)>0.001 ? <><br/><span className="dept-pct">{b.pctCut}% cut</span></> : null}</span>
     </button>)}
     {allParts.length > parts.length ? <span className="mt-chip mt-muted">+{allParts.length-parts.length}</span> : null}
   </div>;
@@ -3057,6 +3074,30 @@ function registerCorrectionOriginalTotal(row, field, sizes=[]){
 function fieldLabelCompact(field){
   return fieldLabel(field).replace("Dept ", "").replace("Completed / ", "");
 }
+function registerSummaryRows(registerRows=[], mode="summary"){
+  const map = new Map();
+  (registerRows || []).forEach(r=>{
+    const key = mode === "day" ? [r.Entry_Date, r.Department].join("|::|") : [r.Department].join("|::|");
+    if (!map.has(key)) map.set(key, {
+      ...(mode === "day" ? { Entry_Date:r.Entry_Date } : {}),
+      Department:r.Department,
+      Rows:0,
+      Completed_Output:0,
+      Issue_Forward:0,
+      Receive:0,
+      Rejection:0,
+      Missing:0,
+      Alter_Defect:0,
+      Alter_Clear:0,
+      R_A_M_Total:0,
+      Total_Activity:0,
+    });
+    const g = map.get(key);
+    g.Rows += 1;
+    ["Completed_Output","Issue_Forward","Receive","Rejection","Missing","Alter_Defect","Alter_Clear","R_A_M_Total","Total_Activity"].forEach(k=>{ g[k] += n(r[k]); });
+  });
+  return Array.from(map.values()).sort((a,b)=>String(a.Entry_Date||"").localeCompare(String(b.Entry_Date||"")) || String(a.Department).localeCompare(String(b.Department)));
+}
 
 function OutputRegisterView({ rows, setRows, ledger, setLedger, focus, clearTick=0 }){
   const defaultFrom = today().slice(0,7) + "-01";
@@ -3065,12 +3106,14 @@ function OutputRegisterView({ rows, setRows, ledger, setLedger, focus, clearTick
   const [dept,setDept] = useState(()=>safeJsonLoad(uiStorageKey("register_dept"), "all"));
   const [activity,setActivity] = useState(()=>safeJsonLoad(uiStorageKey("register_activity"), "all"));
   const [query,setQuery] = useState(()=>safeJsonLoad(uiStorageKey("register_query"), ""));
+  const [registerMode,setRegisterMode] = useState(()=>safeJsonLoad(uiStorageKey("register_mode"), "summary"));
   const [correction,setCorrection] = useState(null);
   useEffect(()=>safeJsonSave(uiStorageKey("register_from"), from), [from]);
   useEffect(()=>safeJsonSave(uiStorageKey("register_to"), to), [to]);
   useEffect(()=>safeJsonSave(uiStorageKey("register_dept"), dept), [dept]);
   useEffect(()=>safeJsonSave(uiStorageKey("register_activity"), activity), [activity]);
   useEffect(()=>safeJsonSave(uiStorageKey("register_query"), query), [query]);
+  useEffect(()=>safeJsonSave(uiStorageKey("register_mode"), registerMode), [registerMode]);
   useEffect(()=>{
     if (!clearTick) return;
     setFrom(defaultFrom);
@@ -3078,6 +3121,7 @@ function OutputRegisterView({ rows, setRows, ledger, setLedger, focus, clearTick
     setDept("all");
     setActivity("all");
     setQuery("");
+    setRegisterMode("summary");
     setCorrection(null);
   }, [clearTick]);
   useEffect(()=>{
@@ -3087,6 +3131,7 @@ function OutputRegisterView({ rows, setRows, ledger, setLedger, focus, clearTick
     setActivity(focus.activity || "all");
     const nextQuery = [focus.order_no, focus.style_no, focus.colour, focus.component].filter(Boolean).join(" ");
     setQuery(nextQuery);
+    setRegisterMode("detail");
     const matchingDates = (ledger || []).filter(e=>{
       const sameOrder = String(e.order_no || e.order || "") === String(focus.order_no || "");
       const sameStyle = String(e.style_no || e.style || "") === String(focus.style_no || "");
@@ -3117,7 +3162,8 @@ function OutputRegisterView({ rows, setRows, ledger, setLedger, focus, clearTick
     ["alter_clear", "Alter Clear"],
   ];
   function exportRegister(){
-    exportXlsx(`production_output_register_${from}_to_${to}.xlsx`, [{name:"Output Register", rows:registerRows.map(({_stage, _fieldSizes, ...r})=>r)}]);
+    const exportRows = registerMode === "detail" ? registerRows.map(({_stage, _fieldSizes, ...r})=>r) : registerSummaryRows(registerRows, registerMode);
+    exportXlsx(`production_output_register_${registerMode}_${from}_to_${to}.xlsx`, [{name:"Output Register", rows:exportRows}]);
   }
   function clearRegisterFilters(){
     setFrom(defaultFrom);
@@ -3181,13 +3227,15 @@ function OutputRegisterView({ rows, setRows, ledger, setLedger, focus, clearTick
     setCorrection(null);
     saveLedgerToSupabase(newLedger, field);
   }
-  const displayRows = registerRows.map(({_stage, _fieldSizes, ...r})=>r);
-  const cols = displayRows.length ? Object.keys(displayRows[0]) : ["Entry_Date","Department","Order","Style","Completed_Output","Issue_Forward","R_A_M_Total"];
+  const detailRows = registerRows.map(({_stage, _fieldSizes, ...r})=>r);
+  const summaryRows = registerSummaryRows(registerRows, registerMode);
+  const displayRows = registerMode === "detail" ? detailRows : summaryRows;
+  const cols = displayRows.length ? Object.keys(displayRows[0]) : (registerMode === "day" ? ["Entry_Date","Department","Rows","Completed_Output","Issue_Forward","Receive","R_A_M_Total","Total_Activity"] : ["Department","Rows","Completed_Output","Issue_Forward","Receive","R_A_M_Total","Total_Activity"]);
   return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Output / Issue-Receive Register</h3><div className="mt-panel-sub">Horizontal department register. Date-first rows; R/A/M stays in simple columns. To fix an old entry, click Correct and enter the corrected quantity in the row that opens below.</div>{focus && <div className="mt-context-strip" style={{marginTop:8}}><span className="mt-chip mt-info">Opened from WIP</span><span className="mt-chip mt-muted">{focus.order_no}</span><span className="mt-chip mt-muted">{focus.style_no}</span><span className="mt-chip mt-muted">{stageLabel(focus.stage)}</span><span className="mt-small">Register is filtered to this style/dept. Correct rows inline below the date.</span></div>}</div>
-    <div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-toolbar-label">From</span><input className="mt-input" type="date" value={from} onChange={e=>setFrom(e.target.value)} /><span className="mt-toolbar-label">To</span><input className="mt-input" type="date" value={to} onChange={e=>setTo(e.target.value)} /><span className="mt-toolbar-label">Dept</span><select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}><option value="all">All departments</option>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select><span className="mt-toolbar-label">Activity</span><select className="mt-select" value={activity} onChange={e=>setActivity(e.target.value)}>{activities.map(a=><option key={a} value={a}>{a==="all"?"All activities":a}</option>)}</select><input className="mt-input" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search order / style / buyer / colour" style={{minWidth:260}}/><button className="mt-btn" onClick={clearRegisterFilters}><X size={14}/>Clear filters</button><button className="mt-btn" onClick={exportRegister}><Download size={14}/>Export</button></div></div>
+    <div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-toolbar-label">View</span><div className="mt-toggle-group"><button className={`mt-btn ${registerMode==="summary"?"active":"ghost"}`} onClick={()=>{setRegisterMode("summary"); setCorrection(null);}}>Summary</button><button className={`mt-btn ${registerMode==="day"?"active":"ghost"}`} onClick={()=>{setRegisterMode("day"); setCorrection(null);}}>Day-wise</button><button className={`mt-btn ${registerMode==="detail"?"active":"ghost"}`} onClick={()=>setRegisterMode("detail")}>Detail / Edit</button></div><span className="mt-toolbar-label">From</span><input className="mt-input" type="date" value={from} onChange={e=>setFrom(e.target.value)} /><span className="mt-toolbar-label">To</span><input className="mt-input" type="date" value={to} onChange={e=>setTo(e.target.value)} /><span className="mt-toolbar-label">Dept</span><select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}><option value="all">All departments</option>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select><span className="mt-toolbar-label">Activity</span><select className="mt-select" value={activity} onChange={e=>setActivity(e.target.value)}>{activities.map(a=><option key={a} value={a}>{a==="all"?"All activities":a}</option>)}</select><input className="mt-input" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search order / style / buyer / colour" style={{minWidth:260}}/><button className="mt-btn" onClick={clearRegisterFilters}><X size={14}/>Clear filters</button><button className="mt-btn" onClick={exportRegister}><Download size={14}/>Export</button></div></div>
     <div className="mt-section"><div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">Rows</div><div className="value">{fmt(registerRows.length)}</div><div className="note">date first</div></div><div className="mt-entry-metric"><div className="label">Completed / Output</div><div className="value">{fmt(totalOutput)}</div><div className="note">filtered period</div></div><div className="mt-entry-metric"><div className="label">Issue Forward</div><div className="value">{fmt(totalIssue)}</div><div className="note">filtered period</div></div><div className="mt-entry-metric"><div className="label">R/A/M</div><div className="value">{fmt(totalRAM)}</div><div className="note">simple columns</div></div></div></div>
-    <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}<th className="no-print">Edit</th></tr></thead><tbody>{displayRows.length ? displayRows.map((r,i)=>{ const fullRow = registerRows[i]; const rowKey = registerCorrectionRowKey(fullRow, i); const isEditing = correction?.key === rowKey; return <React.Fragment key={rowKey}><tr>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] === undefined || r[c] === null ? "" : r[c])}</td>)}<td className="no-print"><button className={`mt-btn ${isEditing?"active":"ghost"}`} onClick={()=>isEditing ? setCorrection(null) : beginInlineCorrection(fullRow, i)}>{isEditing ? "Close" : "Correct"}</button></td></tr>{isEditing && <tr className="mt-correction-row"><td colSpan={cols.length+1}><div className="mt-inline-correction"><div className="mt-correction-head"><b>Correct quantity below original date</b><span className="mt-small">Enter the final correct qty by size. System saves only the difference as an audit correction.</span></div><div className="mt-correction-controls"><label>Correction Date <input className="mt-input" type="date" value={correction.entryDate || fullRow.Entry_Date} onChange={e=>setCorrection(c=>({ ...(c||{}), entryDate:e.target.value }))}/></label><label>Field <select className="mt-select" value={correction.field || defaultCorrectionFieldForRegisterRow(fullRow)} onChange={e=>changeCorrectionField(fullRow, i, e.target.value)}>{fieldOptions.map(([k,l])=><option key={k} value={k}>{l}</option>)}</select></label><label>Reason <input className="mt-input" value={correction.reason || ""} onChange={e=>setCorrection(c=>({ ...(c||{}), reason:e.target.value }))} placeholder="Correction reason" style={{minWidth:240}}/></label><button className="mt-btn primary" onClick={()=>saveInlineCorrection(fullRow, i)}><CheckCircle2 size={14}/>Save correction</button><button className="mt-btn ghost" onClick={()=>setCorrection(null)}>Cancel</button></div><div className="mt-correction-grid">{allSizes.map(sz=>{ const original = n(registerFieldSizeMap(fullRow, correction.field || defaultCorrectionFieldForRegisterRow(fullRow), allSizes)[sz]); const next = n(correction.values?.[sz]); const delta = next - original; return <div className="mt-correction-size" key={sz}><div className="sz">{sz}</div><div className="mt-small">Old {fmt(original)}</div><input className="mt-cell-input" value={Object.prototype.hasOwnProperty.call(correction.values || {}, sz) ? correction.values[sz] : ""} onChange={e=>setCorrectionQty(sz, e.target.value)} placeholder="Correct qty"/><div className={`mt-small ${delta?"warn":""}`}>Diff {delta>0?"+":""}{fmt(delta)}</div></div>; })}</div></div></td></tr>}</React.Fragment>; }) : <tr><td colSpan={cols.length+1} style={{padding:18}}>No activity entries found for this filter.</td></tr>}</tbody></table></div>
-    <div className="mt-speed-note"><b>Correction rule:</b> Register does not overwrite old rows. You enter the corrected quantity below the original date, and the app posts the difference as a correction ledger row so WIP updates immediately.</div>
+    <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}{registerMode === "detail" ? <th className="no-print">Edit</th> : null}</tr></thead><tbody>{displayRows.length ? displayRows.map((r,i)=>{ const fullRow = registerMode === "detail" ? registerRows[i] : null; const rowKey = registerMode === "detail" ? registerCorrectionRowKey(fullRow, i) : [registerMode, r.Entry_Date || "", r.Department || "", i].join("|::|"); const isEditing = registerMode === "detail" && correction?.key === rowKey; return <React.Fragment key={rowKey}><tr>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] === undefined || r[c] === null ? "" : r[c])}</td>)}{registerMode === "detail" ? <td className="no-print"><button className={`mt-btn ${isEditing?"active":"ghost"}`} onClick={()=>isEditing ? setCorrection(null) : beginInlineCorrection(fullRow, i)}>{isEditing ? "Close" : "Correct"}</button></td> : null}</tr>{isEditing && <tr className="mt-correction-row"><td colSpan={cols.length+1}><div className="mt-inline-correction"><div className="mt-correction-head"><b>Correct quantity below original date</b><span className="mt-small">Enter the final correct qty by size. System saves only the difference as an audit correction.</span></div><div className="mt-correction-controls"><label>Correction Date <input className="mt-input" type="date" value={correction.entryDate || fullRow.Entry_Date} onChange={e=>setCorrection(c=>({ ...(c||{}), entryDate:e.target.value }))}/></label><label>Field <select className="mt-select" value={correction.field || defaultCorrectionFieldForRegisterRow(fullRow)} onChange={e=>changeCorrectionField(fullRow, i, e.target.value)}>{fieldOptions.map(([k,l])=><option key={k} value={k}>{l}</option>)}</select></label><label>Reason <input className="mt-input" value={correction.reason || ""} onChange={e=>setCorrection(c=>({ ...(c||{}), reason:e.target.value }))} placeholder="Correction reason" style={{minWidth:240}}/></label><button className="mt-btn primary" onClick={()=>saveInlineCorrection(fullRow, i)}><CheckCircle2 size={14}/>Save correction</button><button className="mt-btn ghost" onClick={()=>setCorrection(null)}>Cancel</button></div><div className="mt-correction-grid">{allSizes.map(sz=>{ const original = n(registerFieldSizeMap(fullRow, correction.field || defaultCorrectionFieldForRegisterRow(fullRow), allSizes)[sz]); const next = n(correction.values?.[sz]); const delta = next - original; return <div className="mt-correction-size" key={sz}><div className="sz">{sz}</div><div className="mt-small">Old {fmt(original)}</div><input className="mt-cell-input" value={Object.prototype.hasOwnProperty.call(correction.values || {}, sz) ? correction.values[sz] : ""} onChange={e=>setCorrectionQty(sz, e.target.value)} placeholder="Correct qty"/><div className={`mt-small ${delta?"warn":""}`}>Diff {delta>0?"+":""}{fmt(delta)}</div></div>; })}</div></div></td></tr>}</React.Fragment>; }) : <tr><td colSpan={cols.length + (registerMode === "detail" ? 1 : 0)} style={{padding:18}}>No activity entries found for this filter.</td></tr>}</tbody></table></div>
+    <div className="mt-speed-note"><b>Register view rule:</b> Summary is default for management reading. Use Day-wise for department/date breakup. Use Detail / Edit only when correcting old entries. Correction does not overwrite old rows; it posts the difference as a correction ledger row so WIP updates immediately.</div>
   </div>;
 }
 
@@ -4697,7 +4745,7 @@ export default function App(){
   const tabs = [
     ["dashboard","Dashboard",BarChart3], ["planning","Planning",ClipboardList], ["wip","Live WIP",Warehouse], ["entry","DPR Entry",ClipboardList], ["register","Register",FileSpreadsheet], ["review","Review",ShieldCheck], ["owners","Who to Chase",Users], ["monthly","Monthly",FileSpreadsheet], ["styles","Styles",Shirt], ["routes","Routes",Filter], ["photos","Photos",ImageIcon], ["reports","Reports",FileSpreadsheet], ["settings","Settings",Settings]
   ];
-  return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}><style>{FONT + CSS}</style>{showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Cleaner precise screens, remembered active tab/filters/drafts, cumulative totals, horizontal output register, WIP-to-Register edit links, and fixed Register filtering so WIP links show all matching department entries.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}<div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Reports. Precise views, horizontal data, remembered tab/drafts.</div></div><div className="mt-actions"><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase} title="Manual backup/sync of current browser rows. Normal Add/Edit Style and DPR Entry save to Supabase when you press their Save buttons."><Upload size={14}/>Sync Browser Rows</button><button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
+  return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}><style>{FONT + CSS}</style>{showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Cleaner precise screens, register Summary / Day-wise / Detail toggle, WIP status showing both order % and cut % where needed, and safer remembered tab/filter state.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}<div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Reports. Register summary toggle, order/cut %, remembered tab/drafts.</div></div><div className="mt-actions"><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase} title="Manual backup/sync of current browser rows. Normal Add/Edit Style and DPR Entry save to Supabase when you press their Save buttons."><Upload size={14}/>Sync Browser Rows</button><button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
       <PageFilters tab={tab} query={query} setQuery={setQuery} buyer={buyer} setBuyer={setBuyer} buyers={buyers} order={order} setOrder={setOrder} orders={orders} visibleRows={visibleRows}/>
