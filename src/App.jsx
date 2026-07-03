@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.67";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.67 compact Excel-style planning board with modal editor";
+const APP_VERSION = "V7.5.70";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.70 current status ready-to-issue fix";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -514,6 +514,8 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .compact-plan-cell.ok .compact-plan-cell-btn { background:#eef8f2; }
 .compact-plan-cell.warn .compact-plan-cell-btn { background:#fff6d9; }
 .compact-plan-cell.late .compact-plan-cell-btn { background:#fde9e4; }
+.compact-plan-cell.changeover .compact-plan-cell-btn { background:#fff0df; box-shadow:inset 0 0 0 2px rgba(201,111,22,.46); }
+.compact-plan-cell.changeover.late .compact-plan-cell-btn { background:#fde9e4; box-shadow:inset 0 0 0 2px rgba(180,35,24,.48); }
 .compact-plan-cell-btn:hover { outline:2px solid rgba(201,111,22,.22); outline-offset:-2px; }
 .compact-add { display:flex; height:100%; align-items:center; justify-content:center; color:var(--muted-1); font-weight:800; font-size:12px; }
 .c-style { font-family:'Archivo',sans-serif; font-size:11.5px; font-weight:800; line-height:1.1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -522,6 +524,11 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .c-metrics b { font-family:'Archivo',sans-serif; font-size:13px; }
 .c-metrics span, .c-note, .c-auto { color:var(--muted-2); font-size:9px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .c-auto { color:var(--blue-fg); margin-top:1px; }
+.c-changeover { display:inline-flex; align-items:center; gap:4px; margin-top:3px; border:1px solid #f1b15d; background:#fff7ea; color:#94440f; border-radius:999px; padding:2px 6px; font-size:8.5px; font-weight:900; text-transform:uppercase; letter-spacing:.2px; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.c-changeover .left { color:#5f3a07; font-weight:900; }
+.c-changeover .lost { color:#8c241a; font-weight:900; }
+.c-changeover .free { color:#1f6f54; font-weight:900; }
+.mt-plan-changeover-read { border:1px solid #f1b15d; background:#fff7ea; color:#94440f; border-radius:10px; padding:8px 10px; font-size:10px; font-weight:800; line-height:1.35; margin-top:8px; }
 .week-total { background:#f7f1e8 !important; font-family:'Archivo',sans-serif; font-size:13px; font-weight:800; text-align:right; padding:8px !important; }
 .compact-total-row td { background:#eee7dc !important; padding:8px !important; font-size:10px; }
 .compact-total-row td span { display:block; color:var(--muted-2); font-size:9px; margin-top:2px; }
@@ -1520,9 +1527,17 @@ function currentMovementStatusParts(row){
   const route = routeFor(row);
   const parts = [];
   const cut = sdata(row, "cutting");
-  const cutQty = Math.max(n(cut.output), n(cut.issued), n(cut.received));
   const cutPending = cuttingAccountableOpen(row);
   if (cutPending > 0) parts.push({ type:"cutting_pending", stage:"cutting", label:"Cutting Pending", qty:cutPending, tone:"warn", field:"output", note:"Enter cutting output / short close" });
+  // Cutting is also an active movement stage. If cut output is complete but not issued,
+  // current status must say Ready for Stitching, not Closed/Balanced.
+  const cutNextStage = route[route.indexOf("cutting") + 1];
+  const cutReadyNext = Math.max(0, n(cut.output) - n(cut.issued));
+  if (cutReadyNext > 0 && cutNextStage) parts.push({ type:"ready_next", stage:"cutting", toStage:cutNextStage, label:`Ready for ${stageLabel(cutNextStage)}`, qty:cutReadyNext, tone:"info", field:"issued", note:`Issue cut quantity to ${stageLabel(cutNextStage)}` });
+  if (n(cut.issued) > 0 && cutNextStage) {
+    const nextOutput = n(sdata(row,cutNextStage).output) + n(sdata(row,cutNextStage).reject) + n(sdata(row,cutNextStage).alter) + n(sdata(row,cutNextStage).missing);
+    if (nextOutput < n(cut.issued)) parts.push({ type:"issued_forward", stage:"cutting", toStage:cutNextStage, label:"Cutting Issued", qty:n(cut.issued), tone:"purple", field:"issued", note:`Issued to ${stageLabel(cutNextStage)}` });
+  }
   // Show active production positions only. Tail / short-close / closure buckets are intentionally ignored here.
   route.forEach((stage, idx)=>{
     if (stage === "cutting") return;
@@ -5150,6 +5165,16 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
   function compactCellPlan(line, day, slotNo){
     return findCellSlot(line, day, slotNo) || { id:stablePlanId(activeDept, planCellLineKey(activeDept,line), day, slotNo), dept:activeDept, line:planCellLineKey(activeDept,line), plan_date:day, slot_no:slotNo, remaining_hours:8, qty_auto_mode:false, source:"manual_excel_board", source_label:"Excel weekly line board" };
   }
+  function changeoverHoursInfo(line, day, slotNo, candidate){
+    const allForDay = lineDayPlanRows(planRows, activeDept, line, day);
+    const before = remainingHoursBeforeSlot(allForDay, candidate);
+    const used = planHours(candidate);
+    const isChange = effectiveChangeoverForSlot(line, day, slotNo, candidate);
+    const lost = isChange ? used * 0.30 : 0;
+    const productive = Math.max(0, used - lost);
+    const after = dayRemainingAfterSlot(allForDay, candidate);
+    return { before, used, lost, productive, after, text:`Lost ${fmt(lost)}h · ${fmt(after)}h free` };
+  }
   function cellTinyText(p){
     if (!planStyleText(p) && !n(p.planned_qty) && !n(p.ops)) return "";
     const parts = [];
@@ -5187,14 +5212,16 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
                 const linked = resolvePlanStyle(rows, planStyleText(p)) || rows.find(r=>r.id===p?.row_id);
                 const effChange = effectiveChangeoverForSlot(line, day, slotNo, p);
                 const need = has && planStyleText(p) ? planNeedBreakdown({ ...p, changeover:effChange }, rows, planRows, activeDept, line, day, ledger) : null;
+                const chInfo = has && effChange ? changeoverHoursInfo(line, day, slotNo, p) : null;
                 const tone = need?.afterThisSlot < 0 ? "late" : need?.projectedFeed > 0 && need?.availableForThisSlot >= n(p.planned_qty) ? "warn" : has ? "ok" : "empty";
-                return <td key={`${line}-${day}-${slotNo}`} className={`compact-plan-cell ${tone}`}>
+                return <td key={`${line}-${day}-${slotNo}`} className={`compact-plan-cell ${tone} ${effChange ? "changeover" : ""}`}>
                   <button className="compact-plan-cell-btn" onClick={()=>{ setEditCell({ line, day, slotNo }); setEditorAutoOpen(false); }}>
                     {has ? <>
                       <div className="c-style">{planStyleText(p)}</div>
                       <div className="c-brand">{p.buyer || linked?.buyer || ""}</div>
                       <div className="c-metrics"><b>{fmt(n(p.planned_qty))}</b><span>{fmt(n(p.ops))} ops</span></div>
                       <div className="c-note">{cellTinyText(p) || (effChange ? "70% changeover" : "")}</div>
+                      {effChange && chInfo && <div className="c-changeover">70% changeover · <span className="lost">Lost {fmt(chInfo.lost)}h</span> · <span className="free">{fmt(chInfo.after)}h free</span></div>}
                       {showTargets && <div className="c-auto">{effChange ? "70%" : "100%"} · {fmt(planHours(p))}h · auto {fmt(planAutoQtyFromTarget({ ...p, changeover:effChange }))}</div>}
                     </> : <span className="compact-add">+ add</span>}
                   </button>
@@ -5228,6 +5255,7 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
           </div>
           <div className="mt-plan-action-row"><button className="mt-btn ghost" onClick={()=>useRemainingHours(editCell.line,editCell.day,editCell.slotNo)}>Use remaining hrs</button><label className="mt-small"><input type="checkbox" checked={!!editorEffectiveChangeover} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{changeover:e.target.checked, changeover_override:true, qty_auto_mode:!!editor?.qty_auto_mode, planned_qty:editor?.qty_auto_mode ? planAutoQtyFromTarget({ ...editor, changeover:e.target.checked, eight_hr_target:n(editor?.eight_hr_target) || defaultFullDayOutputForStyle(editorLinked || {}), remaining_hours:n(editor?.remaining_hours || editorRemainingBefore) }) : editor?.planned_qty})}/> 70% changeover</label>{editor?.changeover_override && <button className="mt-btn ghost" onClick={()=>updateCell(editCell.line,editCell.day,editCell.slotNo,{changeover_override:false, qty_auto_mode:!!editor?.qty_auto_mode})}>Auto 70%</button>}<label className="mt-small"><input type="checkbox" checked={!!editor?.qty_auto_mode} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{qty_auto_mode:e.target.checked, planned_qty:e.target.checked ? editorAutoQty : editor?.planned_qty})}/> auto qty</label></div>
           <div className="mt-plan-auto-hint">{changeoverExplain(editCell.line, editCell.day, editCell.slotNo, editor)}. Manual Qty always wins.</div>
+          {editorEffectiveChangeover && <div className="mt-plan-changeover-read">Changeover day highlight: {fmt(changeoverHoursInfo(editCell.line, editCell.day, editCell.slotNo, editor).before)}h available before this style · {fmt(planHours(editor))}h booked · <b>{fmt(changeoverHoursInfo(editCell.line, editCell.day, editCell.slotNo, editor).lost)}h lost at 70%</b> · {fmt(changeoverHoursInfo(editCell.line, editCell.day, editCell.slotNo, editor).productive)}h productive equivalent · <b>{fmt(changeoverHoursInfo(editCell.line, editCell.day, editCell.slotNo, editor).after)}h free after slot</b>.</div>}
           {editorNeed && <div className="mt-plan-need-mini expanded"><div><span>Need this slot</span><b>{fmt(editorNeed.qtyNeeded)}</b></div><div><span>Actual ready</span><b>{fmt(editorNeed.actualReadyFeed)}</b></div><div><span>Projected upstream</span><b>{fmt(editorNeed.projectedFeed)}</b></div><div><span>Available for slot</span><b>{fmt(editorNeed.availableForThisSlot)}</b></div><div><span>After slot</span><b className={editorNeed.afterThisSlot < 0 ? "mt-delta-neg" : "mt-delta-pos"}>{fmt(editorNeed.afterThisSlot)}</b></div></div>}
         </div>}
         <div className="mt-plan-editor-actions no-print"><button className="mt-btn primary" onClick={()=>autoFillCascadeFromSlot(editCell.line,editCell.day,editCell.slotNo)}>Auto fill cascade</button><button className="mt-btn ghost" onClick={()=>carryForward(editCell.line,editCell.day,editCell.slotNo)}>Use previous day</button><button className="mt-btn ghost" onClick={()=>fillNext(editCell.line,editCell.day,editCell.slotNo)}>Copy to next</button><button className="mt-btn ghost" onClick={()=>addNextStyleSlot(editCell.line,editCell.day)}>+ Add next style</button><label className="mt-small"><input type="checkbox" checked={!!editor?.short_close} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{short_close:e.target.checked, remarks:e.target.checked ? "SPECIAL SHORT CLOSE" : (editor?.remarks || "")})}/> short close</label><button className="mt-btn ghost danger" onClick={()=>{ clearCellSlot(editCell.line,editCell.day,editCell.slotNo); setEditCell(null); }}>Delete slot</button></div>
@@ -6971,7 +6999,7 @@ export default function App(){
   return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
     <style>{FONT + CSS}</style>
     <LoginDialog open={showLogin} force={!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
-    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Planning board density fix: compact Excel line × day grid with hidden modal target/changeover engine.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
+    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Planning board changeover clarity: compact cells now show both lost time and free time on 70% changeover days.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
     <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Review · Reports. Supabase-first autosave · email login · audit/cell history · Excel-like exports.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className="mt-chip mt-info">{presenceSummaryText(presenceRows)}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${navCollapsed?"active":"ghost"}`} onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand left navigation"><Layers size={14}/>{navCollapsed?"Expand tabs":"Collapse tabs"}</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div></div><PresenceStrip peers={presenceRows}/></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
