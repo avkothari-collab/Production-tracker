@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.59";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.59 blank screen sticky helper hotfix";
+const APP_VERSION = "V7.5.62";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.62 manual 70 percent changeover override";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -4610,7 +4610,7 @@ function normalizePlanRowForState(p){
   const hours = p?.remaining_hours !== undefined || p?.run_hours !== undefined || p?.plan_hours !== undefined ? Math.max(0, Math.min(8, n(p?.remaining_hours || p?.run_hours || p?.plan_hours))) : 0;
   const withHours = { ...p, remaining_hours:hours };
   const qty = (p?.qty_auto_mode || p?.use_auto_qty) ? planAutoQtyFromTarget(withHours) : n(p?.planned_qty);
-  return { ...p, id:p?.id || stablePlanId(dept,line,day,slot_no), dept, plan_date:day, line, slot_no, planned_qty:qty, ops:n(p?.ops), eight_hr_target:n(p?.eight_hr_target || p?.full_day_output), remaining_hours:hours, changeover:!!p?.changeover, qty_auto_mode:!!(p?.qty_auto_mode || p?.use_auto_qty), short_close:!!p?.short_close };
+  return { ...p, id:p?.id || stablePlanId(dept,line,day,slot_no), dept, plan_date:day, line, slot_no, planned_qty:qty, ops:n(p?.ops), eight_hr_target:n(p?.eight_hr_target || p?.full_day_output), remaining_hours:hours, changeover:!!p?.changeover, changeover_override:!!p?.changeover_override, qty_auto_mode:!!(p?.qty_auto_mode || p?.use_auto_qty), short_close:!!p?.short_close };
 }
 function planRowToSupabase(p, rows=[], allPlanRows=[], ledger=[]){
   const clean = normalizePlanRowForState(p);
@@ -4624,14 +4624,14 @@ function planRowToSupabase(p, rows=[], allPlanRows=[], ledger=[]){
     planned_qty:n(clean.planned_qty), ops:n(clean.ops), stitching_end_date:clean.stitching_end_date || null, remarks:clean.remarks || null, short_close:!!clean.short_close,
     source:clean.source || "manual_excel_board", source_label:clean.source_label || "Excel weekly line board", source_type:clean.source_type || "Manual / cascade checked",
     status:clean.short_close ? "Short close override" : (clean.status || (validation.level === "ok" ? "Draft / valid" : "Draft / review")), validation_status:validation.level, validation_message:validation.message, validation_snapshot:validation,
-    metadata:{ app_version:APP_VERSION, style_input:planStyleText(clean), route:linked ? routeFor(linked) : [], p0_guard:"cascade_as_of_plan_date", slot_no:planSlotNo(clean), full_day_output:n(clean.eight_hr_target || clean.full_day_output), eight_hr_target:n(clean.eight_hr_target || clean.full_day_output), remaining_hours:n(clean.remaining_hours || clean.run_hours || 0), day_remaining_after:n(clean.day_remaining_after), changeover:!!clean.changeover, qty_auto_mode:!!clean.qty_auto_mode, auto_qty:planAutoQtyFromTarget(clean) },
+    metadata:{ app_version:APP_VERSION, style_input:planStyleText(clean), route:linked ? routeFor(linked) : [], p0_guard:"cascade_as_of_plan_date", slot_no:planSlotNo(clean), full_day_output:n(clean.eight_hr_target || clean.full_day_output), eight_hr_target:n(clean.eight_hr_target || clean.full_day_output), remaining_hours:n(clean.remaining_hours || clean.run_hours || 0), day_remaining_after:n(clean.day_remaining_after), changeover:!!clean.changeover, changeover_override:!!clean.changeover_override, changeover_source:clean.changeover_override ? "manual" : "auto", qty_auto_mode:!!clean.qty_auto_mode, auto_qty:planAutoQtyFromTarget(clean) },
     updated_by:currentUserName(), updated_by_role:currentUserRole(), updated_at:new Date().toISOString(), created_by:clean.created_by || currentUserName(), created_at:clean.created_at || new Date().toISOString()
   };
 }
 function supabaseToPlanRow(row){
   const meta = row.metadata || {};
   return normalizePlanRowForState({
-    id:row.id, dept:row.dept, plan_date:row.plan_date, line:row.line || "", slot_no:planSlotNo(row), row_id:row.row_id || "", order_no:row.order_no || "", style_no:row.style_no || "", style_input:meta.style_input || row.style_no || "", buyer:row.buyer || "", colour:row.colour || "", component:row.component || "", planned_qty:n(row.planned_qty), ops:n(row.ops), stitching_end_date:row.stitching_end_date || "", remarks:row.remarks || "", short_close:!!row.short_close, eight_hr_target:n(meta.eight_hr_target || meta.full_day_output), remaining_hours:n(meta.remaining_hours || meta.run_hours || row.remaining_hours || 0), changeover:!!meta.changeover, qty_auto_mode:!!meta.qty_auto_mode, source:row.source || "manual_excel_board", source_label:row.source_label || "Excel weekly line board", source_type:row.source_type || "Manual / cascade checked", status:row.status || "Draft", validation_status:row.validation_status || "", validation_message:row.validation_message || "", validation_snapshot:row.validation_snapshot || null, updated_at:row.updated_at, created_at:row.created_at, created_by:row.created_by
+    id:row.id, dept:row.dept, plan_date:row.plan_date, line:row.line || "", slot_no:planSlotNo(row), row_id:row.row_id || "", order_no:row.order_no || "", style_no:row.style_no || "", style_input:meta.style_input || row.style_no || "", buyer:row.buyer || "", colour:row.colour || "", component:row.component || "", planned_qty:n(row.planned_qty), ops:n(row.ops), stitching_end_date:row.stitching_end_date || "", remarks:row.remarks || "", short_close:!!row.short_close, eight_hr_target:n(meta.eight_hr_target || meta.full_day_output), remaining_hours:n(meta.remaining_hours || meta.run_hours || row.remaining_hours || 0), changeover:!!meta.changeover, changeover_override:!!meta.changeover_override, qty_auto_mode:!!meta.qty_auto_mode, source:row.source || "manual_excel_board", source_label:row.source_label || "Excel weekly line board", source_type:row.source_type || "Manual / cascade checked", status:row.status || "Draft", validation_status:row.validation_status || "", validation_message:row.validation_message || "", validation_snapshot:row.validation_snapshot || null, updated_at:row.updated_at, created_at:row.created_at, created_by:row.created_by
   });
 }
 async function robustUpsertPlanRowsToSupabase(planRows, rows=[], allPlanRows=[], ledger=[]){
@@ -4643,8 +4643,18 @@ async function robustUpsertPlanRowsToSupabase(planRows, rows=[], allPlanRows=[],
 async function fetchDeletePlanRowFromSupabase(plan){
   if (!hasValidSupabaseEnv()) return { skipped:true, warning:supabaseConfigWarning() };
   const p = normalizePlanRowForState(plan);
-  const q = p.id ? `id=eq.${encodeURIComponent(p.id)}` : `${urlEncodedEqQuery({ dept:p.dept, plan_date:p.plan_date, line:p.line || "" })}`;
-  return fetchRestDeleteFromSupabase("production_plan_rows", q);
+  const queries = [];
+  if (p.id) queries.push(`id=eq.${encodeURIComponent(p.id)}`);
+  queries.push(`${urlEncodedEqQuery({ dept:p.dept, plan_date:p.plan_date, line:p.line || "", slot_no:planSlotNo(p) })}`);
+  let firstError = null;
+  let deletedVia = "rest";
+  for (const q of Array.from(new Set(queries))) {
+    const res = await fetchRestDeleteFromSupabase("production_plan_rows", q);
+    if (res?.error) firstError = firstError || res.error;
+    else deletedVia = res?.via || deletedVia;
+  }
+  if (firstError) return { error:firstError };
+  return { error:null, via:deletedVia, deleted:true };
 }
 function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, weekDays, showTargets=true, fit=false, ledger=[], onPlanUpsert, onPlanDelete }){
   const [search,setSearch] = useState("");
@@ -4657,6 +4667,37 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     return (rows||[]).filter(r=>!q || [r.style_no,r.order_no,r.buyer,r.colour,r.component].join(" ").toLowerCase().includes(q)).slice(0,160);
   }, [rows, search]);
   function findCellSlot(line, day, slotNo=1){ return lineDayPlanRows(planRows, activeDept, line, day).find(p=>planSlotNo(p)===n(slotNo)); }
+  function planStyleKeyValue(v){ return String(v || "").trim().toUpperCase(); }
+  function previousStyleBeforeSlot(line, day, slotNo, sourceRows=planRows){
+    const lineKey = planCellLineKey(activeDept,line);
+    const dayIndex = weekDays.indexOf(day);
+    const currentSlot = n(slotNo) || 1;
+    const candidates = (sourceRows||[])
+      .filter(p=>String(p.dept)===String(activeDept) && String(p.line||"")===String(lineKey))
+      .map(p=>({ ...p, __dayIndex:weekDays.indexOf(String(p.plan_date||"").slice(0,10)), __slot:planSlotNo(p), __style:planStyleKeyValue(planStyleText(p)) }))
+      .filter(p=>p.__style && p.__dayIndex >= 0 && (p.__dayIndex < dayIndex || (p.__dayIndex === dayIndex && p.__slot < currentSlot)))
+      .sort((a,b)=>b.__dayIndex-a.__dayIndex || b.__slot-a.__slot);
+    return candidates[0]?.__style || "";
+  }
+  function autoChangeoverForSlot(line, day, slotNo, candidate={}, sourceRows=planRows){
+    const style = planStyleKeyValue(planStyleText(candidate));
+    if (!style) return false;
+    const prevStyle = previousStyleBeforeSlot(line, day, slotNo, sourceRows);
+    return !!prevStyle && prevStyle !== style;
+  }
+  function effectiveChangeoverForSlot(line, day, slotNo, candidate={}, sourceRows=planRows){
+    if (candidate?.changeover_override) return !!candidate?.changeover;
+    return autoChangeoverForSlot(line, day, slotNo, candidate, sourceRows);
+  }
+  function changeoverExplain(line, day, slotNo, candidate={}, sourceRows=planRows){
+    const style = planStyleKeyValue(planStyleText(candidate));
+    const prevStyle = previousStyleBeforeSlot(line, day, slotNo, sourceRows);
+    if (!style) return "No style selected";
+    if (candidate?.changeover_override) return candidate?.changeover ? "Manual override: use 70% target for this slot" : "Manual override: use 100% target for this slot";
+    if (!prevStyle) return "First planned style on this line — 100% target";
+    if (prevStyle === style) return "Continue running — 100% target";
+    return `Style changed from ${prevStyle} — 70% target`;
+  }
   function cleanPatchForStyle(base, patch){
     const text = patch.style_input !== undefined ? patch.style_input : planStyleText(base);
     const linked = resolvePlanStyle(rows, text) || rows.find(r=>r.id===base?.row_id);
@@ -4674,6 +4715,8 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
       });
     } else if (text) {
       Object.assign(out, { row_id:"", style_no:text.toUpperCase(), order_no:base?.order_no || "", buyer:patch.buyer !== undefined ? patch.buyer : (base?.buyer || ""), colour:base?.colour || "", component:base?.component || "" });
+    } else if (Object.prototype.hasOwnProperty.call(patch, "style_input")) {
+      Object.assign(out, { row_id:"", order_no:"", style_no:"", buyer:"", colour:"", component:"", planned_qty:"", eight_hr_target:"", ops:"", stitching_end_date:"", remarks:"", qty_auto_mode:false, remaining_hours:0, changeover:false, changeover_override:false, short_close:false });
     }
     return out;
   }
@@ -4689,10 +4732,18 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     const defaultHours = Math.max(0, 8 - priorHours);
     const baseNow = existingNow || { id:stablePlanId(activeDept, planCellLineKey(activeDept,line), day, slotNo), plan_date:day, dept:activeDept, line:planCellLineKey(activeDept,line), slot_no:n(slotNo)||1, source:"manual_excel_board", source_label:"Excel weekly line board", source_type:"Manual / cascade checked", remaining_hours:defaultHours, eight_hr_target:0, qty_auto_mode:false, changeover:false, difficulty:"Normal", priority:"Normal", status:"Draft", remarks:"" };
     const cleanedNow = cleanPatchForStyle(baseNow, patch);
+    const styleTouched = Object.prototype.hasOwnProperty.call(patch, "style_input") && !!planStyleText(cleanedNow);
     const autoTouched = ["eight_hr_target","remaining_hours","changeover","qty_auto_mode","use_auto_qty"].some(k=>Object.prototype.hasOwnProperty.call(cleanedNow,k));
-    const willAuto = cleanedNow.qty_auto_mode !== undefined ? !!cleanedNow.qty_auto_mode : (cleanedNow.use_auto_qty !== undefined ? !!cleanedNow.use_auto_qty : !!baseNow.qty_auto_mode);
+    const shouldAutoFromStyle = styleTouched && !n(baseNow.planned_qty) && !!resolvePlanStyle(rows, planStyleText({ ...baseNow, ...cleanedNow }));
+    const willAuto = cleanedNow.qty_auto_mode !== undefined ? !!cleanedNow.qty_auto_mode : (cleanedNow.use_auto_qty !== undefined ? !!cleanedNow.use_auto_qty : (!!baseNow.qty_auto_mode || shouldAutoFromStyle));
     const finalHours = Math.max(0, Math.min(8, n(cleanedNow.remaining_hours !== undefined ? cleanedNow.remaining_hours : baseNow.remaining_hours || defaultHours)));
-    const draftBeforeQty = { ...baseNow, ...cleanedNow, plan_date:day, dept:activeDept, line:planCellLineKey(activeDept,line), slot_no:n(slotNo)||1, remaining_hours:finalHours, eight_hr_target:n(cleanedNow.eight_hr_target !== undefined ? cleanedNow.eight_hr_target : baseNow.eight_hr_target || 0), changeover: cleanedNow.changeover !== undefined ? !!cleanedNow.changeover : !!baseNow.changeover, qty_auto_mode: willAuto };
+    const draftBaseBeforeChangeover = { ...baseNow, ...cleanedNow, plan_date:day, dept:activeDept, line:planCellLineKey(activeDept,line), slot_no:n(slotNo)||1, remaining_hours:finalHours, eight_hr_target:n(cleanedNow.eight_hr_target !== undefined ? cleanedNow.eight_hr_target : baseNow.eight_hr_target || 0), qty_auto_mode: willAuto };
+    const wantsAutoChangeover = Object.prototype.hasOwnProperty.call(cleanedNow, "changeover_override") && cleanedNow.changeover_override === false;
+    const manualChangeoverTouched = Object.prototype.hasOwnProperty.call(cleanedNow, "changeover") && !wantsAutoChangeover;
+    const changeoverOverride = wantsAutoChangeover ? false : (manualChangeoverTouched ? true : (styleTouched ? false : !!baseNow.changeover_override));
+    const draftWithOverride = { ...draftBaseBeforeChangeover, changeover_override:changeoverOverride, changeover: manualChangeoverTouched ? !!cleanedNow.changeover : !!baseNow.changeover };
+    const effectiveChangeover = effectiveChangeoverForSlot(line, day, slotNo, draftWithOverride);
+    const draftBeforeQty = { ...draftWithOverride, changeover:effectiveChangeover };
     const plannedQty = cleanedNow.planned_qty !== undefined
       ? n(cleanedNow.planned_qty)
       : ((willAuto || autoTouched) ? planAutoQtyFromTarget(draftBeforeQty) : n(baseNow.planned_qty));
@@ -4718,11 +4769,11 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     const prevDay = idx > 0 ? weekDays[idx-1] : null;
     const prev = prevDay ? findCellSlot(line, prevDay, slotNo) : null;
     if (!prev) return;
-    updateCell(line, day, slotNo, { style_input:planStyleText(prev), buyer:prev.buyer || "", planned_qty:prev.planned_qty || "", ops:prev.ops || "", eight_hr_target:prev.eight_hr_target || "", remaining_hours:prev.remaining_hours || 0, changeover:!!prev.changeover, qty_auto_mode:!!prev.qty_auto_mode, stitching_end_date:prev.stitching_end_date || "", remarks:"CONTINUE RUNNING", short_close:false });
+    updateCell(line, day, slotNo, { style_input:planStyleText(prev), buyer:prev.buyer || "", planned_qty:prev.planned_qty || "", ops:prev.ops || "", eight_hr_target:prev.eight_hr_target || "", remaining_hours:prev.remaining_hours || 0, changeover:false, changeover_override:false, qty_auto_mode:!!prev.qty_auto_mode, stitching_end_date:prev.stitching_end_date || "", remarks:"CONTINUE RUNNING", short_close:false });
   }
   function fillNext(line, day, slotNo){
     const idx=weekDays.indexOf(day); const next=idx>=0 ? weekDays[idx+1] : null; const curr=findCellSlot(line,day,slotNo);
-    if (next && curr) updateCell(line,next,slotNo,{ style_input:planStyleText(curr), buyer:curr.buyer||"", planned_qty:curr.planned_qty||"", ops:curr.ops||"", eight_hr_target:curr.eight_hr_target || "", remaining_hours:curr.remaining_hours || 0, changeover:!!curr.changeover, qty_auto_mode:!!curr.qty_auto_mode, stitching_end_date:curr.stitching_end_date||"", remarks:"CONTINUE RUNNING", short_close:false });
+    if (next && curr) updateCell(line,next,slotNo,{ style_input:planStyleText(curr), buyer:curr.buyer||"", planned_qty:curr.planned_qty||"", ops:curr.ops||"", eight_hr_target:curr.eight_hr_target || "", remaining_hours:curr.remaining_hours || 0, changeover:false, changeover_override:false, qty_auto_mode:!!curr.qty_auto_mode, stitching_end_date:curr.stitching_end_date||"", remarks:"CONTINUE RUNNING", short_close:false });
   }
   function useRemainingHours(line, day, slotNo){
     const allForDay=lineDayPlanRows(planRows, activeDept, line, day);
@@ -4730,13 +4781,92 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     const remainingBefore = remainingHoursBeforeSlot(allForDay, { ...p, slot_no:slotNo });
     const linked=resolvePlanStyle(rows, planStyleText(p)) || rows.find(r=>r.id===p?.row_id) || {};
     const target = n(p.eight_hr_target) || defaultFullDayOutputForStyle(linked);
-    updateCell(line, day, slotNo, { eight_hr_target:target, remaining_hours:remainingBefore, qty_auto_mode:true, planned_qty:planAutoQtyFromTarget({ ...p, eight_hr_target:target, remaining_hours:remainingBefore, qty_auto_mode:true }) });
+    const candidate = { ...p, eight_hr_target:target, remaining_hours:remainingBefore, qty_auto_mode:true };
+    updateCell(line, day, slotNo, { eight_hr_target:target, remaining_hours:remainingBefore, qty_auto_mode:true, planned_qty:planAutoQtyFromTarget({ ...candidate, changeover:effectiveChangeoverForSlot(line, day, slotNo, candidate) }) });
   }
   function addNextStyleSlot(line, day){
     const allForDay=lineDayPlanRows(planRows, activeDept, line, day);
     const nextSlot = Math.max(0, ...allForDay.map(planSlotNo)) + 1;
     const remaining = Math.max(0, 8 - allForDay.reduce((a,p)=>a+planHours(p),0));
     updateCell(line, day, nextSlot, { remaining_hours:remaining, qty_auto_mode:true, remarks:"NEXT STYLE" });
+  }
+  function autoFillCascadeFromSlot(line, day, slotNo){
+    const current = findCellSlot(line, day, slotNo);
+    const styleText = planStyleText(current);
+    const linked = resolvePlanStyle(rows, styleText) || rows.find(r=>r.id===current?.row_id);
+    if (!linked) return window.alert("Select/link a style from Styles master first. Free-text styles cannot auto-cascade because order qty/feed is unknown.");
+    const target = n(current?.eight_hr_target) || defaultFullDayOutputForStyle(linked);
+    if (!target) return window.alert("Enter Full-day target first. Cascade needs daily output to calculate hours and qty.");
+    const startIdx = weekDays.indexOf(day);
+    if (startIdx < 0) return;
+    const lineKey = planCellLineKey(activeDept,line);
+    const startRemain = remainingForStyleAsOf(linked, activeDept, day, planRows, ledger).remaining || n(linked.order_qty);
+    let qtyLeft = Math.max(0, startRemain);
+    const generated = [];
+    let simulatedRows = [...(planRows||[])];
+    for (let i=startIdx; i<weekDays.length && qtyLeft>0; i++){
+      const d = weekDays[i];
+      const allForDay = lineDayPlanRows(planRows, activeDept, line, d);
+      const sameStyle = allForDay.find(p=>planStyleText(p).toUpperCase()===String(linked.style_no||styleText).toUpperCase());
+      const slot = d === day ? n(slotNo) : (sameStyle ? planSlotNo(sameStyle) : Math.max(0, ...allForDay.map(planSlotNo)) + 1);
+      const base = d === day ? (current || {}) : (sameStyle || {});
+      const baseWithSlot = { ...base, id:base?.id || stablePlanId(activeDept, lineKey, d, slot), dept:activeDept, line:lineKey, plan_date:d, slot_no:slot };
+      const availableBefore = remainingHoursBeforeSlot(allForDay, baseWithSlot);
+      const preferredHours = d === day ? (planHours(current) || availableBefore || 8) : (availableBefore || 8);
+      const hoursCap = Math.max(0, Math.min(8, preferredHours));
+      if (!hoursCap) continue;
+      const changeoverAuto = (d === day && current?.changeover_override) ? !!current.changeover : autoChangeoverForSlot(line, d, slot, { ...baseWithSlot, style_input:linked.style_no, style_no:linked.style_no }, simulatedRows);
+      const factor = changeoverAuto ? 0.7 : 1;
+      const maxQtyForHours = Math.max(0, Math.round((target / 8) * hoursCap * factor));
+      if (!maxQtyForHours) continue;
+      const qty = Math.min(qtyLeft, maxQtyForHours);
+      const neededHoursRaw = factor ? (qty * 8) / (target * factor) : hoursCap;
+      const planHrs = Math.max(0.25, Math.min(hoursCap, Math.ceil(neededHoursRaw * 4) / 4));
+      qtyLeft = Math.max(0, qtyLeft - qty);
+      const completeHere = qtyLeft <= 0;
+      const generatedRow = normalizePlanRowForState({
+        ...baseWithSlot,
+        row_id:linked.id,
+        order_no:linked.order_no,
+        style_no:linked.style_no,
+        style_input:linked.style_no,
+        buyer:linked.buyer,
+        colour:linked.colour,
+        component:linked.component,
+        eight_hr_target:target,
+        remaining_hours:planHrs,
+        changeover:changeoverAuto,
+        changeover_override:d === day ? !!current?.changeover_override : false,
+        qty_auto_mode:true,
+        planned_qty:qty,
+        ops:current?.ops || base?.ops || defaultOpsForStyle(linked) || "",
+        stitching_end_date:completeHere ? d : (base?.stitching_end_date || ""),
+        remarks:completeHere ? "AUTO CASCADE FINISH" : "CONTINUE RUNNING",
+        short_close:false,
+        source:"auto_cascade_line_plan",
+        source_label:"Auto cascade line plan",
+        source_type:"Auto / cascade checked",
+        updated_at:new Date().toISOString()
+      });
+      generated.push(generatedRow);
+      simulatedRows = [...simulatedRows.filter(p=>!(String(p.dept)===String(generatedRow.dept) && String(p.line||"")===String(generatedRow.line||"") && String(p.plan_date||"").slice(0,10)===String(generatedRow.plan_date||"").slice(0,10) && planSlotNo(p)===planSlotNo(generatedRow))), generatedRow];
+    }
+    if (!generated.length) return window.alert("No available hours found in this week for this line. Add a slot or reduce existing planned hours.");
+    const generatedIds = new Set(generated.map(g=>String(g.id)));
+    const generatedKeys = new Set(generated.map(g=>[g.dept,g.line,g.plan_date,planSlotNo(g)].join("|")));
+    const styleUpper = String(linked.style_no || styleText).toUpperCase();
+    const futureSameStyleRows = (planRows||[]).filter(p=>String(p.dept)===String(activeDept) && String(p.line||"")===String(lineKey) && String(p.plan_date||"").slice(0,10)>=String(day).slice(0,10) && planStyleText(p).toUpperCase()===styleUpper && !generatedIds.has(String(p.id)) && !generatedKeys.has([p.dept,p.line,p.plan_date,planSlotNo(p)].join("|")));
+    setPlanRows(prev=>{
+      const removeIds = new Set([...generatedIds, ...futureSameStyleRows.map(p=>String(p.id))]);
+      const removeKeys = new Set([...generatedKeys, ...futureSameStyleRows.map(p=>[p.dept,p.line,p.plan_date,planSlotNo(p)].join("|"))]);
+      return [...(prev||[]).filter(p=>!removeIds.has(String(p.id)) && !removeKeys.has([p.dept,p.line,p.plan_date,planSlotNo(p)].join("|"))), ...generated];
+    });
+    futureSameStyleRows.forEach(old=>onPlanDelete?.(old, { dept:activeDept, line:lineKey, day:old.plan_date, slot_no:planSlotNo(old), reason:"auto_cascade_replaced_future_same_style" }));
+    generated.forEach(row=>schedulePlanSave(row, line, row.plan_date));
+    const msg = qtyLeft > 0
+      ? `Auto-filled ${generated.length} plan slot(s). ${fmt(qtyLeft)} qty still remains after this week.`
+      : `Auto-filled ${generated.length} plan slot(s) and finished ${linked.style_no} on ${generated[generated.length-1].plan_date}.`;
+    window.alert(msg);
   }
   async function quickAddStyleFromCell(line, day, slotNo){
     const p=findCellSlot(line,day,slotNo)||{};
@@ -4774,7 +4904,7 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
           row[`${shortDayLabel(day)} Full_Day_Target`] = n(p.eight_hr_target) || "";
           row[`${shortDayLabel(day)} Plan_Hours`] = n(p.remaining_hours) || "";
           row[`${shortDayLabel(day)} Day_Remaining_After`] = p ? dayRemainingAfterSlot(lineDayPlanRows(planRows, activeDept, line, day), p) : "";
-          row[`${shortDayLabel(day)} Changeover_70`] = p.changeover ? "Yes" : "No";
+          row[`${shortDayLabel(day)} Changeover_70`] = p.changeover ? (p.changeover_override ? "Yes - manual" : "Yes - style change") : (p.changeover_override ? "No - manual" : "No");
           row[`${shortDayLabel(day)} End Date`] = p.stitching_end_date || "";
           row[`${shortDayLabel(day)} OPS`] = n(p.ops) || "";
           row[`${shortDayLabel(day)} Note`] = p.short_close ? "SHORT CLOSE" : (p.remarks || "");
@@ -4816,7 +4946,7 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
                   <div className="mt-plan-day-card-head"><div className="mt-plan-day-card-title">{shortDayLabel(day)}</div><div className="mt-plan-day-total"><span>Qty {fmt(dayQty)}</span><span>OPS {fmt(dayOps)}</span><span>Left {fmt(dayRemain)}h</span></div></div>
                   <div className="mt-plan-cell-board columnar">
                     <div className="mt-plan-day-capacity"><span><b>{fmt(Math.min(8,totalHours))}</b>hrs used</span><span><b>{fmt(dayRemain)}</b>hrs left</span><span><b>{fmt(dayQty)}</b>qty</span></div>
-                    {cellPlans.map((p,idx)=>{ const slotNo=planSlotNo(p)||idx+1; const linked=resolvePlanStyle(rows, planStyleText(p)) || rows.find(r=>r.id===p?.row_id); const sig=planCellSignal(p, rows, planRows, activeDept, line, day, ledger); const allReal=lineDayPlanRows(planRows, activeDept, line, day); const remainingBefore=remainingHoursBeforeSlot(allReal.length?allReal:cellPlans, p); const remainingAfter=dayRemainingAfterSlot(allReal.length?allReal:cellPlans, p); const autoQty=planAutoQtyFromTarget({ ...p, eight_hr_target:n(p?.eight_hr_target) || defaultFullDayOutputForStyle(linked || {}), remaining_hours:n(p?.remaining_hours || remainingBefore) }); return <div key={`${day}-${line}-${slotNo}`} className="mt-plan-slot-card">
+                    {cellPlans.map((p,idx)=>{ const slotNo=planSlotNo(p)||idx+1; const linked=resolvePlanStyle(rows, planStyleText(p)) || rows.find(r=>r.id===p?.row_id); const autoChangeover=autoChangeoverForSlot(line, day, slotNo, p); const effectiveChangeover=effectiveChangeoverForSlot(line, day, slotNo, p); const sig=planCellSignal({ ...p, changeover:effectiveChangeover }, rows, planRows, activeDept, line, day, ledger); const allReal=lineDayPlanRows(planRows, activeDept, line, day); const remainingBefore=remainingHoursBeforeSlot(allReal.length?allReal:cellPlans, p); const remainingAfter=dayRemainingAfterSlot(allReal.length?allReal:cellPlans, p); const autoQty=planAutoQtyFromTarget({ ...p, changeover:effectiveChangeover, eight_hr_target:n(p?.eight_hr_target) || defaultFullDayOutputForStyle(linked || {}), remaining_hours:n(p?.remaining_hours || remainingBefore) }); return <div key={`${day}-${line}-${slotNo}`} className="mt-plan-slot-card">
                       <div className="mt-plan-slot-head"><span>Style slot {slotNo}</span><span>{fmt(remainingBefore)}h available before</span></div>
                       <div className="mt-plan-field"><label>Style</label><input className="style-input" list={datalistId} value={planStyleText(p)} onChange={e=>updateCell(line,day,slotNo,{style_input:e.target.value})} placeholder="STYLE NO"/></div>
                       <div className="mt-plan-field"><label>Brand</label><input value={p?.buyer || ""} onChange={e=>updateCell(line,day,slotNo,{buyer:e.target.value})} placeholder="BRAND"/></div>
@@ -4824,16 +4954,16 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
                         <div className="mt-plan-field"><label>Full-day target</label><input value={p?.eight_hr_target || ""} onChange={e=>updateCell(line,day,slotNo,{eight_hr_target:e.target.value.replace(/[^0-9]/g,""), qty_auto_mode:!!p?.qty_auto_mode})} placeholder="8hr qty"/></div>
                         <div className="mt-plan-field"><label>Plan hours</label><input value={p?.remaining_hours || ""} onChange={e=>updateCell(line,day,slotNo,{remaining_hours:e.target.value.replace(/[^0-9.]/g,""), qty_auto_mode:!!p?.qty_auto_mode})} placeholder={String(remainingBefore || 8)}/></div>
                         <div className="mt-plan-readonly"><span>Remaining after this style</span><b>{fmt(remainingAfter)}h</b></div>
-                        <div className="mt-plan-calc-meta"><label><input type="checkbox" checked={!!p?.changeover} onChange={e=>updateCell(line,day,slotNo,{changeover:e.target.checked, qty_auto_mode:!!p?.qty_auto_mode})}/> 70% changeover</label><span>Auto qty <b>{fmt(autoQty)}</b></span></div>
-                        <div className="mt-plan-action-row"><button className="mt-btn ghost" onClick={()=>useRemainingHours(line,day,slotNo)}>Use remaining hrs</button><label className="mt-small"><input type="checkbox" checked={!!p?.qty_auto_mode} onChange={e=>updateCell(line,day,slotNo,{qty_auto_mode:e.target.checked, planned_qty:e.target.checked ? autoQty : p?.planned_qty})}/> auto qty</label></div>
-                        <div className="mt-plan-auto-hint">Manual Qty below overrides auto. No half/full-day button needed — hours are the control.</div>
+                        <div className="mt-plan-calc-meta"><span className={`mt-chip ${effectiveChangeover ? "mt-warn" : "mt-ok"}`}>{p?.changeover_override ? (effectiveChangeover ? "70% manual" : "100% manual") : (autoChangeover ? "70% auto: style change" : "100% auto: same/first style")}</span><span title={changeoverExplain(line, day, slotNo, p)}>Auto qty <b>{fmt(autoQty)}</b></span></div>
+                        <div className="mt-plan-action-row"><button className="mt-btn ghost" onClick={()=>useRemainingHours(line,day,slotNo)}>Use remaining hrs</button><label className="mt-small"><input type="checkbox" checked={!!effectiveChangeover} onChange={e=>updateCell(line,day,slotNo,{changeover:e.target.checked, changeover_override:true, qty_auto_mode:!!p?.qty_auto_mode, planned_qty:p?.qty_auto_mode ? planAutoQtyFromTarget({ ...p, changeover:e.target.checked, eight_hr_target:n(p?.eight_hr_target) || defaultFullDayOutputForStyle(linked || {}), remaining_hours:n(p?.remaining_hours || remainingBefore) }) : p?.planned_qty})}/> 70% changeover</label>{p?.changeover_override && <button className="mt-btn ghost" onClick={()=>updateCell(line,day,slotNo,{changeover_override:false, qty_auto_mode:!!p?.qty_auto_mode})}>Auto 70%</button>}<label className="mt-small"><input type="checkbox" checked={!!p?.qty_auto_mode} onChange={e=>updateCell(line,day,slotNo,{qty_auto_mode:e.target.checked, planned_qty:e.target.checked ? autoQty : p?.planned_qty})}/> auto qty</label></div>
+                        <div className="mt-plan-auto-hint">Manual Qty below overrides auto. 70% auto-checks only when the style changes, but you can tick/untick the checkbox for manual intervention.</div>
                       </div>}
                       <div className="mt-plan-field"><label>Qty</label><input value={p?.planned_qty || ""} onChange={e=>updateCell(line,day,slotNo,{planned_qty:e.target.value.replace(/[^0-9]/g,""), qty_auto_mode:false})} placeholder="DAY TARGET"/></div>
                       <div className="mt-plan-field"><label>OPS</label><input value={p?.ops || ""} onChange={e=>updateCell(line,day,slotNo,{ops:e.target.value.replace(/[^0-9]/g,"")})} placeholder="HEADCOUNT"/></div>
                       <div className="mt-plan-field"><label>Finish date</label><input type="date" value={p?.stitching_end_date || ""} onChange={e=>updateCell(line,day,slotNo,{stitching_end_date:e.target.value})} title="Stitching / department finish date"/></div>
                       <div className="mt-plan-field"><label>Note</label><input value={p?.remarks || ""} onChange={e=>updateCell(line,day,slotNo,{remarks:e.target.value})} placeholder="continue / reason"/></div>
                       {planStyleText(p) && !linked && <div className="mt-plan-add-style"><b>Not in Styles master.</b><button className="mt-btn primary" onClick={()=>quickAddStyleFromCell(line,day,slotNo)}>+ Add style detail</button></div>}
-                      <div className={`mt-plan-signal ${sig.tone}`}>{sig.text}</div><div className="mt-plan-cell-actions no-print"><button className="mt-btn ghost" onClick={()=>carryForward(line,day,slotNo)}>Use previous day</button><button className="mt-btn ghost" onClick={()=>fillNext(line,day,slotNo)}>Copy to next</button><label className="mt-small"><input type="checkbox" checked={!!p?.short_close} onChange={e=>updateCell(line,day,slotNo,{short_close:e.target.checked, remarks:e.target.checked ? "SPECIAL SHORT CLOSE" : (p?.remarks || "")})}/> short close</label><button className="mt-btn ghost" onClick={()=>clearCellSlot(line,day,slotNo)}>Clear</button></div>
+                      <div className={`mt-plan-signal ${sig.tone}`}>{sig.text}</div><div className="mt-plan-cell-actions no-print"><button className="mt-btn primary" onClick={()=>autoFillCascadeFromSlot(line,day,slotNo)}>Auto fill cascade</button><button className="mt-btn ghost" onClick={()=>carryForward(line,day,slotNo)}>Use previous day</button><button className="mt-btn ghost" onClick={()=>fillNext(line,day,slotNo)}>Copy to next</button><label className="mt-small"><input type="checkbox" checked={!!p?.short_close} onChange={e=>updateCell(line,day,slotNo,{short_close:e.target.checked, remarks:e.target.checked ? "SPECIAL SHORT CLOSE" : (p?.remarks || "")})}/> short close</label><button className="mt-btn ghost" onClick={()=>clearCellSlot(line,day,slotNo)}>Delete slot</button></div>
                     </div>; })}
                     <button className="mt-btn ghost mt-plan-add-slot no-print" onClick={()=>addNextStyleSlot(line,day)}>+ Add next style in remaining hours</button>
                   </div>
@@ -4866,7 +4996,7 @@ function PlanningView({ rows, planRows, setPlanRows, ledger, setRows, onPlanUpse
     ]);
   }
   return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Planning — Excel Weekly Board</h3><div className="mt-panel-sub">Plan like the factory sheet: line × day cells, direct typing, Qty/End Date/OPS, auto totals and P0 cascade warnings. Each line/day now has remaining-hours control: full-day target × planned hours calculates Qty, and manual Qty override is still allowed.</div></div>
-    <div className="mt-section no-print"><div className="mt-filter-row"><button className={`mt-btn ${mode==="stitching"?"primary":"ghost"}`} onClick={()=>setMode("stitching")}>Stitching line board</button><button className={`mt-btn ${mode==="dept"?"primary":"ghost"}`} onClick={()=>setMode("dept")}>Other dept board</button>{mode==="dept" && <select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.filter(s=>!['stitching'].includes(s.key)).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>}<span className="mt-toolbar-label">Week</span><input className="mt-input" type="date" value={weekStart} onChange={e=>setWeekStart(e.target.value)}/><button className="mt-btn ghost" onClick={()=>setWeekStart(lineBoardWeekStart(today()))}>This week</button><button className="mt-btn ghost" onClick={()=>setWeekStart(nextProductionMonday(today()))}>Next week</button><button className={`mt-btn ${fitBoard?"active":"ghost"}`} onClick={()=>setFitBoard(v=>!v)}>Compact board</button><button className={`mt-btn ${showTargets?"active":"ghost"}`} onClick={()=>setShowTargets(v=>!v)}>{showTargets ? "Auto qty calculator: on" : "Auto qty calculator: off"}</button><button className="mt-btn primary" onClick={exportWeekDetail}><Download size={14}/>Export plan detail</button>{planSaveState && <span className={`mt-chip ${statusClass(planSaveState.tone)}`}>{planSaveState.text}</span>}</div><div className="mt-plan-cascade-note"><b>P0 plan truth:</b> plan cells autosave to the shared production_plan_rows table, are audited, and carry cascade status by actual plan date. <b>Cascade rule now used:</b> when you are sitting on Thursday and planning Monday, earlier Thu/Fri/Sat running styles on the same line consume balance first. The next style is flagged until prior quantity is finished or <b>short close</b> is marked. For Printing/Stitching/Checking/Packing, previous department actual output + previous department planned finish by the date is used as the as-of feed.</div></div>
+    <div className="mt-section no-print"><div className="mt-filter-row"><button className={`mt-btn ${mode==="stitching"?"primary":"ghost"}`} onClick={()=>setMode("stitching")}>Stitching line board</button><button className={`mt-btn ${mode==="dept"?"primary":"ghost"}`} onClick={()=>setMode("dept")}>Other dept board</button>{mode==="dept" && <select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.filter(s=>!['stitching'].includes(s.key)).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>}<span className="mt-toolbar-label">Week</span><input className="mt-input" type="date" value={weekStart} onChange={e=>setWeekStart(e.target.value)}/><button className="mt-btn ghost" onClick={()=>setWeekStart(lineBoardWeekStart(today()))}>This week</button><button className="mt-btn ghost" onClick={()=>setWeekStart(nextProductionMonday(today()))}>Next week</button><button className={`mt-btn ${fitBoard?"active":"ghost"}`} onClick={()=>setFitBoard(v=>!v)}>Compact board</button><button className={`mt-btn ${showTargets?"active":"ghost"}`} onClick={()=>setShowTargets(v=>!v)}>{showTargets ? "Auto qty calculator: on" : "Auto qty calculator: off"}</button><button className="mt-btn primary" onClick={exportWeekDetail}><Download size={14}/>Export plan detail</button>{planSaveState && <span className={`mt-chip ${statusClass(planSaveState.tone)}`}>{planSaveState.text}</span>}</div><div className="mt-plan-cascade-note"><b>P0 plan truth:</b> plan cells autosave to the shared production_plan_rows table, are audited, and carry cascade status by actual plan date. <b>Cascade rule now used:</b> when you are sitting on Thursday and planning Monday, earlier Thu/Fri/Sat running styles on the same line consume balance first. <b>70% auto-applies only when the style changes; continue-running days stay 100%, with manual checkbox override available.</b> The next style is flagged until prior quantity is finished or <b>short close</b> is marked. For Printing/Stitching/Checking/Packing, previous department actual output + previous department planned finish by the date is used as the as-of feed.</div></div>
     <div className="mt-section"><PlanExcelLineBoard rows={rows} planRows={planRows} setPlanRows={setPlanRows} setRows={setRows} activeDept={activeDept} weekDays={weekDays} showTargets={showTargets} fit={fitBoard} ledger={ledger} onPlanUpsert={onPlanUpsert} onPlanDelete={onPlanDelete}/></div>
     <div className="mt-section"><SimpleTable title={`${stageLabel(activeDept)} Week Plan Rows`} sub="Every filled line/day cell becomes a plan row underneath, so plan-vs-achieved and reports keep working without making the board rigid." rows={weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Style:p.style_no || p.style_input, Buyer:p.buyer, Plan_Qty:p.planned_qty, End_Date:p.stitching_end_date||"", OPS:p.ops||"", Short_Close:p.short_close?"Yes":"No", Source:p.source_label, P0_Status:p.validation_status || planValidationSnapshot(p, rows, planRows, ledger).level, P0_Message:p.validation_message || planValidationSnapshot(p, rows, planRows, ledger).message, Status:p.status, Remarks:p.remarks }))} empty="No weekly plan cells filled yet." /></div>
     <div className="mt-section"><SimpleTable title="Plan vs Achieved / Style Adherence" sub="Compares planned style/date/line against actual production ledger. This keeps style adherence separate from total quantity achievement." rows={pva} empty="No plan rows yet." /></div>
@@ -5362,6 +5492,10 @@ async function robustInsertEntriesToSupabase(payloadRows){
   return { error:{ message:`${firstError?.message || "Supabase client entry insert failed"}; REST fallback also failed: ${fallback.error.message}` } };
 }
 
+function isDuplicatePrimaryKeyError(text){
+  const msg = String(text || "").toLowerCase();
+  return msg.includes("duplicate key value") && (msg.includes("_pkey") || msg.includes("primary key") || msg.includes("production_orders_pkey"));
+}
 async function fetchRestUpsertToSupabase(table, payloadRows, onConflict){
   const base = supabaseEnvBaseUrl();
   const anon = supabaseEnvAnonKey();
@@ -5369,21 +5503,30 @@ async function fetchRestUpsertToSupabase(table, payloadRows, onConflict){
   let rows = Array.isArray(payloadRows) ? payloadRows : [payloadRows];
   if (!rows.length) return { error:null, via:"rest", savedCount:0 };
   const removed = [];
-  const url = `${base}/rest/v1/${encodeURIComponent(table)}?on_conflict=${encodeURIComponent(onConflict)}`;
+  const postRows = async (conflictTarget, postRowsPayload) => {
+    const url = `${base}/rest/v1/${encodeURIComponent(table)}?on_conflict=${encodeURIComponent(conflictTarget)}`;
+    return fetch(url, {
+      method:"POST",
+      headers:{
+        apikey:anon,
+        Authorization:`Bearer ${anon}`,
+        "Content-Type":"application/json",
+        Prefer:"resolution=merge-duplicates,return=minimal"
+      },
+      body:JSON.stringify(postRowsPayload)
+    });
+  };
   for (let attempt=0; attempt<8; attempt++){
     try {
-      const res = await fetch(url, {
-        method:"POST",
-        headers:{
-          apikey:anon,
-          Authorization:`Bearer ${anon}`,
-          "Content-Type":"application/json",
-          Prefer:"resolution=merge-duplicates,return=minimal"
-        },
-        body:JSON.stringify(rows)
-      });
-      if (res.ok) return { error:null, via:"rest", savedCount:rows.length, removedColumns:removed };
+      const res = await postRows(onConflict, rows);
+      if (res.ok) return { error:null, via:"rest", savedCount:rows.length, removedColumns:removed, onConflict };
       const text = await res.text().catch(()=>"");
+      if (isDuplicatePrimaryKeyError(text) && onConflict !== "id" && rows.every(r=>r && r.id)) {
+        const byId = await postRows("id", rows);
+        if (byId.ok) return { error:null, via:"rest", savedCount:rows.length, removedColumns:removed, onConflict:"id", recoveredFrom:text };
+        const byIdText = await byId.text().catch(()=>"");
+        return { error:{ message:`Primary-key recovery also failed: ${byIdText || `REST upsert HTTP ${byId.status}`}. Original: ${text}` }, removedColumns:removed };
+      }
       const col = missingSchemaColumnName({ message:text });
       if (col && !removed.includes(col)) {
         removed.push(col);
@@ -5991,7 +6134,7 @@ function SettingsView({ onChanged }){
       <div className="mt-toolbar" style={{alignItems:"flex-start"}}><span className="mt-toolbar-label">Size groups</span><textarea className="mt-input" style={{minWidth:360, minHeight:140}} value={sizeSetsText} onChange={e=>setSizeSetsText(e.target.value)} placeholder={'alpha = XS, S, M, L, XL, XXL\nkids = 2-3Y, 3-4Y, 4-5Y\nwaist = 30, 32, 34, 36'} /><div style={{display:"grid",gap:8}}><button className="mt-btn primary" onClick={saveSizeSets}>Save Size Groups</button><button className="mt-btn ghost" onClick={resetSizeSets}>Reset Defaults</button></div><span className="mt-small">Format: group = size, size, size. Add buyer/category groups anytime, then select them in Styles or bulk upload.</span></div>
     </div>
     <div className="mt-section"><h3 className="mt-panel-title">Bottleneck metric guide</h3><div className="mt-panel-sub">Daily Rate = recent 7-day average output from ledger for that department. Days Cover = queue/open WIP ÷ Daily Rate. Bottleneck Score = Queue WIP + 2×Reconcile Qty + R/A/M Qty, so impossible movements and quality loss rank higher than normal queue.</div></div>
-    <div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included through V7.5.23 logic</b><ul className="mt-small"><li>Add/edit production styles manually with horizontal order-size breakup; Order Qty remains master and size shortage/excess is warned in manual and bulk upload.</li><li>Browser fallback persistence keeps style updates after refresh even when Supabase URL/key is not configured correctly.</li><li>Cutting Pending now appears correctly until cut/output/R/A/M/short-close accounts for order qty; Cutting short-close action is available in Cutting detail.</li><li>Editable size groups in Settings; Styles and bulk upload can use custom buyer/category size sets.</li><li>Order-wise rejection dispatch flag: approved rejected pieces can be included in Dispatch feed by size only for that order/style.</li><li>WIP Other Open Split column is now toggleable and hidden by default to avoid duplicate/confusing status reading.</li><li>Simple 6-day Excel-style planning grid: enter total day target by style/line without SMV/OPS complexity</li><li>WIP now separates one Pending Stage from All Activity by Cut %, so the grid stays narrow while still showing the full cut/order breakup</li><li>Selected department detail shows Good Output together with Reject/Missing/Alter and accounted/tail quantities for a complete HOD picture</li><li>Size-wise day entry with previous/updated total cross-check</li><li>Print / embroidery route toggles</li><li>Standard route changed to Checking → Packing → Dispatch; Iron removed as a normal department</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Dispatch hold: no dispatch when reconcile exists or dispatch-blocking R/A/M exceeds configured order %. Optional setting allows approved rejection to be dispatched while Missing/Alter still block.</li><li>Editable stitching line names in Settings used by Planning</li><li>Issued-to-department means accepted/with department; no normal issued-not-received bucket</li><li>Completed-not-issued-forward owner = Production Coordinator + Production Manager</li><li>Individual owner chase: Department HOD owns work-not-completed; Coordinator + Production Manager own completed-not-issued-forward</li><li>Style closure owner = Production Coordinator + Dept HOD; Production Manager handles movement/escalation/approval</li><li>WIP table page-specific filters, sorting, quick status buckets, and size-breakup toggle</li><li>Dashboard uses current-bin WIP logic: once a quantity moves to the next stage, it leaves the previous department bin.</li><li>Dashboard includes daily / 4-4-5 weekly / calendar-month production numbers, department × issue-type board, owner activity breakup, and production meeting focus.</li><li>Department-first dashboard pack: plan-vs-achieved/line efficiency, bottleneck/flow, aging/stuck WIP, quality/loss rate, party/outsource pending.</li><li>Dashboard drilldowns now use dashboard-specific rows, subtotal summaries, real size-stage data where available, and a visible size-source indicator.</li><li>Monthly comparison tab against Stitching Receiving with drillable summary filters</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Open-first WIP sheet modes: Open Control, Order View, Department View, Issue View, and Full Matrix</li><li>Focused WIP cell drawer shows selected department only; DPR entry shows only open styles for selected department/field; entry cells show open, previous, available, new entry, remaining and updated total; reductions/corrections require approval workflow later</li><li>Entry date / backdated audit logic with next-day default, same-day confirmation, reason and approval status</li><li>Live idle recalculation from production ledger where activity exists</li><li>Set convergence: a set packs/ships only min(components); Sets board + WIP chip show packable sets and unmatched pieces</li><li>Backdated entries validate feed as-of the entry date from the ledger; locked (older) backdated entries require reason + explicit manager-approval confirmation and are stamped in the audit ledger</li><li>Single configurable cutting tolerance replaces the old 8%/5%/0% mismatch</li><li>Party/outsource pending is consistent with the WIP open bucket (feed − output − R/A/M); outsourced stages label the with-department bucket as Pending at party</li><li>R/A/M day-entry path and impossible sequence reconcile checks</li><li>Planning tab: stitching line-wise rolling plan, department day-wise plan, department-specific planning pool, manual future plan, changeover remaining-hours formula, plan-vs-achieved style adherence, and Review control room. Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-info"><Lock size={12}/> Future RLS</span> <span className="mt-small">Keep this as a development app. We tighten RLS before real users and live factory data.</span></div></div>;
+    <div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included through V7.5.23 logic</b><ul className="mt-small"><li>Add/edit production styles manually with horizontal order-size breakup; Order Qty remains master and size shortage/excess is warned in manual and bulk upload.</li><li>Browser fallback persistence keeps style updates after refresh even when Supabase URL/key is not configured correctly.</li><li>Cutting Pending now appears correctly until cut/output/R/A/M/short-close accounts for order qty; Cutting short-close action is available in Cutting detail.</li><li>Editable size groups in Settings; Styles and bulk upload can use custom buyer/category size sets.</li><li>Order-wise rejection dispatch flag: approved rejected pieces can be included in Dispatch feed by size only for that order/style.</li><li>WIP Other Open Split column is now toggleable and hidden by default to avoid duplicate/confusing status reading.</li><li>Simple 6-day Excel-style planning grid: enter total day target by style/line without SMV/OPS complexity</li><li>WIP now separates one Pending Stage from All Activity by Cut %, so the grid stays narrow while still showing the full cut/order breakup</li><li>Selected department detail shows Good Output together with Reject/Missing/Alter and accounted/tail quantities for a complete HOD picture</li><li>Size-wise day entry with previous/updated total cross-check</li><li>Print / embroidery route toggles</li><li>Standard route changed to Checking → Packing → Dispatch; Iron removed as a normal department</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Dispatch hold: no dispatch when reconcile exists or dispatch-blocking R/A/M exceeds configured order %. Optional setting allows approved rejection to be dispatched while Missing/Alter still block.</li><li>Editable stitching line names in Settings used by Planning</li><li>Issued-to-department means accepted/with department; no normal issued-not-received bucket</li><li>Completed-not-issued-forward owner = Production Coordinator + Production Manager</li><li>Individual owner chase: Department HOD owns work-not-completed; Coordinator + Production Manager own completed-not-issued-forward</li><li>Style closure owner = Production Coordinator + Dept HOD; Production Manager handles movement/escalation/approval</li><li>WIP table page-specific filters, sorting, quick status buckets, and size-breakup toggle</li><li>Dashboard uses current-bin WIP logic: once a quantity moves to the next stage, it leaves the previous department bin.</li><li>Dashboard includes daily / 4-4-5 weekly / calendar-month production numbers, department × issue-type board, owner activity breakup, and production meeting focus.</li><li>Department-first dashboard pack: plan-vs-achieved/line efficiency, bottleneck/flow, aging/stuck WIP, quality/loss rate, party/outsource pending.</li><li>Dashboard drilldowns now use dashboard-specific rows, subtotal summaries, real size-stage data where available, and a visible size-source indicator.</li><li>Monthly comparison tab against Stitching Receiving with drillable summary filters</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Open-first WIP sheet modes: Open Control, Order View, Department View, Issue View, and Full Matrix</li><li>Focused WIP cell drawer shows selected department only; DPR entry shows only open styles for selected department/field; entry cells show open, previous, available, new entry, remaining and updated total; reductions/corrections require approval workflow later</li><li>Entry date / backdated audit logic with next-day default, same-day confirmation, reason and approval status</li><li>Live idle recalculation from production ledger where activity exists</li><li>Set convergence: a set packs/ships only min(components); Sets board + WIP chip show packable sets and unmatched pieces</li><li>Backdated entries validate feed as-of the entry date from the ledger; locked (older) backdated entries require reason + explicit manager-approval confirmation and are stamped in the audit ledger</li><li>Single configurable cutting tolerance replaces the old 8%/5%/0% mismatch</li><li>Party/outsource pending is consistent with the WIP open bucket (feed − output − R/A/M); outsourced stages label the with-department bucket as Pending at party</li><li>R/A/M day-entry path and impossible sequence reconcile checks</li><li>Planning tab: stitching line-wise rolling plan, department day-wise plan, department-specific planning pool, manual future plan, style-change-only 70% changeover remaining-hours formula, plan-vs-achieved style adherence, and Review control room. Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-info"><Lock size={12}/> Future RLS</span> <span className="mt-small">Keep this as a development app. We tighten RLS before real users and live factory data.</span></div></div>;
 }
 
 function withLiveIdle(rows, ledger=[], referenceDate=today()){
@@ -6471,7 +6614,7 @@ export default function App(){
   return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
     <style>{FONT + CSS}</style>
     <LoginDialog open={showLogin} force={!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
-    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Planning/grid upgrade: line-wise collapsible plan cards, vertical day cards, remaining-hours slot entry, multi-column WIP freeze, and Super Admin reset support.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
+    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Planning hotfix: 70% changeover is automatic on style-change day, but the checkbox is back for manual override.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
     <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Review · Reports. Supabase-first autosave · email login · audit/cell history · Excel-like exports.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className="mt-chip mt-info">{presenceSummaryText(presenceRows)}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${navCollapsed?"active":"ghost"}`} onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand left navigation"><Layers size={14}/>{navCollapsed?"Expand tabs":"Collapse tabs"}</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div></div><PresenceStrip peers={presenceRows}/></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
