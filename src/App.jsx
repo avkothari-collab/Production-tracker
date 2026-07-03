@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.85";
+const APP_VERSION = "V7.5.87";
 const APP_COMMIT_MESSAGE = "Production DPR V7.5.83 tail closure not idle based";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
@@ -90,6 +90,20 @@ button { min-height:34px; min-width:34px; touch-action:manipulation; }
 table.mt-table { width:100%; border-collapse:separate; border-spacing:0; min-width:1120px; }
 .mt-table th { position:sticky; top:0; z-index:2; background:var(--ink); color:var(--bg); border-right:1px solid var(--on-dark-line); border-bottom:1px solid var(--ink); padding:9px 8px; font-size:10px; text-align:left; font-weight:800; white-space:nowrap; }
 .mt-table td { border-right:1px solid var(--line-3); border-bottom:1px solid var(--line-3); padding:8px; vertical-align:top; font-size:11px; background:var(--surface); }
+
+.mt-readable-table .mt-table th { white-space:nowrap; font-size:10px; }
+.mt-readable-table .mt-table td { white-space:normal; overflow-wrap:normal; word-break:normal; max-width:220px; line-height:1.35; }
+.mt-readable-feed .mt-table td, .mt-readable-plan .mt-table td, .mt-readable-achieved .mt-table td { font-size:10.5px; }
+.mt-cell-tone-ok { background:#eef8f1 !important; color:#1f6f54; font-weight:800; }
+.mt-cell-tone-warn { background:#fff7d6 !important; color:#7a560f; font-weight:800; }
+.mt-cell-tone-late { background:#fff0ec !important; color:#8c241a; font-weight:800; }
+.mt-table-note { padding:7px 10px; border-top:1px dashed var(--line-2); color:var(--muted-2); font-size:10px; background:#fffaf1; }
+.mt-plan-action-card { min-height:112px; }
+.mt-plan-action-reading { display:flex; gap:5px; flex-wrap:wrap; }
+.mt-plan-reading-pill.danger { background:#fff0ec; color:#8c241a; }
+.mt-plan-reading-pill.warn { background:#fff7d6; color:#7a560f; }
+.mt-plan-reading-pill.ok { background:#eef8f1; color:#1f6f54; }
+
 .mt-table tr:hover td { background:#fffaf1; }
 .mt-sticky { position:sticky; left:0; z-index:1; box-shadow:1px 0 0 var(--line-2); }
 .mt-table th.mt-sticky { z-index:3; background:var(--ink); }
@@ -5702,9 +5716,25 @@ function planActionRowsForWeek(weekPlans, rows, planRows, ledger, activeDept, we
     const planQty = n(p.planned_qty);
     const balance = Math.max(0, planQty - achieved);
     const load = planLoadReadyInfo(p, rows, planRows, activeDept, line, day, ledger);
-    let tone = need.over ? "late" : need.depends ? "warn" : "ok";
-    let status = need.over ? `Short feed ${fmt(Math.abs(need.afterThisSlot))}` : need.depends ? `Depends on upstream ${fmt(need.projectedFeed)}` : "Load ready";
-    let action = need.over ? "Do not blindly run: adjust qty, wait feed, or manager override." : need.depends ? "Confirm upstream plan before loading this slot." : "Can run if line/operator plan is okay.";
+    const slotLoadShort = n(load?.short || 0);
+    const slotActuallyReady = load && !slotLoadShort && !load.depends;
+    const slotPlanReady = load && !slotLoadShort && load.depends;
+    const balanceReview = !!load?.balanceWarning;
+    let tone = slotLoadShort > 0 ? "late" : slotPlanReady ? "warn" : "ok";
+    let status = slotLoadShort > 0
+      ? `Feed short ${fmt(slotLoadShort)}`
+      : balanceReview
+        ? `Load ready · balance review ${fmt(load.balanceShort || 0)}`
+        : slotPlanReady
+          ? "Depends on upstream plan"
+          : "Load ready";
+    let action = slotLoadShort > 0
+      ? "This exact slot qty is not covered by actual/projected feed. Adjust qty, wait feed, or manager override."
+      : balanceReview
+        ? "This slot can load, but cumulative balance needs review in detail; do not show as red shortage."
+        : slotPlanReady
+          ? "Can run if upstream plan is achieved before loading; confirm previous department plan."
+          : "Can run if line/operator plan is okay.";
     if (day <= today() && achieved <= 0 && planQty > 0) { tone = "warn"; status = "DPR pending"; action = "Enter actual output or mark no production reason."; }
     if (day < today() && balance > 0 && achieved > 0) { tone = "warn"; status = `Balance ${fmt(balance)}`; action = "Review if balance will be covered, cascaded, or short closed."; }
     if (achieved >= planQty && planQty > 0) { tone = "ok"; status = "Achieved"; action = "No plan action unless extra output affects future balance."; }
@@ -6186,10 +6216,98 @@ function PrintableHodSheet({ rows }){
   return <div className="mt-card"><div className="mt-section no-print"><h3 className="mt-panel-title">Printable Department Head WIP</h3><div className="mt-panel-sub">Daily HOD sheet in horizontal size format. One row per style/component; sizes across columns.</div><div style={{marginTop:10}}><select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select> <button className="mt-btn" onClick={()=>window.print()}><Printer size={14}/>Print</button></div></div><div className="mt-section mt-print-sheet"><h3 style={{marginTop:0}}>{stageLabel(dept)} WIP Sheet — {today()}</h3><table className="mt-table" style={{minWidth:980}}><thead><tr><th>Order</th><th>Style</th><th>Colour</th><th>Component</th><th>Status</th>{allSizes.map(size=><th key={size}>{size}</th>)}<th>Total</th><th>Open</th><th>R/A/M</th><th>Idle</th><th>Owner</th><th>Action</th></tr></thead><tbody>{deptRows.map(row=>{ const st=sdata(row,dept); const c=cellBreakup(row,dept); const rs=rowStatus(row); const sizeQty=Object.fromEntries(sizeMatrix(row,dept,"received").map(x=>[x.size,x.qty])); return <tr key={row.id}><td>{row.order_no}</td><td><b>{row.style_no}</b></td><td>{row.colour}</td><td>{row.component}</td><td>{rs.status}</td>{allSizes.map(size=><td key={size}>{fmt(sizeQty[size] || 0)}</td>)}<td><b>{fmt(c.received)}</b></td><td>{fmt(c.open)}</td><td>{fmt(c.ram)}</td><td>{n(st.idle)}d</td><td>{rs.owner}</td><td>{rs.action}</td></tr>; })}</tbody></table></div></div>;
 }
 
+
+function friendlyTableHeader(key){
+  const map = {
+    Date:"Date", Day:"Day", Dept:"Dept", Stage:"Stage", Line:"Line", Style:"Style", Buyer:"Buyer", Order:"Order",
+    Planned_Style:"Style", Planned:"Plan", Plan_Qty:"Plan", Plan_Qty_Needed_This_Slot:"Need", Achieved:"Done", Achieved_Qty:"Done", Done:"Done",
+    Balance:"Balance", Variance:"Gap", Qty_Achievement:"Achv %", Achievement:"Achv %", Style_Adherence:"Match", Plan_Status:"Status",
+    Feed_Status:"Feed", Upstream_Rule:"Rule", Reading:"Reading", Load_Ready:"Load", P0_Status:"Check", Status:"Status",
+    Actual_Ready_Feed:"Ready now", Projected_Upstream_Feed:"Expected", Projected_Available_Feed:"Possible", Available_For_This_Slot:"Avail. for slot", After_This_Slot:"After slot", Earlier_Planned:"Earlier plan", Already_Done_In_Dept:"Done here",
+    Source:"Source", Source_Type:"Source type", Short_Close:"Short close", Remarks:"Note", End_Date:"End", OPS:"OPS", Hours:"Hrs", Plan_Hours:"Hrs",
+    Feed:"Feed", Output:"Good", Open_Work:"Open", Ready_To_Issue:"Ready", RAM:"R/A/M", Good:"Good", Issued:"Issued",
+    Original_Short:"Original short", Committed_Qty:"Committed", Recovered_Qty:"Recovered", Remaining_Qty:"Open", Due_By:"Due by", Reason:"Reason", Reviewed_By:"Reviewed by",
+    Task:"Task", Suggested_Action:"Action", Signal:"Signal", Miss_Count:"Misses", Total_Short:"Total short", Future_Slots:"Future slots", Future_Qty:"Future qty"
+  };
+  return map[key] || String(key || "").replace(/_/g," ").replace(/\b\w/g,m=>m.toUpperCase());
+}
+function compactPlanStatusText(v){
+  const s = String(v || "").trim();
+  if (!s) return "—";
+  if (/actual ready|ok/i.test(s)) return "Ready";
+  if (/depends_on_upstream_plan|depends/i.test(s)) return "Depends upstream";
+  if (/over_available_balance|over projected|over/i.test(s)) return "Balance review";
+  if (/p0_line_cascade_block/i.test(s)) return "Cascade blocked";
+  if (/draft\s*\/\s*review/i.test(s)) return "Review";
+  if (/draft/i.test(s)) return "Draft";
+  return s.replace(/_/g," ");
+}
+function compactPlanReadingFromRow(r){
+  const need = n(r.Plan_Qty_Needed_This_Slot ?? r.Plan_Qty ?? r.Planned ?? r.Planned_Qty);
+  const ready = n(r.Actual_Ready_Feed);
+  const expected = n(r.Projected_Upstream_Feed);
+  const avail = n(r.Available_For_This_Slot);
+  const after = n(r.After_This_Slot);
+  const done = n(r.Achieved ?? r.Achieved_Qty ?? r.Done);
+  const bal = n(r.Balance);
+  const status = compactPlanStatusText(r.Feed_Status || r.P0_Status || r.Plan_Status || r.Status);
+  if (need || ready || expected || avail || after) {
+    if (need && ready >= need) return `Need ${fmt(need)} · ready now ${fmt(ready)} · after ${fmt(Math.max(0, after))}`;
+    if (need && avail >= need) return `Need ${fmt(need)} · uses expected feed ${fmt(expected)} · after ${fmt(Math.max(0, after))}`;
+    if (need) return `Need ${fmt(need)} · available ${fmt(avail || ready + expected)} · short ${fmt(Math.max(0, need - (avail || ready + expected)))}`;
+  }
+  if (r.Planned !== undefined || r.Achieved !== undefined || r.Plan_Qty !== undefined) return `Plan ${fmt(r.Planned ?? r.Plan_Qty ?? r.Planned_Qty)} · done ${fmt(done)} · gap ${fmt(bal || Math.max(0, n(r.Planned ?? r.Plan_Qty ?? r.Planned_Qty)-done))}`;
+  return status || "—";
+}
+function tableTypeFromTitle(title=""){
+  const t = String(title || "").toLowerCase();
+  if (t.includes("projected feed")) return "feed";
+  if (t.includes("plan vs achieved") || t.includes("weekly achieved")) return "achieved";
+  if (t.includes("week plan rows") || t.includes("style plan slots") || t.includes("day-wise") || t.includes("line-wise")) return "plan";
+  if (t.includes("actual") || t.includes("wip breakup") || t.includes("size-wise")) return "wip";
+  if (t.includes("cover")) return "cover";
+  if (t.includes("repeated")) return "delay";
+  return "generic";
+}
+function simplifiedRowsForTable(title, rows=[]){
+  const type = tableTypeFromTitle(title);
+  if (!Array.isArray(rows)) return [];
+  if (type === "feed") return rows.map(r=>({
+    Date:r.Date, Line:r.Line, Style:r.Style, Need:n(r.Plan_Qty_Needed_This_Slot || r.Plan_Qty), "Ready now":n(r.Actual_Ready_Feed), "Expected feed":n(r.Projected_Upstream_Feed), "Available for slot":n(r.Available_For_This_Slot), "After slot":n(r.After_This_Slot), Result:compactPlanStatusText(r.Feed_Status), "Manager reading":compactPlanReadingFromRow(r)
+  }));
+  if (type === "achieved") return rows.map(r=>({
+    Date:r.Date, Line:r.Line, Style:r.Planned_Style || r.Style, Buyer:r.Buyer, Plan:n(r.Planned ?? r.Plan_Qty ?? r.Planned_Qty), Done:n(r.Achieved ?? r.Achieved_Qty), Gap:n(r.Variance ?? r.Balance), "%":r.Qty_Achievement || r.Achievement || "—", Result:compactPlanStatusText(r.Plan_Status || r.Style_Adherence || r.Status), "Next action": r.Remarks || (n(r.Variance)<0 ? "Check DPR / manager review" : "OK")
+  }));
+  if (type === "plan") return rows.map(r=>({
+    Date:r.Date, Line:r.Line, Style:r.Style, Buyer:r.Buyer, Plan:n(r.Plan_Qty ?? r.Planned_Qty ?? r.Plan_Qty_Needed_This_Slot), Done:n(r.Achieved_Qty || r.Achieved || r.Done), Balance:n(r.Balance), Load:r.Load_Ready || r.Load || "", Status:compactPlanStatusText(r.P0_Status || r.Status || r.Plan_Status), Note:r.Remarks || r.Reading || ""
+  }));
+  if (type === "wip") return rows.map(r=>({
+    Dept:r.Dept || r.Stage || "", Style:r.Style || "", Feed:n(r.Feed), Good:n(r.Output || r.Good), Issued:n(r.Issued), Ready:n(r.Ready_To_Issue || r.Ready), Open:n(r.Open_Work || r.Open), "R/A/M":n(r.RAM), Reading:r.Reading || r.Action || r.Info || ""
+  }));
+  if (type === "cover") return rows.map(r=>({ Date:r.Date, Line:r.Line, Style:r.Style, Committed:n(r.Committed_Qty), Recovered:n(r.Recovered_Qty), Open:n(r.Remaining_Qty), "Due by":r.Due_By, Status:compactPlanStatusText(r.Status), Reason:r.Reason || "" }));
+  if (type === "delay") return rows.map(r=>({ Dept:r.Dept, Style:r.Style, Buyer:r.Buyer, Misses:n(r.Miss_Count), "Total short":n(r.Total_Short), Future:n(r.Future_Qty), Signal:r.Signal, Action:r.Suggested_Action }));
+  return rows;
+}
+function simpleTableCellTone(key, value){
+  const k = String(key || "").toLowerCase();
+  const v = String(value || "").toLowerCase();
+  if (k.includes("result") || k.includes("status") || k.includes("load")) {
+    if (/short|failed|blocked|over|late|review/.test(v)) return " mt-cell-tone-late";
+    if (/depend|pending|warning|draft/.test(v)) return " mt-cell-tone-warn";
+    if (/ready|ok|achieved|closed|valid/.test(v)) return " mt-cell-tone-ok";
+  }
+  if (k.includes("gap") || k.includes("balance") || k.includes("open") || k.includes("short")) return n(value)>0 ? " mt-cell-tone-warn" : "";
+  return "";
+}
+
 function SimpleTable({ title, sub, rows, empty, onRowClick, exportName="" }){
-  const cols = rows.length ? Object.keys(rows[0]) : [];
+  const rawRows = Array.isArray(rows) ? rows : [];
+  const displayRows = simplifiedRowsForTable(title, rawRows);
+  const cols = displayRows.length ? Object.keys(displayRows[0]) : [];
   const canExport = !!exportName && currentUserCan("production.export");
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{sub}</div>{canExport ? <button className="mt-btn primary no-print" style={{marginTop:8}} onClick={()=>exportXlsx(`${exportName}_${today()}.xlsx`, [{ name:title, rows }])}><Download size={14}/>Export this table</button> : null}</div><div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{rows.length ? rows.map((r,i)=><tr key={i} className={onRowClick ? "drillable" : ""} onClick={()=>onRowClick?.(r)}>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] === undefined || r[c] === null ? "" : r[c])}</td>)}</tr>) : <tr><td style={{padding:18}}>{empty}</td></tr>}</tbody></table></div></div>;
+  const type = tableTypeFromTitle(title);
+  const infoSub = sub || "Summary first. Expand/use export for detailed audit when needed.";
+  return <div className={`mt-card mt-readable-table mt-readable-${type}`}><div className="mt-section"><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{infoSub}</div>{canExport ? <button className="mt-btn primary no-print" style={{marginTop:8}} onClick={()=>exportXlsx(`${exportName}_${today()}.xlsx`, [{ name:title, rows:rawRows }])}><Download size={14}/>Export detailed table</button> : null}</div><div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{friendlyTableHeader(c)}</th>)}</tr></thead><tbody>{displayRows.length ? displayRows.map((r,i)=><tr key={i} className={onRowClick ? "drillable" : ""} onClick={()=>onRowClick?.(rawRows[i] || r)}>{cols.map(c=>{ const val = r[c]; return <td key={c} className={simpleTableCellTone(c,val)}>{typeof val === "number" ? fmt(val) : String(val === undefined || val === null ? "" : val)}</td>; })}</tr>) : <tr><td colSpan={Math.max(1,cols.length)} style={{padding:18}}>{empty}</td></tr>}</tbody></table></div>{rawRows.length && displayRows !== rawRows ? <div className="mt-table-note no-print">Showing simplified manager-readable columns. Export keeps the full audit/detail data.</div> : null}</div>;
 }
 
 function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose, onOpenRegister, onSharedSave }){
