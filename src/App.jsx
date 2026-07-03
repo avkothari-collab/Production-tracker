@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.49";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.49 proper login approval workflow";
+const APP_VERSION = "V7.5.50";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.50 review history left navigation excel WIP exports";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -307,6 +307,29 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-correction-size { border:1px solid var(--line-2); border-radius:12px; padding:8px; background:#fffdf8; }
 .mt-correction-size .sz { font-weight:900; font-size:16px; margin-bottom:4px; }
 .mt-small.warn { color:var(--danger); font-weight:900; }
+
+.mt-layout { display:grid; grid-template-columns:230px minmax(0,1fr); gap:14px; align-items:start; }
+.mt-layout.nav-collapsed { grid-template-columns:58px minmax(0,1fr); }
+.mt-side-nav { position:sticky; top:10px; align-self:start; background:var(--surface); border:1px solid var(--line-2); border-radius:14px; overflow:hidden; box-shadow:var(--card-shadow); }
+.mt-side-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:9px; border-bottom:1px solid var(--line-3); background:#fff7ea; }
+.mt-side-title { font-family:'Archivo',sans-serif; font-size:12px; font-weight:800; letter-spacing:.25px; }
+.mt-side-nav button.mt-side-tab { width:100%; display:flex; align-items:center; justify-content:flex-start; gap:9px; border:0; border-bottom:1px solid var(--line-3); background:transparent; color:var(--muted-4); padding:10px 11px; min-height:40px; font-family:'Archivo',sans-serif; font-size:12px; font-weight:800; cursor:pointer; text-align:left; }
+.mt-side-nav button.mt-side-tab:hover { background:#fffaf1; color:var(--ink); }
+.mt-side-nav button.mt-side-tab.active { background:var(--ink); color:var(--bg); }
+.mt-side-nav button.mt-side-tab:disabled { opacity:.45; cursor:not-allowed; }
+.mt-layout.nav-collapsed .mt-side-title, .mt-layout.nav-collapsed .mt-side-label, .mt-layout.nav-collapsed .mt-side-lock { display:none; }
+.mt-layout.nav-collapsed .mt-side-head { justify-content:center; }
+.mt-layout.nav-collapsed .mt-side-nav button.mt-side-tab { justify-content:center; padding:10px 8px; }
+.mt-main-area { min-width:0; }
+.mt-review-mode-bar { display:flex; align-items:center; flex-wrap:wrap; gap:7px; padding:8px; border:1px solid var(--line-2); background:#fffaf1; border-radius:10px; margin-bottom:10px; }
+.mt-review-split { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; }
+.mt-history-kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-bottom:10px; }
+.mt-history-kpi { border:1px solid var(--line-2); background:var(--surface); border-radius:12px; padding:10px; }
+.mt-history-kpi .label { font-size:9px; text-transform:uppercase; color:var(--muted-2); font-weight:800; letter-spacing:.3px; }
+.mt-history-kpi .value { font-family:'Archivo',sans-serif; font-size:19px; font-weight:800; margin-top:4px; }
+.mt-excel-filter-pick { min-width:118px; }
+@media (max-width:980px){ .mt-layout,.mt-layout.nav-collapsed{grid-template-columns:1fr;} .mt-side-nav{position:relative;top:auto;} .mt-side-scroll{display:flex; overflow-x:auto;} .mt-side-nav button.mt-side-tab{width:auto; min-width:118px; border-right:1px solid var(--line-3);} .mt-layout.nav-collapsed .mt-side-label{display:inline;} }
+
 @media print { .mt-top,.mt-toolbar,.no-print,.mt-tabs { display:none !important; } .mt-page{padding:0;} .mt-card,.mt-table-wrap{border:0; box-shadow:none;} .mt-table th{background:#111 !important; color:#fff !important;} }
 @media (max-width:1180px){ .mt-dash-grid{grid-template-columns:repeat(3,minmax(0,1fr));} .mt-mini-board{grid-template-columns:1fr;} .mt-summary-strip,.mt-month-grid{grid-template-columns:repeat(2,minmax(0,1fr));} }
 @media (max-width:980px){ .mt-grid{grid-template-columns:repeat(2,minmax(0,1fr));} .mt-two{grid-template-columns:1fr;} }
@@ -1254,12 +1277,13 @@ function routeProgressSnapshot(row){
   return parts;
 }
 function CurrentStatusLinks({ row, onEntry, onOpen, compact=false }){
-  const parts = currentMovementStatusParts(row).slice(0, compact ? 4 : 8);
+  const allParts = currentMovementStatusParts(row);
+  const parts = allParts.slice(0, compact ? 1 : 8);
   if (!parts.length) return <button className="mt-primary-stage-card mt-dept-dispatch" onClick={(e)=>e.stopPropagation()} title="No active production status"><span><b>Closed</b><br/><span className="mt-small">Balanced</span></span><span className="big">100%</span></button>;
   return <div className="mt-status-cell-wrap compact-wrap">{parts.map((p,idx)=><button key={`${p.type}-${p.stage}-${idx}`} className={`mt-status-link ${deptClass(p.stage)}`} onClick={(e)=>{ e.stopPropagation(); onEntry ? onEntry(row, p.stage, p.field || currentStatusEntryField(p)) : onOpen?.(p.stage,p); }} title={`${p.note || p["action"] || "Open DPR Entry"}. Click to open DPR Entry for ${stageLabel(p.stage)} · ${fieldLabel(p.field || currentStatusEntryField(p))}`}>
     <span><span className="dept-name">{stageLabel(p.stage)}</span><br/><span className="mt-small">{p.label || shortStatusLabel(p)}</span></span>
     <span style={{textAlign:"right"}}><span className="dept-qty">{fmt(p.qty)}</span><br/><span className="dept-pct">{dualBaseText(row,p.qty)}</span></span>
-  </button>)}{parts.length>1 && <div className="mt-current-split-note">Current movement split · click to enter/edit DPR</div>}</div>;
+  </button>)}{compact && allParts.length>1 ? <div className="mt-current-split-note">Summary only · +{allParts.length-1} split in Route Progress</div> : allParts.length>1 ? <div className="mt-current-split-note">Current movement split · click to enter/edit DPR</div> : null}</div>;
 }
 function RouteProgressSnapshot({ row, onOpen, compact=false }){
   const parts = routeProgressSnapshot(row).slice(0, compact ? 8 : 12);
@@ -1919,6 +1943,147 @@ function allReportSizes(rows){
 }
 function withHorizontalSizes(row, qtyBySize, allSizes){
   return Object.fromEntries((allSizes || []).map(size => [size, n(qtyBySize?.[size]) || 0]));
+}
+
+function dateOnly(v){ return String(v || "").slice(0,10); }
+function actualActivityDate(e){ return dateOnly(e?.actual_date || e?.activity_date || e?.production_date || e?.entry_date || e?.entryDate || e?.date || e?.created_at || e?.createdAt); }
+function entryTypedAt(e){ return e?.created_at || e?.createdAt || e?.typed_at || e?.updated_at || ""; }
+function entryUser(e){ return e?.changed_by || e?.created_by || e?.user || e?.user_name || e?.validation_snapshot?.changed_by || "—"; }
+function entrySource(e){ return e?.entry_source || e?.source || e?.validation_snapshot?.source || ""; }
+function entryTypeRaw(e){ return String(e?.entry_type || e?.entryType || e?.type || "").toLowerCase(); }
+function entryQty(e){ return n(e?.qty ?? e?.delta ?? e?.good_qty ?? e?.reject_qty ?? e?.alter_qty ?? e?.missing_qty); }
+function entryTypeLabelFromRaw(raw){
+  const t = String(raw || "").toLowerCase();
+  if (["output","good_output","completed","complete","done"].includes(t)) return "Completed / Output";
+  if (["issue","issued"].includes(t)) return "Dept Issue Forward";
+  if (["receive","received"].includes(t)) return "Dept Receive";
+  if (["reject","rejection"].includes(t)) return "Rejection";
+  if (t === "missing") return "Missing";
+  if (t === "alter") return "Alter Defect";
+  if (t === "alter_clear") return "Alter Clear";
+  return fieldLabel(t || "entry");
+}
+function ledgerMatchesSearch(e,row,q){
+  const hay = [actualActivityDate(e), entryTypedAt(e), entryUser(e), entrySource(e), e?.order_no || e?.order || row?.order_no, e?.style_no || e?.style || row?.style_no, e?.buyer || row?.buyer, e?.colour || row?.colour, e?.component || row?.component, stageLabel(e?.stage || ""), entryTypeLabelFromRaw(entryTypeRaw(e))].join(" ").toLowerCase();
+  const tokens = String(q || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  return !tokens.length || tokens.every(t=>hay.includes(t));
+}
+function entryLogRows(rows, ledger=[], opts={}){
+  const mode = opts.mode || "summary";
+  const q = opts.search || "";
+  const dept = opts.dept || "all";
+  const activity = opts.activity || "all";
+  const allSizes = allReportSizes(rows);
+  const map = new Map();
+  (ledger || []).forEach(e=>{
+    const row = findRowForLedger(rows, e) || {};
+    const stage = String(e.stage || "");
+    const type = entryTypeRaw(e);
+    const label = entryTypeLabelFromRaw(type);
+    const activityDate = actualActivityDate(e);
+    if (!activityDate) return;
+    if (dept !== "all" && stage !== dept) return;
+    if (activity !== "all" && label !== activity) return;
+    if (!ledgerMatchesSearch(e,row,q)) return;
+    const styleKey = mode === "detail" ? [e.order_no || e.order || row.order_no || "", e.style_no || e.style || row.style_no || "", e.colour || row.colour || "", e.component || row.component || "", entrySource(e) || ""].join("|::|") : "SUMMARY";
+    // Deliberately group by the production actual/activity date, not the typed/created date.
+    const key = [activityDate, stage, label, styleKey].join("|::|");
+    if (!map.has(key)) {
+      map.set(key, {
+        Activity_Date:activityDate,
+        Department:stageLabel(stage),
+        Activity:label,
+        Order:e.order_no || e.order || row.order_no || "",
+        Style:e.style_no || e.style || row.style_no || "",
+        Buyer:e.buyer || row.buyer || "",
+        Colour:e.colour || row.colour || "",
+        Component:e.component || row.component || "",
+        Source:entrySource(e),
+        Entries:0,
+        Styles:new Set(),
+        Orders:new Set(),
+        Users:new Set(),
+        Total_Qty:0,
+        R_A_M:0,
+        First_Typed_At:"",
+        Last_Typed_At:"",
+        _sizes:{},
+      });
+    }
+    const g = map.get(key);
+    const qty = entryQty(e);
+    g.Entries += 1;
+    g.Total_Qty += qty;
+    if (["reject","rejection","missing","alter"].includes(type)) g.R_A_M += qty;
+    g.Styles.add(String(e.style_no || e.style || row.style_no || ""));
+    g.Orders.add(String(e.order_no || e.order || row.order_no || ""));
+    g.Users.add(entryUser(e));
+    const typedAt = entryTypedAt(e);
+    if (typedAt && (!g.First_Typed_At || String(typedAt) < String(g.First_Typed_At))) g.First_Typed_At = typedAt;
+    if (typedAt && (!g.Last_Typed_At || String(typedAt) > String(g.Last_Typed_At))) g.Last_Typed_At = typedAt;
+    const size = String(e.size || "").toUpperCase();
+    if (size) g._sizes[size] = n(g._sizes[size]) + qty;
+  });
+  return Array.from(map.values()).map(g=>{
+    const base = mode === "detail" ? {
+      Activity_Date:g.Activity_Date, Department:g.Department, Activity:g.Activity, Order:g.Order, Style:g.Style, Buyer:g.Buyer, Colour:g.Colour, Component:g.Component, Source:g.Source,
+    } : {
+      Activity_Date:g.Activity_Date, Department:g.Department, Activity:g.Activity, Orders:g.Orders.size, Styles:g.Styles.size,
+    };
+    const sizeCols = mode === "detail" ? withHorizontalSizes({}, g._sizes, allSizes) : {};
+    return { ...base, ...sizeCols, Total_Qty:g.Total_Qty, R_A_M:g.R_A_M, Entries:g.Entries, Users:Array.from(g.Users).filter(Boolean).join(", "), First_Typed_At:g.First_Typed_At, Last_Typed_At:g.Last_Typed_At };
+  }).sort((a,b)=>String(b.Activity_Date).localeCompare(String(a.Activity_Date)) || String(a.Department).localeCompare(String(b.Department)) || String(a.Style||"").localeCompare(String(b.Style||"")));
+}
+function receivingDaySummaryRows(rows, ledger=[], opts={}){
+  const q = opts.search || "";
+  const map = new Map();
+  (ledger || []).forEach(e=>{
+    const typ = entryTypeRaw(e);
+    if (!["receive","received","issue","issued"].includes(typ)) return;
+    const row = findRowForLedger(rows, e) || {};
+    if (!ledgerMatchesSearch(e,row,q)) return;
+    const date = actualActivityDate(e);
+    const stage = String(e.stage || "");
+    const key = [date, stage].join("|::|");
+    if (!map.has(key)) map.set(key, { Actual_Date:date, Department:stageLabel(stage), Received:0, Issued_Forward:0, Orders:new Set(), Styles:new Set(), Entries:0, Users:new Set() });
+    const g = map.get(key);
+    const qty = entryQty(e);
+    if (["receive","received"].includes(typ)) g.Received += qty;
+    if (["issue","issued"].includes(typ)) g.Issued_Forward += qty;
+    g.Orders.add(String(e.order_no || e.order || row.order_no || ""));
+    g.Styles.add(String(e.style_no || e.style || row.style_no || ""));
+    g.Users.add(entryUser(e));
+    g.Entries += 1;
+  });
+  return Array.from(map.values()).map(g=>({ Actual_Date:g.Actual_Date, Department:g.Department, Received:g.Received, Issued_Forward:g.Issued_Forward, Net_Receiving:g.Received-g.Issued_Forward, Orders:g.Orders.size, Styles:g.Styles.size, Entries:g.Entries, Users:Array.from(g.Users).filter(Boolean).join(", ") })).sort((a,b)=>String(b.Actual_Date).localeCompare(String(a.Actual_Date)) || String(a.Department).localeCompare(String(b.Department)));
+}
+function changeLogRows(rows, ledger=[], opts={}){
+  const q = opts.search || "";
+  return (ledger || []).filter(e=>{
+    const flags = [e.is_backdated, e.backdate_reason, e.approval_status, e.validation_status, e.validation_scope, e.validation_snapshot?.validation_status, e.old_qty, e.new_qty].some(Boolean);
+    const row = findRowForLedger(rows,e) || {};
+    return flags && ledgerMatchesSearch(e,row,q);
+  }).map(e=>{
+    const row = findRowForLedger(rows,e) || {};
+    return {
+      Activity_Date:actualActivityDate(e),
+      Typed_At:entryTypedAt(e),
+      User:entryUser(e),
+      Change_Type:String(e.validation_status || e.validation_scope || e.approval_status || (e.is_backdated ? "Backdated" : "Quantity change")),
+      Department:stageLabel(e.stage || ""),
+      Activity:entryTypeLabelFromRaw(entryTypeRaw(e)),
+      Order:e.order_no || e.order || row.order_no || "",
+      Style:e.style_no || e.style || row.style_no || "",
+      Colour:e.colour || row.colour || "",
+      Component:e.component || row.component || "",
+      Size:e.size || "",
+      Old_Qty:e.old_qty ?? e.oldQty ?? "",
+      New_Qty:e.new_qty ?? e.newQty ?? "",
+      Delta:entryQty(e),
+      Reason:e.backdate_reason || e.reason || e.validation_snapshot?.backdate_reason || "",
+      Approval:e.approval_status || e.approval || e.validation_status || e.validation_snapshot?.validation_status || "",
+    };
+  }).sort((a,b)=>String(b.Activity_Date).localeCompare(String(a.Activity_Date)) || String(b.Typed_At).localeCompare(String(a.Typed_At)));
 }
 function actualSizeSource(row, stageKey, field){
   return !!row?.size_stage?.[stageKey]?.[field];
@@ -2678,6 +2843,17 @@ function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
   const controlRows = wipControlRows(filtered);
   const openRowDrill = (row, stage) => onOpen?.(row, stage || rowStatus(row).stage || routeFor(row)[0] || "cutting");
   const modeRows = viewMode === "order" ? wipOrderViewRows(filtered) : viewMode === "department" ? departmentCurrentRows(filtered).map(({stage,...r})=>r) : viewMode === "issue" ? departmentIssueRows(filtered).map(({stage,type,...r})=>r) : [];
+  const currentWipExportRows = () => viewMode === "order" || viewMode === "department" || viewMode === "issue" ? modeRows : filtered.map(row=>{
+    const rs = rowStatus(row);
+    return { Order:row.order_no, Style:row.style_no, Buyer:row.buyer, Colour:row.colour, Component:row.component, Current_Status:statusText(row), Current_Summary:rs.status, Current_Dept:stageLabel(rs.stage), Open_Qty:rs.qty, Idle_Days:rs.idle, Owner:rs.owner, Route:routeFor(row).map(stageLabel).join(" > "), Next_Action:rs.action };
+  });
+  const stageWipExportRows = () => {
+    const allSizes = allReportSizes(filtered);
+    const stages = dept === "all" ? STAGES.map(s=>s.key) : [dept];
+    return filtered.flatMap(row => stages.filter(stage=>routeFor(row).includes(stage)).map(stage=>horizontalStageRow(row, stage, allSizes)));
+  };
+  function exportCurrentWip(){ exportXlsx(`production_wip_${viewMode}_${today()}.xlsx`, [{ name:`WIP ${viewMode}`, rows:currentWipExportRows() }]); }
+  function exportStageWip(){ exportXlsx(`production_wip_stage_detail_${dept}_${today()}.xlsx`, [{ name:"Style Stage Detail", rows:stageWipExportRows() }]); }
   return <div className="mt-card">
     <div className="mt-section"><h3 className="mt-panel-title">Live WIP Status — Grid / Open Control</h3><div className="mt-panel-sub">Pending Stage = one main action. Optional Route Progress / Balance shows cut, stage done, issued-forward and pack balance so the sheet stays precise but still traceable.</div></div>
     <div className="mt-section no-print">
@@ -2692,9 +2868,9 @@ function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
         <button className={`mt-btn ${hasGridColumnFilters ? "primary" : "ghost"}`} onClick={clearWipFilters}>Clear WIP Filters</button>
         <span className="mt-page-filter-note">{filtered.length} rows · {controlRows.length} open/control rows</span>
       </div>
-      <div className="mt-view-mode-bar"><span className="mt-toolbar-label">Sheet View</span>{[["matrix","Grid View"],["control","Open Control"],["order","Order View"],["department","Department View"],["issue","Issue View"]].map(([k,l])=><button key={k} className={`mt-btn ${viewMode===k?"active":"ghost"}`} onClick={()=>setViewMode(k)}>{l}</button>)}<button className={`mt-btn ${showCutActivity?"active":"ghost"}`} onClick={()=>setShowCutActivity(v=>!v)}>{showCutActivity ? "Hide Route Progress" : "Show Route Progress"}</button></div>
+      <div className="mt-view-mode-bar"><span className="mt-toolbar-label">Sheet View</span>{[["matrix","Grid View"],["control","Open Control"],["order","Order View"],["department","Department View"],["issue","Issue View"]].map(([k,l])=><button key={k} className={`mt-btn ${viewMode===k?"active":"ghost"}`} onClick={()=>setViewMode(k)}>{l}</button>)}<button className={`mt-btn ${showCutActivity?"active":"ghost"}`} onClick={()=>setShowCutActivity(v=>!v)}>{showCutActivity ? "Hide Route Progress" : "Show Route Progress"}</button>{currentUserCan("production.export") && <button className="mt-btn primary" onClick={exportCurrentWip}><Download size={14}/>Export Current View</button>}{currentUserCan("production.export") && <button className="mt-btn" onClick={exportStageWip}><Download size={14}/>Export Style Stage Detail</button>}<span className="mt-chip mt-info">Excel-like: sort headers + select filters + export</span></div>
     </div>
-    {viewMode === "order" || viewMode === "department" || viewMode === "issue" ? <SimpleTable title={viewMode==="order"?"Order-wise WIP summary":viewMode==="department"?"Department open summary":"Issue-wise open summary"} sub="Summary view first. Click Full Matrix or drill dashboards only when style-level detail is needed." rows={modeRows} empty="No rows in this view." /> : viewMode === "control" ? <div className="mt-table-wrap"><table className="mt-table mt-compact-wip-table"><thead><tr><th className="mt-sticky">Open Style / Order</th><th>Current Status / Entry</th><th>Next Action</th>{showCutActivity && <th>Route Progress / Balance</th>}<th>Open Qty</th><th>R/A/M</th><th>Idle</th><th>Owner</th></tr></thead><tbody>{controlRows.length ? controlRows.map(({row,status})=>{ const stage=status.stage || routeFor(row)[0] || "cutting"; const st=sdata(row,stage); const c=cellBreakup(row,stage); return <React.Fragment key={row.id}><tr className="drillable" onClick={()=>openRowDrill(row,stage)}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}</div></div></td><td><PrimaryPendingStage row={row} onOpen={(st)=>openRowDrill(row,st)} onEntry={onEntry}/></td><td><div className="mt-small">{status.action}</div></td>{showCutActivity && <td><RouteProgressSnapshot row={row} compact={true} onOpen={(st)=>openRowDrill(row,st)}/></td>}<td><div className="mt-open-big">{fmt(status.qty)}</div><div className="mt-small">{c.note}</div></td><td>{fmt(c.ram)}</td><td>{status.idle}d</td><td><b>{status.owner}</b>{status.support ? <div className="mt-small">Support: {status.support}</div> : null}</td></tr>{sizeBreak && <tr className="mt-subrow"><td colSpan={showCutActivity ? 8 : 7}><SizeBreakupStrip row={row} stage={selectedDeptForSize || stage}/></td></tr>}</React.Fragment>; }) : <tr><td colSpan={showCutActivity ? 8 : 7} style={{padding:18}}>No open/control rows in the current WIP filters.</td></tr>}</tbody></table></div> : <div className="mt-table-wrap"><table className="mt-table"><thead><tr><SortTh sticky label="Style" sortKey="style" sort={sort} setSort={setSort}/><SortTh label="Current Status / Entry" sortKey="status" sort={sort} setSort={setSort}/>{showCutActivity && <th>Route Progress / Balance</th>}<SortTh label="Owner" sortKey="owner" sort={sort} setSort={setSort}/><SortTh label="Route" sortKey="route" sort={sort} setSort={setSort}/>{STAGES.map(stage=><th key={stage.key}>{stage.short}</th>)}<SortTh label="Open" sortKey="open" sort={sort} setSort={setSort}/><SortTh label="Idle" sortKey="idle" sort={sort} setSort={setSort}/><th>Next Action</th></tr><tr className="mt-col-filter-row"><th className="mt-sticky"><input className="mt-col-filter-input" value={columnFilters.style || ""} onChange={e=>setGridColumnFilter("style", e.target.value)} placeholder="order/style/buyer/colour" /></th><th><input className="mt-col-filter-input" value={columnFilters.status || ""} onChange={e=>setGridColumnFilter("status", e.target.value)} placeholder="status/dept/qty" /></th>{showCutActivity && <th><input className="mt-col-filter-input" value={columnFilters.other || ""} onChange={e=>setGridColumnFilter("other", e.target.value)} placeholder="route progress" /></th>}<th><input className="mt-col-filter-input" value={columnFilters.owner || ""} onChange={e=>setGridColumnFilter("owner", e.target.value)} placeholder="owner" /></th><th><input className="mt-col-filter-input" value={columnFilters.route || ""} onChange={e=>setGridColumnFilter("route", e.target.value)} placeholder="route" /></th>{STAGES.map(stage=><th key={`filter-${stage.key}`}><input className="mt-col-filter-input stage" value={columnFilters[`stage:${stage.key}`] || ""} onChange={e=>setGridColumnFilter(`stage:${stage.key}`, e.target.value)} placeholder={`${stage.short} status`} title={`Filter ${stage.label} cell. Try: open, skip, over, 0R, feed, good qty`} /></th>)}<th><input className="mt-col-filter-input" value={columnFilters.open || ""} onChange={e=>setGridColumnFilter("open", e.target.value)} placeholder="qty" /></th><th><input className="mt-col-filter-input" value={columnFilters.idle || ""} onChange={e=>setGridColumnFilter("idle", e.target.value)} placeholder="idle" /></th><th><div style={{display:"flex",gap:4}}><input className="mt-col-filter-input" value={columnFilters.action || ""} onChange={e=>setGridColumnFilter("action", e.target.value)} placeholder="action" /><button className="mt-btn ghost mt-col-filter-clear" onClick={()=>setColumnFilters({})} title="Clear only grid column filters">Clear</button></div></th></tr></thead><tbody>
+    {viewMode === "order" || viewMode === "department" || viewMode === "issue" ? <SimpleTable title={viewMode==="order"?"Order-wise WIP summary":viewMode==="department"?"Department open summary":"Issue-wise open summary"} sub="Summary view first. Click Full Matrix or drill dashboards only when style-level detail is needed." rows={modeRows} empty="No rows in this view." /> : viewMode === "control" ? <div className="mt-table-wrap"><table className="mt-table mt-compact-wip-table"><thead><tr><th className="mt-sticky">Open Style / Order</th><th>Current Status / Entry</th><th>Next Action</th>{showCutActivity && <th>Route Progress / Balance</th>}<th>Open Qty</th><th>R/A/M</th><th>Idle</th><th>Owner</th></tr></thead><tbody>{controlRows.length ? controlRows.map(({row,status})=>{ const stage=status.stage || routeFor(row)[0] || "cutting"; const st=sdata(row,stage); const c=cellBreakup(row,stage); return <React.Fragment key={row.id}><tr className="drillable" onClick={()=>openRowDrill(row,stage)}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}</div></div></td><td><PrimaryPendingStage row={row} onOpen={(st)=>openRowDrill(row,st)} onEntry={onEntry}/></td><td><div className="mt-small">{status.action}</div></td>{showCutActivity && <td><RouteProgressSnapshot row={row} compact={true} onOpen={(st)=>openRowDrill(row,st)}/></td>}<td><div className="mt-open-big">{fmt(status.qty)}</div><div className="mt-small">{c.note}</div></td><td>{fmt(c.ram)}</td><td>{status.idle}d</td><td><b>{status.owner}</b>{status.support ? <div className="mt-small">Support: {status.support}</div> : null}</td></tr>{sizeBreak && <tr className="mt-subrow"><td colSpan={showCutActivity ? 8 : 7}><SizeBreakupStrip row={row} stage={selectedDeptForSize || stage}/></td></tr>}</React.Fragment>; }) : <tr><td colSpan={showCutActivity ? 8 : 7} style={{padding:18}}>No open/control rows in the current WIP filters.</td></tr>}</tbody></table></div> : <div className="mt-table-wrap"><table className="mt-table"><thead><tr><SortTh sticky label="Style" sortKey="style" sort={sort} setSort={setSort}/><SortTh label="Current Status / Entry" sortKey="status" sort={sort} setSort={setSort}/>{showCutActivity && <th>Route Progress / Balance</th>}<SortTh label="Owner" sortKey="owner" sort={sort} setSort={setSort}/><SortTh label="Route" sortKey="route" sort={sort} setSort={setSort}/>{STAGES.map(stage=><th key={stage.key}>{stage.short}</th>)}<SortTh label="Open" sortKey="open" sort={sort} setSort={setSort}/><SortTh label="Idle" sortKey="idle" sort={sort} setSort={setSort}/><th>Next Action</th></tr><tr className="mt-col-filter-row"><th className="mt-sticky"><input className="mt-col-filter-input" value={columnFilters.style || ""} onChange={e=>setGridColumnFilter("style", e.target.value)} placeholder="order/style/buyer/colour" /></th><th><select className="mt-col-filter-select mt-excel-filter-pick" value={columnFilters.status || ""} onChange={e=>setGridColumnFilter("status", e.target.value)}><option value="">All status</option><option value="with">With dept</option><option value="ready">Ready next</option><option value="issued">Issued</option><option value="reconcile">Reconcile</option><option value="ram">R/A/M</option><option value="closed">Closed</option></select></th>{showCutActivity && <th><input className="mt-col-filter-input" value={columnFilters.other || ""} onChange={e=>setGridColumnFilter("other", e.target.value)} placeholder="route progress" /></th>}<th><input className="mt-col-filter-input" value={columnFilters.owner || ""} onChange={e=>setGridColumnFilter("owner", e.target.value)} placeholder="owner" /></th><th><input className="mt-col-filter-input" value={columnFilters.route || ""} onChange={e=>setGridColumnFilter("route", e.target.value)} placeholder="route" /></th>{STAGES.map(stage=><th key={`filter-${stage.key}`}><select className="mt-col-filter-select stage" value={columnFilters[`stage:${stage.key}`] || ""} onChange={e=>setGridColumnFilter(`stage:${stage.key}`, e.target.value)} title={`Filter ${stage.label} cell`}><option value="">All</option><option value="open">Open</option><option value="0R">R/A/M</option><option value="skip">Skip</option><option value="over">Over</option><option value="feed">Feed</option><option value="good">Good</option></select></th>)}<th><input className="mt-col-filter-input" value={columnFilters.open || ""} onChange={e=>setGridColumnFilter("open", e.target.value)} placeholder="qty" /></th><th><input className="mt-col-filter-input" value={columnFilters.idle || ""} onChange={e=>setGridColumnFilter("idle", e.target.value)} placeholder="idle" /></th><th><div style={{display:"flex",gap:4}}><input className="mt-col-filter-input" value={columnFilters.action || ""} onChange={e=>setGridColumnFilter("action", e.target.value)} placeholder="action" /><button className="mt-btn ghost mt-col-filter-clear" onClick={()=>setColumnFilters({})} title="Clear only grid column filters">Clear</button></div></th></tr></thead><tbody>
       {filtered.map(row => { const rs = rowStatus(row); const sizeStage = selectedDeptForSize || rs.stage; const openDrill = () => openRowDrill(row, rs.stage || routeFor(row)[0] || "cutting"); return <React.Fragment key={row.id}>
         <tr>
           <td className="mt-sticky mt-clickable-cell" onClick={openDrill} title="Click to open selected/current department"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}<div className="mt-drill-hint">Open detail</div></div></div></td>
@@ -3179,21 +3355,26 @@ function receivingHistoryRows(row, stage, ledger=[]){
     const isPrevIssue = stg === prevStage;
     const entryDate = e.entry_date || e.date || "";
     const meaning = isPrevIssue ? `${stageLabel(prevStage)} issue to ${stageLabel(stage)}` : `${stageLabel(stage)} manual receive`;
-    const key = [entryDate, stg, typ, meaning, e.created_at || "", e.changed_by || e.created_by || "—"].join("|::|");
+    const key = [entryDate, stg, typ, meaning].join("|::|");
     if (!grouped.has(key)) {
       grouped.set(key, {
-        Entry_Date:entryDate,
+        Actual_Date:entryDate,
         Source_Dept:stageLabel(stg),
         Meaning:meaning,
         _sizeQty:Object.fromEntries(sizes.map(size=>[size,0])),
         Total:0,
-        Created_At:e.created_at || "",
-        By:e.changed_by || e.created_by || "—"
+        First_Typed_At:e.created_at || "",
+        Last_Typed_At:e.created_at || "",
+        Users:new Set([e.changed_by || e.created_by || "—"])
       });
     }
     const g = grouped.get(key);
     const size = e.size || "Total";
     const qty = n(e.qty ?? e.delta ?? e.good_qty);
+    const typedAt = e.created_at || "";
+    if (typedAt && (!g.First_Typed_At || String(typedAt) < String(g.First_Typed_At))) g.First_Typed_At = typedAt;
+    if (typedAt && (!g.Last_Typed_At || String(typedAt) > String(g.Last_Typed_At))) g.Last_Typed_At = typedAt;
+    g.Users.add(e.changed_by || e.created_by || "—");
     if (sizes.includes(size)) g._sizeQty[size] = n(g._sizeQty[size]) + qty;
     else g.Total = n(g.Total) + qty;
   });
@@ -3201,15 +3382,16 @@ function receivingHistoryRows(row, stage, ledger=[]){
   return Array.from(grouped.values()).map(g=>{
     const sizeCols = withHorizontalSizes(row, g._sizeQty, sizes);
     const sizeTotal = Object.values(sizeCols).reduce((a,b)=>a+n(b),0);
-    const { _sizeQty, ...rest } = g;
+    const { _sizeQty, Users, ...rest } = g;
     return {
-      Entry_Date:rest.Entry_Date,
+      Actual_Date:rest.Actual_Date,
       Source_Dept:rest.Source_Dept,
       Meaning:rest.Meaning,
       ...sizeCols,
       Total:n(rest.Total) + sizeTotal,
-      Created_At:rest.Created_At,
-      By:rest.By
+      First_Typed_At:rest.First_Typed_At,
+      Last_Typed_At:rest.Last_Typed_At,
+      Users:Array.from(Users || []).filter(Boolean).join(", ")
     };
   });
 }
@@ -3247,39 +3429,44 @@ function departmentOutputHistoryRows(row, stage, ledger=[]){
     const entryDate = e.entry_date || e.date || "";
     const createdAt = e.created_at || e.createdAt || "";
     const by = e.changed_by || e.created_by || e.user || "—";
-    const key = [entryDate, typ, e.entry_source || e.source || "", createdAt, by].join("|::|");
+    const key = [entryDate, typ, e.entry_source || e.source || ""].join("|::|");
     if (!grouped.has(key)) {
       grouped.set(key, {
-        Entry_Date:entryDate,
+        Actual_Date:entryDate,
         Department:stageLabel(stage),
         Activity:typeLabel(typ),
         Source:e.entry_source || e.source || "",
         _sizeQty:Object.fromEntries(sizes.map(size=>[size,0])),
         Total:0,
-        Created_At:createdAt,
-        By:by,
+        First_Typed_At:createdAt,
+        Last_Typed_At:createdAt,
+        Users:new Set([by]),
         Reason:e.backdate_reason || e.reason || ""
       });
     }
     const g = grouped.get(key);
     const size = e.size || "Total";
     const qty = n(e.qty ?? e.delta ?? e.good_qty);
+    if (createdAt && (!g.First_Typed_At || String(createdAt) < String(g.First_Typed_At))) g.First_Typed_At = createdAt;
+    if (createdAt && (!g.Last_Typed_At || String(createdAt) > String(g.Last_Typed_At))) g.Last_Typed_At = createdAt;
+    g.Users.add(by);
     if (sizes.includes(size)) g._sizeQty[size] = n(g._sizeQty[size]) + qty;
     else g.Total = n(g.Total) + qty;
   });
   return Array.from(grouped.values()).map(g=>{
     const sizeCols = withHorizontalSizes(row, g._sizeQty, sizes);
     const sizeTotal = Object.values(sizeCols).reduce((a,b)=>a+n(b),0);
-    const { _sizeQty, ...rest } = g;
+    const { _sizeQty, Users, ...rest } = g;
     return {
-      Entry_Date:rest.Entry_Date,
+      Actual_Date:rest.Actual_Date,
       Department:rest.Department,
       Activity:rest.Activity,
       Source:rest.Source,
       ...sizeCols,
       Total:n(rest.Total) + sizeTotal,
-      Created_At:rest.Created_At,
-      By:rest.By,
+      First_Typed_At:rest.First_Typed_At,
+      Last_Typed_At:rest.Last_Typed_At,
+      Users:Array.from(Users || []).filter(Boolean).join(", "),
       Reason:rest.Reason
     };
   });
@@ -4127,17 +4314,40 @@ function PlanningView({ rows, planRows, setPlanRows, ledger, setRows }){
 }
 function ReviewView({ rows, ledger, planRows }){
   const [section,setSection] = useState("cannotClose");
+  const [historyMode,setHistoryMode] = useState(()=>safeJsonLoad(uiStorageKey("review_history_mode"), "summary"));
+  const [historyTab,setHistoryTab] = useState(()=>safeJsonLoad(uiStorageKey("review_history_tab"), "entry_log"));
+  const [historySearch,setHistorySearch] = useState(()=>safeJsonLoad(uiStorageKey("review_history_search"), ""));
+  const [historyDept,setHistoryDept] = useState(()=>safeJsonLoad(uiStorageKey("review_history_dept"), "all"));
+  useEffect(()=>safeJsonSave(uiStorageKey("review_history_mode"), historyMode), [historyMode]);
+  useEffect(()=>safeJsonSave(uiStorageKey("review_history_tab"), historyTab), [historyTab]);
+  useEffect(()=>safeJsonSave(uiStorageKey("review_history_search"), historySearch), [historySearch]);
+  useEffect(()=>safeJsonSave(uiStorageKey("review_history_dept"), historyDept), [historyDept]);
   const rb = reviewBuckets(rows, ledger, planRows);
   const sectionMap = {
     ready:{ title:"Ready to Close", sub:"Numbers are clean; Production Coordinator should close these department/style balances.", rows:rb.ready },
     cannotClose:{ title:"Cannot Close — Open Balance", sub:"Main daily closure pain list. Department has unexplained/open balance; coordinator follows until explained/closed.", rows:rb.cannotClose },
     reconcile:{ title:"Reconcile Review", sub:"Impossible sequences or total jumps. These are data-integrity blockers, not normal WIP.", rows:rb.reconcile },
     ram:{ title:"Reject / Alter / Missing Review", sub:"Quality/loss/recovery control. Main list is horizontal/summary; reason breakup comes next.", rows:rb.ram },
-    risky:{ title:"Backdated / Risky Entry Review", sub:"Entry date is production activity date; created_at is actual entry time. Same-day/old backdated/corrections are reviewed here.", rows:rb.risky },
+    risky:{ title:"Backdated / Risky Entry Review", sub:"Entry date is production activity date; created_at is actual typing time. Same-day/old backdated/corrections are reviewed here.", rows:rb.risky },
     planDev:{ title:"Plan Deviation Review", sub:"Catches shortfalls and planned difficult styles being replaced by easier/unplanned output.", rows:rb.planDev },
   };
   const active = sectionMap[section];
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Review — Coordinator Control Room</h3><div className="mt-panel-sub">Review is not normal WIP viewing. It is where the Production Coordinator clears closures, open balances, reconcile, R/A/M, risky entries, and plan deviations after daily entries are done.</div></div><div className="mt-section no-print"><div className="mt-summary-strip">{Object.entries(sectionMap).map(([k,v])=><button key={k} className={`mt-summary-tile ${section===k?"active":""}`} onClick={()=>setSection(k)}><div className="label">{v.title}</div><div className="value">{v.rows.length}</div><div className="mt-small">drill review</div></button>)}</div></div><div className="mt-section"><SimpleTable title={active.title} sub={active.sub} rows={active.rows} empty="Nothing pending in this review section." /></div><div className="mt-section"><span className="mt-chip mt-info">Closing owner: Production Coordinator</span> <span className="mt-chip mt-muted">Department HOD owns work completion</span> <span className="mt-chip mt-muted">Production Manager only WIP escalation / approvals</span></div></div>;
+  const filteredLedgerOpts = { mode:historyMode, search:historySearch, dept:historyDept };
+  const entryRows = entryLogRows(rows, ledger, filteredLedgerOpts);
+  const receivingRows = receivingDaySummaryRows(rows, ledger, { search:historySearch });
+  const changeRows = changeLogRows(rows, ledger, { search:historySearch });
+  const cellRows = entryLogRows(rows, ledger, { ...filteredLedgerOpts, mode:"detail" });
+  const historyRows = historyTab === "receiving" ? receivingRows : historyTab === "changes" ? changeRows : historyTab === "cell" ? cellRows : entryRows;
+  const historyTitle = historyTab === "receiving" ? "Receiving / Issue Day-wise Summary" : historyTab === "changes" ? "Change Log / Corrections / Overrides" : historyTab === "cell" ? "Cell History — Style × Dept × Activity" : "Entry Log — Summary / Detailed";
+  const historySub = historyTab === "receiving" ? "Day-wise by production actual/activity date, not typed/created date. Same actual dates are combined." : historyTab === "changes" ? "Backdated entries, corrections, P0 sequence overrides and approval-stamped changes." : historyTab === "cell" ? "Cell-level production history grouped by actual date/style/dept/activity with horizontal size columns." : "Summary and detailed log both combine same actual/activity dates; typed time remains audit metadata only.";
+  const todayRows = entryLogRows(rows, ledger, { mode:"summary", search:"", dept:"all" }).filter(r=>r.Activity_Date===today());
+  function exportReviewSection(){ exportXlsx(`production_review_${section}_${today()}.xlsx`, [{ name:active.title, rows:active.rows }]); }
+  function exportHistory(){ exportXlsx(`production_review_${historyTab}_${historyMode}_${today()}.xlsx`, [{ name:historyTitle, rows:historyRows }]); }
+  function clearHistoryFilters(){ setHistorySearch(""); setHistoryDept("all"); }
+  return <div className="mt-review-split">
+    <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Review — Coordinator Control Room</h3><div className="mt-panel-sub">Review now combines closure review, reconcile, plan deviation, entry log, cell history and change log. This mirrors the Merch Tracker direction: operational review first, audit trace beside it.</div></div><div className="mt-section no-print"><div className="mt-summary-strip">{Object.entries(sectionMap).map(([k,v])=><button key={k} className={`mt-summary-tile ${section===k?"active":""}`} onClick={()=>setSection(k)}><div className="label">{v.title}</div><div className="value">{v.rows.length}</div><div className="mt-small">review</div></button>)}</div><div className="mt-toolbar"><button className="mt-btn primary" onClick={exportReviewSection}><Download size={14}/>Export Selected Review</button><span className="mt-chip mt-info">Closure rows: {active.rows.length}</span><span className="mt-chip mt-muted">Today ledger groups: {todayRows.length}</span></div></div><div className="mt-section"><SimpleTable title={active.title} sub={active.sub} rows={active.rows} empty="Nothing pending in this review section." exportName={`review_${section}`} /></div><div className="mt-section"><span className="mt-chip mt-info">Closing owner: Production Coordinator</span> <span className="mt-chip mt-muted">Department HOD owns work completion</span> <span className="mt-chip mt-muted">Production Manager only WIP escalation / approvals</span></div></div>
+    <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">History / Entry Log / Change Log</h3><div className="mt-panel-sub">Use this for cell history, overall production entry log, receiving day summary, and change/audit review. All production quantities are grouped by actual/activity date.</div></div><div className="mt-section no-print"><div className="mt-history-kpis"><div className="mt-history-kpi"><div className="label">Ledger rows</div><div className="value">{fmt((ledger||[]).length)}</div></div><div className="mt-history-kpi"><div className="label">Entry groups</div><div className="value">{fmt(entryRows.length)}</div></div><div className="mt-history-kpi"><div className="label">Receiving days</div><div className="value">{fmt(receivingRows.length)}</div></div><div className="mt-history-kpi"><div className="label">Change flags</div><div className="value">{fmt(changeRows.length)}</div></div></div><div className="mt-review-mode-bar"><span className="mt-toolbar-label">View</span>{[["entry_log","Entry Log"],["cell","Cell History"],["receiving","Receiving Summary"],["changes","Change Log"]].map(([k,l])=><button key={k} className={`mt-btn ${historyTab===k?"active":"ghost"}`} onClick={()=>setHistoryTab(k)}>{l}</button>)}<span className="mt-toolbar-label">Mode</span>{[["summary","Summary"],["detail","Detailed"]].map(([k,l])=><button key={k} className={`mt-btn ${historyMode===k?"active":"ghost"}`} onClick={()=>setHistoryMode(k)} disabled={historyTab==="receiving" || historyTab==="changes"}>{l}</button>)}<span className="mt-toolbar-label">Dept</span><select className="mt-select" value={historyDept} onChange={e=>setHistoryDept(e.target.value)}><option value="all">All departments</option>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select><Search size={14}/><input className="mt-input" value={historySearch} onChange={e=>setHistorySearch(e.target.value)} placeholder="style / order / user / source / date" style={{minWidth:240}}/><button className="mt-btn ghost" onClick={clearHistoryFilters}>Clear</button><button className="mt-btn primary" onClick={exportHistory}><Download size={14}/>Export History</button></div></div><div className="mt-section"><SimpleTable title={historyTitle} sub={historySub} rows={historyRows} empty="No history rows match current filters." exportName={`history_${historyTab}_${historyMode}`} /></div></div>
+  </div>;
 }
 
 function MonthlyComparison({ rows, ledger=[], clearTick=0 }){
@@ -4290,9 +4500,10 @@ function PrintableHodSheet({ rows }){
   return <div className="mt-card"><div className="mt-section no-print"><h3 className="mt-panel-title">Printable Department Head WIP</h3><div className="mt-panel-sub">Daily HOD sheet in horizontal size format. One row per style/component; sizes across columns.</div><div style={{marginTop:10}}><select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select> <button className="mt-btn" onClick={()=>window.print()}><Printer size={14}/>Print</button></div></div><div className="mt-section mt-print-sheet"><h3 style={{marginTop:0}}>{stageLabel(dept)} WIP Sheet — {today()}</h3><table className="mt-table" style={{minWidth:980}}><thead><tr><th>Order</th><th>Style</th><th>Colour</th><th>Component</th><th>Status</th>{allSizes.map(size=><th key={size}>{size}</th>)}<th>Total</th><th>Open</th><th>R/A/M</th><th>Idle</th><th>Owner</th><th>Action</th></tr></thead><tbody>{deptRows.map(row=>{ const st=sdata(row,dept); const c=cellBreakup(row,dept); const rs=rowStatus(row); const sizeQty=Object.fromEntries(sizeMatrix(row,dept,"received").map(x=>[x.size,x.qty])); return <tr key={row.id}><td>{row.order_no}</td><td><b>{row.style_no}</b></td><td>{row.colour}</td><td>{row.component}</td><td>{rs.status}</td>{allSizes.map(size=><td key={size}>{fmt(sizeQty[size] || 0)}</td>)}<td><b>{fmt(c.received)}</b></td><td>{fmt(c.open)}</td><td>{fmt(c.ram)}</td><td>{n(st.idle)}d</td><td>{rs.owner}</td><td>{rs.action}</td></tr>; })}</tbody></table></div></div>;
 }
 
-function SimpleTable({ title, sub, rows, empty, onRowClick }){
+function SimpleTable({ title, sub, rows, empty, onRowClick, exportName="" }){
   const cols = rows.length ? Object.keys(rows[0]) : [];
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{sub}</div></div><div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{rows.length ? rows.map((r,i)=><tr key={i} className={onRowClick ? "drillable" : ""} onClick={()=>onRowClick?.(r)}>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] === undefined || r[c] === null ? "" : r[c])}</td>)}</tr>) : <tr><td style={{padding:18}}>{empty}</td></tr>}</tbody></table></div></div>;
+  const canExport = !!exportName && currentUserCan("production.export");
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{sub}</div>{canExport ? <button className="mt-btn primary no-print" style={{marginTop:8}} onClick={()=>exportXlsx(`${exportName}_${today()}.xlsx`, [{ name:title, rows }])}><Download size={14}/>Export this table</button> : null}</div><div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{rows.length ? rows.map((r,i)=><tr key={i} className={onRowClick ? "drillable" : ""} onClick={()=>onRowClick?.(r)}>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] === undefined || r[c] === null ? "" : r[c])}</td>)}</tr>) : <tr><td style={{padding:18}}>{empty}</td></tr>}</tbody></table></div></div>;
 }
 
 function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose, onOpenRegister, onSharedSave }){
@@ -5367,7 +5578,7 @@ function UserAuditView({ profile, onSwitchUser, onLogout }){
   }
   return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Users / Login Requests / Permissions / History</h3><div className="mt-panel-sub">Proper production login flow: users request access with email/password, then Super Admin/Admin/Production Manager assigns role. SQL patch V7.5.49 adds password/status columns.</div></div><div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-chip mt-info"><UserCheck size={12}/>{profile.name || "Not logged in"}</span><span className="mt-chip mt-muted">{profile.role}</span><span className="mt-chip mt-muted">{profile.department || "—"}</span><button className="mt-btn" onClick={refresh} disabled={loading}><RefreshCw size={14}/>Refresh History</button><button className="mt-btn ghost" onClick={onSwitchUser}><Users size={14}/>Switch User</button><button className="mt-btn ghost" onClick={onLogout}><LogOut size={14}/>Logout</button>{msg && <span className={`mt-chip ${statusClass(msg.tone)}`}>{msg.text}</span>}</div></div><div className="mt-section"><h3 className="mt-panel-title">Current Role Permissions</h3><div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>{PRODUCTION_PERMISSIONS.map(([key,label])=><span key={key} className={`mt-chip ${isFullAccessRole(profile.role) || perms.includes(key) ? "mt-ok" : "mt-muted"}`}>{label}</span>)}</div><div className="mt-small" style={{marginTop:8}}>Last local tab history: {localHistory.length ? localHistory.join(" → ") : "No tab history yet"}</div></div>
     <div className="mt-section"><h3 className="mt-panel-title">Pending login requests</h3><div className="mt-panel-sub">Approve user role here. Pending users cannot open production screens.</div><div className="mt-table-wrap"><table className="mt-table"><thead><tr><th>User</th><th>Email</th><th>Requested Role</th><th>Department</th><th>Status</th><th>Approve As</th><th>Action</th></tr></thead><tbody>{pendingUsers.length ? pendingUsers.map(u=>{ const role=u.requested_role || "Data Operator"; return <tr key={u.email}><td>{u.display_name || u.user_name || displayNameFromEmail(u.email)}</td><td>{u.email}</td><td>{role}</td><td>{u.requested_department || u.department}</td><td><span className="mt-chip mt-warn">{u.access_status || "pending"}</span></td><td><select className="mt-select" defaultValue={role} onChange={e=>u.__approveRole=e.target.value}>{PRODUCTION_ROLES.filter(r=>r!=="Super Admin").map(r=><option key={r} value={r}>{r}</option>)}</select></td><td><button className="mt-btn" disabled={!canManage} onClick={()=>approveUser(u, u.__approveRole || role)}>Approve</button><button className="mt-btn ghost" disabled={!canManage} onClick={()=>rejectUser(u)}>Reject</button></td></tr>; }) : <tr><td colSpan="7">No pending requests.</td></tr>}</tbody></table></div></div>
-    <SimpleTable title="Active / recent users" sub="From production_app_users. Shows approved users, requested users and recent browser access." rows={(users||[]).map(u=>({ User:u.display_name || u.user_name, Role:u.role, Requested_Role:u.requested_role, Department:u.department || u.requested_department, Email:u.email, Status:u.access_status || (u.is_active ? "approved" : "pending"), Last_Seen:u.last_seen_at || u.created_at, Browser:u.browser_id }))} empty="No user rows yet. Run SQL patch and submit/approve one user."/><div style={{height:12}}/><SimpleTable title="Audit history" sub="Latest saves/corrections/sessions. Keep this horizontal and management-readable; raw JSON stays in metadata only." rows={(audit||[]).map(a=>({ Time:a.created_at, User:a.user_name, Role:a.user_role, Action:a.action || a.event_type, Table:a.table_name, Order:a.order_no, Style:a.style_no, Colour:a.colour, Component:a.component, Dept:stageLabel(a.stage || ""), Activity:a.entry_type, Date:a.entry_date, Qty:a.qty, Source:a.source }))} empty="No audit rows yet or SQL patch not run."/></div>;
+    <SimpleTable title="Active / recent users" sub="From production_app_users. Shows approved users, requested users and recent browser access." rows={(users||[]).map(u=>({ User:u.display_name || u.user_name, Role:u.role, Requested_Role:u.requested_role, Department:u.department || u.requested_department, Email:u.email, Status:u.access_status || (u.is_active ? "approved" : "pending"), Current_Page:u.login_note || "—", Last_Seen:u.last_seen_at || u.created_at, Browser:u.browser_id }))} empty="No user rows yet. Run SQL patch and submit/approve one user." exportName="production_active_users"/><div style={{height:12}}/><SimpleTable title="Audit history — detailed" sub="Latest saves/corrections/sessions. Date column is production activity date where available; Time is when user actually typed/saved it." rows={(audit||[]).map(a=>({ Time:a.created_at, Activity_Date:a.entry_date || String(a.created_at||"").slice(0,10), User:a.user_name, Role:a.user_role, Action:a.action || a.event_type, Table:a.table_name, Order:a.order_no, Style:a.style_no, Colour:a.colour, Component:a.component, Dept:stageLabel(a.stage || ""), Activity:a.entry_type, Qty:a.qty, Source:a.source }))} empty="No audit rows yet or SQL patch not run." exportName="production_audit_history"/></div>;
 }
 
 export default function App(){
@@ -5380,6 +5591,7 @@ export default function App(){
   const [buyer,setBuyer] = useState(()=>safeJsonLoad(uiStorageKey("global_buyer"), "All"));
   const [order,setOrder] = useState(()=>safeJsonLoad(uiStorageKey("global_order"), "All"));
   const [cleanMode,setCleanMode] = useState(()=>safeJsonLoad(uiStorageKey("clean_mode"), true));
+  const [navCollapsed,setNavCollapsed] = useState(()=>safeJsonLoad(uiStorageKey("left_nav_collapsed"), false));
   const [drawer,setDrawer] = useState(null);
   const [dashboardDrill,setDashboardDrill] = useState(null);
   const [registerFocus,setRegisterFocus] = useState(null);
@@ -5400,12 +5612,17 @@ export default function App(){
   useEffect(()=>safeJsonSave(uiStorageKey("global_buyer"), buyer), [buyer]);
   useEffect(()=>safeJsonSave(uiStorageKey("global_order"), order), [order]);
   useEffect(()=>safeJsonSave(uiStorageKey("clean_mode"), cleanMode), [cleanMode]);
+  useEffect(()=>safeJsonSave(uiStorageKey("left_nav_collapsed"), navCollapsed), [navCollapsed]);
   useEffect(()=>{
     safeJsonSave(uiStorageKey("active_tab"), tab);
     const history = safeJsonLoad(uiStorageKey("tab_history"), []);
     const next = [tab, ...history.filter(x=>x!==tab)].slice(0,8);
     safeJsonSave(uiStorageKey("tab_history"), next);
   }, [tab]);
+  useEffect(()=>{
+    if (!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved") || !hasValidSupabaseEnv()) return;
+    updateProductionUserAccess(userProfile.email, { login_note:`Active page: ${tab}`, browser_id:productionBrowserId(), last_seen_at:new Date().toISOString() });
+  }, [tab, userProfile?.email, userProfile?.access_status]);
   const sharedLedgerRows = useMemo(()=>applySharedLedgerTotalsToRows(rows, ledger), [rows, ledger]);
   const calcRows = useMemo(()=>withLiveIdle(sharedLedgerRows, ledger, today()), [sharedLedgerRows, ledger]);
   const buyers = ["All", ...Array.from(new Set(calcRows.map(r=>r.buyer).filter(Boolean))).sort()];
@@ -5594,10 +5811,13 @@ export default function App(){
   return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
     <style>{FONT + CSS}</style>
     <LoginDialog open={showLogin} force={!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
-    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Proper login screen added: work email + password, access request, pending approval, and Admin/Production Manager role assignment flow. P0 quantity truth remains strict.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
-    <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Reports. Supabase-first autosave · proper email/password login · admin role assignment · audit history.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=>{ const allowed = canOpenTab(k); return <button key={k} className={tab===k?"active":""} disabled={!allowed} title={allowed ? label : `Blocked: ${tabPermission(k)}`} onClick={()=>allowed && setTab(k)}><Icon size={14}/> {label}{!allowed ? " 🔒" : ""}</button>; })}</div></div></div>
+    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Review/history control room, collapsible left navigation, Excel-like WIP exports/filters, actual-date log grouping, and cleaner current-status summary. P0 quantity truth remains strict.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
+    <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Review · Reports. Supabase-first autosave · email login · audit/cell history · Excel-like exports.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${navCollapsed?"active":"ghost"}`} onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand left navigation"><Layers size={14}/>{navCollapsed?"Expand tabs":"Collapse tabs"}</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div></div></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
+      <div className={`mt-layout ${navCollapsed?"nav-collapsed":""}`}>
+        <aside className="mt-side-nav no-print"><div className="mt-side-head"><span className="mt-side-title">Pages</span><button className="mt-btn ghost" onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand tabs"><Layers size={14}/></button></div><div className="mt-side-scroll">{tabs.map(([k,label,Icon])=>{ const allowed = canOpenTab(k); return <button key={k} className={`mt-side-tab ${tab===k?"active":""}`} disabled={!allowed} title={allowed ? label : `Blocked: ${tabPermission(k)}`} onClick={()=>allowed && setTab(k)}><Icon size={15}/><span className="mt-side-label">{label}</span>{!allowed ? <span className="mt-side-lock">🔒</span> : null}</button>; })}</div></aside>
+        <main className="mt-main-area">
       <PageFilters tab={tab} query={query} setQuery={setQuery} buyer={buyer} setBuyer={setBuyer} buyers={buyers} order={order} setOrder={setOrder} orders={orders} visibleRows={visibleRows}/>
       <div className="mt-keepalive-note slim no-print"><span className="mt-chip mt-info">Remembered tab/draft</span><span className="mt-small">This browser remembers your tab/drafts. Saved production data is shared through Supabase and refreshes by realtime/polling.</span></div>
       <div className="mt-tab-panel" style={{display:tab==="dashboard"?"block":"none"}} aria-hidden={tab!=="dashboard"}><Dashboard rows={visibleRows} ledger={ledger} onDrill={setDashboardDrill} clearTick={clearFiltersTick}/></div>
@@ -5614,6 +5834,8 @@ export default function App(){
       <div className="mt-tab-panel" style={{display:tab==="reports"?"block":"none"}} aria-hidden={tab!=="reports"}>{currentUserCan("production.export") ? <Reports rows={visibleRows} ledger={ledger}/> : <PermissionGate permission="production.export" label="Reports"/>}</div>
       <div className="mt-tab-panel" style={{display:tab==="users"?"block":"none"}} aria-hidden={tab!=="users"}>{currentUserCan("production.audit_view") ? <UserAuditView profile={userProfile} onSwitchUser={()=>setShowLogin(true)} onLogout={logoutUser}/> : <PermissionGate permission="production.audit_view" label="Users / Audit"/>}</div>
       <div className="mt-tab-panel" style={{display:tab==="settings"?"block":"none"}} aria-hidden={tab!=="settings"}>{currentUserCan("production.manage_settings") ? <SettingsView onChanged={()=>setSettingsTick(t=>t+1)}/> : <PermissionGate permission="production.manage_settings" label="Settings"/>}</div>
+        </main>
+      </div>
     </div>
     {drawer && <DetailDrawer row={drawer.row} rows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} stageKey={drawer.stage} onClose={()=>setDrawer(null)} onOpenRegister={openRegisterFromWip} onSharedSave={handleSharedSave}/>} 
     {dashboardDrill && <DashboardDrillDrawer drill={dashboardDrill} rows={visibleRows} ledger={ledger} onClose={()=>setDashboardDrill(null)}/>} 
