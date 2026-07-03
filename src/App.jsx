@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.88";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.88 planning balance status cleanup";
+const APP_VERSION = "V6";
+const APP_COMMIT_MESSAGE = "Production DPR V6 dashboard and reports readability overhaul";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -394,7 +394,7 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-col-filter-row th.mt-sticky-col { z-index:11; background:#2b2722 !important; }
 .mt-wip-table-wrap.freeze-active { isolation:isolate; }
 .mt-wip-table-wrap.freeze-active .mt-style-main { min-width:0; }
-/* V7.5.80: freeze must behave like Excel: every row in the frozen columns stays locked,
+/* V6: freeze must behave like Excel: every row in the frozen columns stays locked,
    header/filter/body share the same left offsets, and stage cells scroll under the frozen pane. */
 .mt-wip-table-wrap.freeze-active .mt-table { border-collapse:separate; border-spacing:0; }
 .mt-wip-table-wrap.freeze-active .mt-table thead th.mt-sticky-col { z-index:32 !important; }
@@ -2424,7 +2424,7 @@ function StageCell({ row, stageKey, onOpen, style=null }){
 
 
 
-// V7.5.16 keeps V7.5.15 stable and improves selected-department output cards with full Good/R/A/M/accounted picture.
+// V6 keeps V6 stable and improves selected-department output cards with full Good/R/A/M/accounted picture.
 // These were accidentally dropped during the open-first sheet refactor. Keeping them
 // together avoids hidden runtime ReferenceErrors in dashboards/reports/monthly tabs.
 function sheetCell(row, stageKey){
@@ -3139,6 +3139,31 @@ function DonutCard({ title, sub, rows, labelKey="label", valueKey="value", onRow
   const gradient = total ? rows.map((r,i)=>{ const start=acc; const deg=(n(r[valueKey])*360)/total; acc += deg; return `${colors[i%colors.length]} ${start}deg ${acc}deg`; }).join(", ") : "#efe9df 0deg 360deg";
   return <div className="mt-context-card"><div className="mt-context-head"><div><h3 className="mt-context-title">{title}</h3><div className="mt-context-sub">{sub}</div></div><span className="mt-chip mt-info">{fmt(total)}</span></div><div className="mt-donut-wrap"><div className="mt-donut" style={{background:`conic-gradient(${gradient})`}}/><div className="mt-legend">{rows.slice(0,6).map((r,i)=><div key={i} className="mt-legend-row" onClick={()=>onRowClick?.(r)} style={{cursor:onRowClick?"pointer":"default"}}><span><span className="mt-dot" style={{background:colors[i%colors.length]}}/> {String(r[labelKey]).slice(0,20)}</span><b>{fmt(r[valueKey])}</b></div>)}</div></div></div>;
 }
+
+function DashboardActionCard({ title, value, sub, tone="info", onClick }){
+  return <button type="button" className="mt-card" onClick={onClick} style={{textAlign:"left", padding:0, cursor:onClick?"pointer":"default", borderColor:tone==="late"?"#e8aaa2":tone==="warn"?"#e4c46f":tone==="ok"?"#a7cdbb":"var(--line-2)", background:tone==="late"?"#fff4f1":tone==="warn"?"#fff9e5":tone==="ok"?"#f0fbf6":"var(--surface)"}}>
+    <div className="mt-section" style={{minHeight:104}}>
+      <div className="mt-panel-sub" style={{textTransform:"uppercase", fontWeight:800, letterSpacing:.4, margin:0}}>{title}</div>
+      <div className="mt-kpi" style={{border:0, padding:0, boxShadow:"none", background:"transparent"}}><div className="value" style={{fontSize:26}}>{value}</div></div>
+      <div className="mt-small" style={{lineHeight:1.35}}>{sub}</div>
+      {onClick ? <div style={{marginTop:8}}><span className={`mt-chip ${statusClass(tone)}`}>Open detail</span></div> : null}
+    </div>
+  </button>;
+}
+function DashboardBarPanel({ title, sub, rows, labelKey="label", valueKey="value", onRowClick, maxRows=8 }){
+  const cleanRows = (rows||[]).filter(r=>n(r[valueKey])>0).slice(0,maxRows);
+  const max = Math.max(1, ...cleanRows.map(r=>n(r[valueKey])));
+  return <div className="mt-card"><div className="mt-section"><div className="mt-drill-head"><div><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{sub}</div></div><span className="mt-chip mt-muted">{cleanRows.length} rows</span></div>
+    <div style={{display:"grid", gap:8, marginTop:10}}>{cleanRows.length ? cleanRows.map((r,i)=><button key={i} type="button" onClick={()=>onRowClick?.(r)} style={{border:"1px solid var(--line-2)", background:"var(--surface)", borderRadius:12, padding:9, cursor:onRowClick?"pointer":"default", textAlign:"left"}}>
+      <div style={{display:"flex", justifyContent:"space-between", gap:8, alignItems:"baseline"}}><b style={{fontFamily:"Archivo, sans-serif"}}>{String(r[labelKey] || "—")}</b><b>{fmt(r[valueKey])}</b></div>
+      <div className="mt-bar-track" style={{height:9, marginTop:6}}><div className="mt-bar-fill" style={{width:`${Math.max(2,(n(r[valueKey])*100)/max)}%`}} /></div>
+      {r.note || r.Note ? <div className="mt-small" style={{marginTop:5}}>{r.note || r.Note}</div> : null}
+    </button>) : <div className="mt-small">No data in current filter.</div>}</div>
+  </div></div>;
+}
+function DashboardQuickTable({ title, sub, rows, empty, onRowClick, exportName }){
+  return <details className="mt-fold"><summary>{title} <span className="mt-small" style={{fontFamily:"JetBrains Mono, monospace", marginLeft:8}}>{Array.isArray(rows)?rows.length:0} rows</span></summary><SimpleTable title={title} sub={sub} rows={rows} empty={empty} onRowClick={onRowClick} exportName={exportName}/></details>;
+}
 function Dashboard({ rows, ledger=[], onDrill, clearTick=0 }){
   const activityDate = latestActivityDate(ledger);
   const [selectedDate, setSelectedDate] = useState(()=>safeJsonLoad(uiStorageKey("dashboard_selected_date"), activityDate));
@@ -3152,6 +3177,7 @@ function Dashboard({ rows, ledger=[], onDrill, clearTick=0 }){
   const completedNotIssued = buckets.filter(b=>b.type==="completed_not_issued").reduce((a,b)=>a+n(b.qty),0);
   const receivedNotProcessed = buckets.filter(b=>b.type==="received_not_processed").reduce((a,b)=>a+n(b.qty),0);
   const ram = buckets.filter(b=>b.type==="ram").reduce((a,b)=>a+n(b.qty),0);
+  const tailQty = buckets.filter(b=>b.type==="tail_balance").reduce((a,b)=>a+n(b.qty),0);
   const deptRows = departmentCurrentRows(rows);
   const issueDeptRows = departmentIssueRows(rows);
   const ownerRows = ownerActivityRows(rows);
@@ -3170,54 +3196,73 @@ function Dashboard({ rows, ledger=[], onDrill, clearTick=0 }){
   useEffect(()=>safeJsonSave(uiStorageKey("dashboard_view"), dashView), [dashView]);
   useEffect(()=>{ if (!clearTick) return; setDashView("summary"); setSelectedDate(activityDate); }, [clearTick]);
   const issueMixRows = [
-    { Issue:"With Dept", Qty:receivedNotProcessed, kind:"received_not_processed" },
-    { Issue:"Ready / Not Issued", Qty:completedNotIssued, kind:"completed_not_issued" },
-    { Issue:"R/A/M", Qty:ram, kind:"ram" },
-    { Issue:"Reconcile", Qty:reconcile, kind:"reconcile" },
+    { Issue:"With department", Qty:receivedNotProcessed, kind:"received_not_processed", note:"Normal WIP being processed." },
+    { Issue:"Ready to move", Qty:completedNotIssued, kind:"completed_not_issued", note:"Information unless it blocks plan." },
+    { Issue:"R/A/M", Qty:ram, kind:"ram", note:"Reject / alter / missing." },
+    { Issue:"Reconcile", Qty:reconcile, kind:"reconcile", note:"Needs correction/review." },
   ].filter(x=>x.Qty>0);
-  const deptChartRows = deptRows.map(r=>({ Dept:r.Dept, Qty:n(r.Total_Qty || r.Open_Qty || r.Qty), stage:r.stage })).filter(r=>r.Qty>0);
+  const deptChartRows = deptRows.map(r=>({ Dept:r.Dept, Qty:n(r.Total_Open || r.Open_Qty || r.Qty), stage:r.stage, note:`${r.Styles || 0} styles` })).filter(r=>r.Qty>0);
+  const daily = periodRows[0] || {};
+  const hardActionQty = reconcile + ram + setsUnmatched;
+  const normalInfoQty = Math.max(0, openQty - hardActionQty);
+  const topActionRows = [
+    reconcile ? { title:"Reconcile / blocked", qty:reconcile, tone:"late", action:"Fix impossible quantity movement", drill:{kind:"reconcile", title:"Reconcile / Blocked"} } : null,
+    ram ? { title:"R/A/M", qty:ram, tone:"warn", action:"Review rejection/alter/missing", drill:{kind:"ram", title:"Reject / Alter / Missing"} } : null,
+    setsUnmatched ? { title:"Set mismatch", qty:setsUnmatched, tone:"warn", action:"Match top/bottom components", drill:{kind:"sets", title:"Sets Convergence"} } : null,
+    meetingRows.length ? { title:"Meeting focus", qty:meetingRows.length, tone:"info", action:"Open exception list", drill:{kind:"meeting_focus", title:"Production Meeting Focus"} } : null,
+  ].filter(Boolean);
+  const todayOutputRows = [
+    { Dept:"Cutting", Qty:n(daily.Cutting), kind:"period" },
+    { Dept:"Stitching receiving", Qty:n(daily.Stitching_Receiving), kind:"period" },
+    { Dept:"Checking", Qty:n(daily.Checking), kind:"period" },
+    { Dept:"Packing", Qty:n(daily.Packing), kind:"period" },
+    { Dept:"Dispatch", Qty:n(daily.Dispatch), kind:"period" },
+  ].filter(x=>x.Qty>0);
   return <>
-    <div className="mt-card" style={{marginBottom:12}}><div className="mt-section"><div className="mt-drill-head"><div><h3 className="mt-panel-title">Dashboard Mode</h3><div className="mt-panel-sub">Summary first, chart second, style rows only in drilldown. Use Table mode only when you want deep data.</div></div><div className="mt-toggle-row"><button className={`mt-btn ${dashView==="summary"?"active":""}`} onClick={()=>setDashView("summary")}>Summary</button><button className={`mt-btn ${dashView==="charts"?"active":""}`} onClick={()=>setDashView("charts")}>Charts</button><button className={`mt-btn ${dashView==="tables"?"active":""}`} onClick={()=>setDashView("tables")}>Tables</button></div></div></div></div>
-    <div className="mt-dash-grid">
-      <DrillKpi label="Active Styles" value={rows.length} note="All styles in current dashboard filter." tone="info" onClick={()=>onDrill?.({kind:"all_styles", title:"Active Styles"})}/>
-      <DrillKpi label="Total Open WIP" value={fmt(openQty)} note="Current bins only; issued to dept means accepted/with dept." tone={openQty?"warn":"ok"} onClick={()=>onDrill?.({kind:"open_qty", title:"Total Open WIP — Current Bins"})}/>
-      <DrillKpi label="With Dept" value={fmt(receivedNotProcessed)} note="Issued/accepted by dept but work not completed." tone={receivedNotProcessed?"info":"ok"} onClick={()=>onDrill?.({kind:"received_not_processed", title:"With Department"})}/>
-      <DrillKpi label="Ready / Not Issued" value={fmt(completedNotIssued)} note="Completed but not issued forward. Coordinator + Production Manager." tone={completedNotIssued?"info":"ok"} onClick={()=>onDrill?.({kind:"completed_not_issued", title:"Ready / Not Issued"})}/>
-      <DrillKpi label="Sets Unmatched" value={fmt(setsUnmatched)} note="Set pieces packed on one component with no partner component yet. A set ships only min(components)." tone={setsUnmatched?"warn":"ok"} onClick={()=>onDrill?.({kind:"sets", title:"Sets Convergence"})}/>
-      <DrillKpi label="Reconcile / Blocked" value={fmt(reconcile)} note="Total jump or impossible movement; manager approval only." tone={reconcile?"late":"ok"} onClick={()=>onDrill?.({kind:"reconcile", title:"Reconcile / Blocked"})}/>
-    </div>
-    {dashView !== "tables" && <div className="mt-context-grid">
-      <MiniBarCard title="Top risky orders" sub="Order-wise open/reconcile pressure before style drilldown." rows={orderRows.map(r=>({ Order:r.Order, Qty:n(r.Open_WIP)+n(r.Reconcile)*2+n(r.RAM), Raw:r })).filter(r=>r.Qty>0)} labelKey="Order" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"order", order:r.Order, title:`Order Summary — ${r.Order}`})}/>
-      <MiniBarCard title="Department open load" sub="Open WIP by department. Click to drill style/size only when needed." rows={deptChartRows} labelKey="Dept" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"stage", stage:r.stage, title:`${r.Dept} Current WIP Bins`})}/>
-      <DonutCard title="Issue mix" sub="Part-to-whole split of current production issues." rows={issueMixRows} labelKey="Issue" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:r.kind, title:r.Issue})}/>
-    </div>}
-    <details className="mt-fold" open={dashView==="tables" || dashView==="summary"}><summary>Order-wise Production Summary</summary><SimpleTable title="Order-wise Production Summary" sub="Use this first when many styles are active. Orders group styles/components so dashboards stay manageable. Click any order to drill into its styles." rows={orderRows} empty="No orders in current dashboard scope." onRowClick={(r)=>onDrill?.({kind:"order", order:r.Order, title:`Order Summary — ${r.Order}`})}/></details>
-    <div className="mt-card" style={{marginBottom:12}}>
-      <div className="mt-section"><h3 className="mt-panel-title">Daily / 4-4-5 Weekly / Monthly Production Numbers</h3><div className="mt-panel-sub">Calendar opens to the latest activity date. Daily = selected date. Weekly = 4-4-5 production week, Monday–Saturday. Monthly = exact calendar month dates. Rows are drillable.</div><div className="mt-toolbar" style={{marginTop:10}}><span className="mt-toolbar-label">Activity date</span><input className="mt-input mt-entry-date" type="date" value={selectedDate || activityDate} onChange={e=>setSelectedDate(e.target.value)} /><span className="mt-chip mt-info">{cal.fullLabel}</span><span className="mt-chip mt-muted">Calendar month {fullMonthLabel(parseYmd(selectedDate || activityDate))}</span></div></div>
-      <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th>Period</th><th>Date Range</th><th>Cutting</th><th>Stitching Receiving</th><th>Checking</th><th>Packing</th><th>Dispatch</th><th>R/A/M</th><th>Rows</th></tr></thead><tbody>{periodRows.map(r=><tr key={r.period} className="drillable" onClick={()=>onDrill?.({kind:"period", period:r.period, start:r.Start_Date, end:r.End_Date, title:`${r.Period} Activity Entries`})}><td><b>{r.Period}</b></td><td>{r.Date_Range}</td><td>{fmt(r.Cutting)}</td><td>{fmt(r.Stitching_Receiving)}</td><td>{fmt(r.Checking)}</td><td>{fmt(r.Packing)}</td><td>{fmt(r.Dispatch)}</td><td>{fmt(r.RAM)}</td><td>{r.Rows}</td></tr>)}</tbody></table></div>
-    </div>
-    {dashView !== "charts" && <>
-    <div className="mt-mini-board">
-      <SimpleTable title="Plan vs Achieved / Line Efficiency" sub="Department-first production meeting spine. Uses ledger plan where present; otherwise achieved is shown and plan is marked pending." rows={lineRows.slice(0,12)} empty="No line output yet." onRowClick={()=>onDrill?.({kind:"line_efficiency", start:cal.weekStart, end:cal.weekEnd, title:`Line Efficiency — ${cal.fullLabel}`})}/>
-      <SimpleTable title="Bottleneck / Flow Board" sub="Daily Rate = recent 7-day average output. Days Cover = Queue WIP ÷ Daily Rate. Bottleneck Score = Queue WIP + 2×Reconcile + R/A/M. Highest risk first." rows={bottleneckRows.map(({stage,...r})=>r).slice(0,12)} empty="No bottleneck rows." onRowClick={()=>onDrill?.({kind:"bottleneck", title:"Bottleneck / Flow Drilldown"})}/>
-      <SimpleTable title="Aging / Stuck WIP" sub="Dept-wise WIP by aging bucket: 0–2d, 3–6d, 7–13d, 14d+. Uses live idle where ledger exists." rows={agingRows.map(({stage,...r})=>r).slice(0,12)} empty="No aged WIP." onRowClick={()=>onDrill?.({kind:"aging", title:"Aging / Stuck WIP"})}/>
-    </div>
-    <div className="mt-mini-board" style={{marginTop:12}}>
-      <SimpleTable title="Department WIP — Current Bins" sub="Correct bin logic: once a stage activity moves on, the qty leaves that old bin and appears only in the next active bin. Rows are drillable by department." rows={deptRows.map(({stage,...r})=>r)} empty="No department WIP." onRowClick={(r)=>{ const match = deptRows.find(x=>x.Dept===r.Dept); onDrill?.({kind:"stage", stage:match?.stage, title:`${r.Dept} Current WIP Bins`}); }}/>
-      <SimpleTable title="Department × Issue Type Board" sub="Issue type without department is not useful; this shows exactly which department has which issue. Rows drill to style/size detail." rows={issueDeptRows.map(({stage,type,...r})=>r)} empty="No open issue by department." onRowClick={(r)=>{ const match = issueDeptRows.find(x=>x.Dept===r.Dept && x.Issue===r.Issue); onDrill?.({kind:"dept_issue", stage:match?.stage, type:match?.type, title:`${r.Dept} — ${r.Issue}`}); }}/>
-      <SimpleTable title="Owner Activity Board" sub="Owner-wise breakup separates normal production WIP, R/A/M and reconciliation so chase is clear." rows={ownerRows.slice(0,10)} empty="No owner activity." onRowClick={(r)=>onDrill?.({kind:"owner", owner:r.Owner, title:`Owner Activity — ${r.Owner}`})}/>
-    </div>
-    <div className="mt-mini-board" style={{marginTop:12}}>
-      <SimpleTable title="Quality / Loss Rate" sub="Reject, alter, missing and loss-rate by department. Rows drill to R/A/M style-size detail." rows={qualityRows.map(({stage,...r})=>r).slice(0,12)} empty="No quality/loss rows." onRowClick={()=>onDrill?.({kind:"quality_loss", title:"Quality / Loss Drilldown"})}/>
-      <SimpleTable title="Party / Outsource Pending" sub="Print/emb/pack outsourced WIP by party, process, pending qty and age." rows={partyRows.map(({stage,...r})=>r).slice(0,12)} empty="No party pending rows." onRowClick={()=>onDrill?.({kind:"party_pending", title:"Party / Outsource Pending"})}/>
-      <SimpleTable title="Reconciliation Dashboard" sub="Separate reconciliation board. Only impossible/blocked quantity movements appear here; rows drill to the exact style-size issue." rows={reconciliationRows.map(({stage,type,...r})=>r)} empty="No reconciliation blockers." onRowClick={(r)=>{ const match = reconciliationRows.find(x=>x.Dept===r.Dept && x.Reconcile_Type===r.Reconcile_Type); onDrill?.({kind:"dept_issue", stage:match?.stage, type:"reconcile", title:`Reconciliation — ${r.Dept}`}); }}/>
-    </div>
-    <div style={{marginTop:12}}>
-      <SimpleTable title="Sets Convergence — packable = min(components)" sub="For set styles (top+bottom etc.), a set can only pack and dispatch as many as the lagging component. Packable Sets = lowest component; Unmatched = ahead-component pieces with no partner yet." rows={setRows} empty="No multi-component set styles in view." onRowClick={()=>onDrill?.({kind:"sets", title:"Sets Convergence"})}/>
-    </div>
-    <div style={{marginTop:12}}>
-      <SimpleTable title="Production Meeting Focus" sub="Meeting action list: blocker first, then biggest open qty × idle days. Every row drills to the useful style/size detail." rows={meetingRows} empty="No open meeting focus rows." onRowClick={()=>onDrill?.({kind:"meeting_focus", title:"Production Meeting Focus"})}/>
-    </div>
+    <div className="mt-card" style={{marginBottom:12}}><div className="mt-section">
+      <div className="mt-drill-head"><div><h3 className="mt-panel-title">Dashboard</h3><div className="mt-panel-sub"><b>Summary</b> = what to act on now. <b>Graphs</b> = easy visual comparison. <b>Tables</b> = expandable detail for audit/export. Every card and row is drillable.</div></div><div className="mt-toggle-row"><button className={`mt-btn ${dashView==="summary"?"active":""}`} onClick={()=>setDashView("summary")}>Summary</button><button className={`mt-btn ${dashView==="charts"?"active":""}`} onClick={()=>setDashView("charts")}>Graphs</button><button className={`mt-btn ${dashView==="tables"?"active":""}`} onClick={()=>setDashView("tables")}>Tables</button></div></div>
+      <div className="mt-toolbar" style={{marginTop:10}}><span className="mt-toolbar-label">Activity date</span><input className="mt-input mt-entry-date" type="date" value={selectedDate || activityDate} onChange={e=>setSelectedDate(e.target.value)} /><span className="mt-chip mt-info">{cal.fullLabel}</span><span className="mt-chip mt-muted">Month {fullMonthLabel(parseYmd(selectedDate || activityDate))}</span></div>
+    </div></div>
+
+    {dashView === "summary" && <>
+      <div className="mt-grid" style={{marginBottom:12}}>
+        <DashboardActionCard title="Needs action" value={fmt(hardActionQty)} sub={hardActionQty ? "Reconcile, R/A/M or set mismatch. Open before meeting." : "No hard blocker in current filter."} tone={hardActionQty?"late":"ok"} onClick={()=>onDrill?.(hardActionQty ? {kind:"meeting_focus", title:"Dashboard Action List"} : {kind:"all_styles", title:"All Styles"})}/>
+        <DashboardActionCard title="Normal WIP / info" value={fmt(normalInfoQty)} sub="With department / ready to move. Monitor, not automatically a manager task." tone="info" onClick={()=>onDrill?.({kind:"open_qty", title:"Normal WIP / Current Bins"})}/>
+        <DashboardActionCard title="Today output" value={fmt(todayOutputRows.reduce((a,r)=>a+n(r.Qty),0))} sub={`${selectedDate || activityDate}. Click for daily ledger rows.`} tone="ok" onClick={()=>onDrill?.({kind:"period", period:"daily", start:selectedDate || activityDate, end:selectedDate || activityDate, title:`Daily Activity — ${selectedDate || activityDate}`})}/>
+        <DashboardActionCard title="Active styles" value={rows.length} sub="All styles in current filter. Use drilldown for style detail." tone="info" onClick={()=>onDrill?.({kind:"all_styles", title:"Active Styles"})}/>
+      </div>
+      <div className="mt-two" style={{marginBottom:12}}>
+        <div className="mt-card"><div className="mt-section"><div className="mt-drill-head"><div><h3 className="mt-panel-title">Today’s factory reading</h3><div className="mt-panel-sub">Plain-language meeting list. These are summaries; click for rows.</div></div><span className="mt-chip mt-muted">{topActionRows.length || 1} items</span></div>
+          <div style={{display:"grid", gap:8, marginTop:10}}>{topActionRows.length ? topActionRows.map((r,i)=><button key={i} className="mt-card" style={{boxShadow:"none", textAlign:"left", cursor:"pointer"}} onClick={()=>onDrill?.(r.drill)}><div className="mt-section" style={{padding:10}}><div style={{display:"flex", justifyContent:"space-between", gap:8}}><b>{r.title}</b><span className={`mt-chip ${statusClass(r.tone)}`}>{fmt(r.qty)}</span></div><div className="mt-small" style={{marginTop:5}}>{r.action}</div></div></button>) : <div className="mt-card" style={{boxShadow:"none"}}><div className="mt-section" style={{padding:10}}><b>Looks clear</b><div className="mt-small" style={{marginTop:5}}>No hard blocker in this filter. Use Normal WIP to monitor flow.</div></div></div>}</div>
+        </div></div>
+        <DashboardBarPanel title="Department load" sub="Where the quantity is sitting now. Click a department for style detail." rows={deptChartRows} labelKey="Dept" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"stage", stage:r.stage, title:`${r.Dept} Current WIP`})}/>
+      </div>
+      <div className="mt-two">
+        <SimpleTable title="Order summary" sub="Order-level first so many styles do not become noise. Click order for style rows." rows={orderRows.slice(0,10)} empty="No orders in current dashboard scope." onRowClick={(r)=>onDrill?.({kind:"order", order:r.Order, title:`Order — ${r.Order}`})}/>
+        <SimpleTable title="Line output summary" sub="Stitching line plan/actual reading for selected production week." rows={lineRows.slice(0,10)} empty="No line output yet." onRowClick={()=>onDrill?.({kind:"line_efficiency", start:cal.weekStart, end:cal.weekEnd, title:`Line Output — ${cal.fullLabel}`})}/>
+      </div>
+    </>}
+
+    {dashView === "charts" && <>
+      <div className="mt-grid" style={{marginBottom:12}}>
+        <DashboardBarPanel title="Today output by department" sub="Actual entry posted on selected date." rows={todayOutputRows} labelKey="Dept" valueKey="Qty" onRowClick={()=>onDrill?.({kind:"period", period:"daily", start:selectedDate || activityDate, end:selectedDate || activityDate, title:`Daily Activity — ${selectedDate || activityDate}`})}/>
+        <DashboardBarPanel title="Department WIP" sub="Current open quantity by department." rows={deptChartRows} labelKey="Dept" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"stage", stage:r.stage, title:`${r.Dept} Current WIP`})}/>
+        <DashboardBarPanel title="Issue mix" sub="Normal info vs true issues." rows={issueMixRows} labelKey="Issue" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:r.kind, title:r.Issue})}/>
+        <DashboardBarPanel title="Top risky orders" sub="Open WIP + higher weight for reconcile/RAM." rows={orderRows.map(r=>({ Order:r.Order, Qty:n(r.Open_WIP)+n(r.Reconcile)*2+n(r.RAM), Raw:r })).filter(r=>r.Qty>0)} labelKey="Order" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"order", order:r.Order, title:`Order — ${r.Order}`})}/>
+      </div>
+      <div className="mt-two"><DashboardBarPanel title="Bottleneck score" sub="Queue + R/A/M + reconcile pressure." rows={bottleneckRows.map(r=>({ Dept:r.Dept, Qty:n(r.Bottleneck_Score), stage:r.stage, note:`Queue ${fmt(r.Queue_WIP)} · cover ${r.Days_Cover}d` }))} labelKey="Dept" valueKey="Qty" onRowClick={()=>onDrill?.({kind:"bottleneck", title:"Bottleneck / Flow"})}/><DashboardBarPanel title="Quality / loss" sub="R/A/M by department." rows={qualityRows.map(r=>({ Dept:r.Dept, Qty:n(r.RAM_Qty || r.Total_Loss || r.Loss_Qty), stage:r.stage }))} labelKey="Dept" valueKey="Qty" onRowClick={()=>onDrill?.({kind:"quality_loss", title:"Quality / Loss"})}/></div>
+    </>}
+
+    {dashView === "tables" && <>
+      <DashboardQuickTable title="Order-wise summary" sub="Grouped order view. Expand only when needed." rows={orderRows} empty="No orders in current scope." onRowClick={(r)=>onDrill?.({kind:"order", order:r.Order, title:`Order — ${r.Order}`})} exportName="dashboard_order_summary"/>
+      <DashboardQuickTable title="Daily / weekly / monthly output" sub="Period numbers use activity entry date." rows={periodRows} empty="No period activity rows." onRowClick={(r)=>onDrill?.({kind:"period", period:r.period, start:r.Start_Date, end:r.End_Date, title:`${r.Period} Activity`})} exportName="dashboard_period_output"/>
+      <DashboardQuickTable title="Department WIP" sub="Department-wise current bins. Normal WIP is information; exceptions are highlighted separately." rows={deptRows.map(({stage,...r})=>r)} empty="No department WIP." onRowClick={(r)=>{ const match = deptRows.find(x=>x.Dept===r.Dept); onDrill?.({kind:"stage", stage:match?.stage, title:`${r.Dept} Current WIP`}); }} exportName="dashboard_department_wip"/>
+      <DashboardQuickTable title="Department issue summary" sub="Issue by department. Click for style/size rows." rows={issueDeptRows.map(({stage,type,...r})=>r)} empty="No issue rows." onRowClick={(r)=>{ const match = issueDeptRows.find(x=>x.Dept===r.Dept && x.Issue===r.Issue); onDrill?.({kind:"dept_issue", stage:match?.stage, type:match?.type, title:`${r.Dept} — ${r.Issue}`}); }} exportName="dashboard_dept_issue"/>
+      <DashboardQuickTable title="Owner summary" sub="Owner-wise activity. Use this after department summary." rows={ownerRows} empty="No owner rows." onRowClick={(r)=>onDrill?.({kind:"owner", owner:r.Owner, title:`Owner — ${r.Owner}`})} exportName="dashboard_owner_summary"/>
+      <DashboardQuickTable title="Quality / R/A/M" sub="Reject, alter, missing and loss reading." rows={qualityRows.map(({stage,...r})=>r)} empty="No quality/loss rows." onRowClick={()=>onDrill?.({kind:"quality_loss", title:"Quality / Loss"})} exportName="dashboard_quality"/>
+      <DashboardQuickTable title="Party / outsource" sub="Outsource pending by party/process." rows={partyRows.map(({stage,...r})=>r)} empty="No party pending rows." onRowClick={()=>onDrill?.({kind:"party_pending", title:"Party / Outsource"})} exportName="dashboard_party"/>
+      <DashboardQuickTable title="Reconcile blockers" sub="Only impossible/blocked movements. True manager task." rows={reconciliationRows.map(({stage,type,...r})=>r)} empty="No reconciliation blockers." onRowClick={(r)=>{ const match = reconciliationRows.find(x=>x.Dept===r.Dept && x.Reconcile_Type===r.Reconcile_Type); onDrill?.({kind:"dept_issue", stage:match?.stage, type:"reconcile", title:`Reconciliation — ${r.Dept}`}); }} exportName="dashboard_reconcile"/>
+      <DashboardQuickTable title="Production meeting focus" sub="Exception list for meeting. Not normal WIP aging." rows={meetingRows} empty="No meeting focus rows." onRowClick={()=>onDrill?.({kind:"meeting_focus", title:"Production Meeting Focus"})} exportName="dashboard_meeting_focus"/>
     </>}
   </>;
 }
@@ -3269,14 +3314,16 @@ function DashboardDrillDrawer({ drill, rows, ledger=[], onClose }){
   }, [rawRows, search, owner, dept, status, sort]);
 
   const totalQty = filteredRows.reduce((a,r)=>a+n(r.Total_Open ?? r.Open_Qty ?? r.Open ?? r.Gap ?? r.Total ?? r.Qty),0);
+  const displayRows = simplifiedRowsForTable(drill.title || "Dashboard Drilldown", filteredRows);
+  const displayColumns = displayRows[0] ? Object.keys(displayRows[0]) : columns;
   const sortBy = (key) => setSort(s => s.key === key ? { key, dir:s.dir === "asc" ? "desc" : "asc" } : { key, dir:"asc" });
   const clearFilters = () => { setSearch(""); setOwner("all"); setDept("all"); setStatus("all"); setSort({ key:"", dir:"asc" }); };
   const sortMark = (key) => sort.key === key ? (sort.dir === "asc" ? " ↑" : " ↓") : "";
 
   return <div className="mt-drawer">
-    <div className="mt-drawer-head"><div><h2 style={{margin:"0 0 4px"}}>{drill.title || "Dashboard Drilldown"}</h2><div className="mt-sub">Every dashboard number opens to its own relevant detail rows. Period drilldowns use production_entries.entry_date, not created_at.</div></div><button className="mt-btn" onClick={onClose}><X size={15}/>Close</button></div>
+    <div className="mt-drawer-head"><div><h2 style={{margin:"0 0 4px"}}>{drill.title || "Dashboard Drilldown"}</h2><div className="mt-sub">Readable rows first. Full technical detail remains available below/export.</div></div><button className="mt-btn" onClick={onClose}><X size={15}/>Close</button></div>
     <div className="mt-drawer-body">
-      <div className="mt-drill-head"><div><h3 className="mt-panel-title">Drilldown Detail</h3><div className="mt-panel-sub">Rows: {filteredRows.length} / {rawRows.length}. Total open / relevant qty: {fmt(totalQty)}.</div><div className="mt-drill-meta"><span className="mt-chip mt-info">Dashboard-specific columns</span><span className="mt-chip mt-muted">Filter-respecting</span><span className="mt-chip mt-muted">Filterable + sortable</span><span className="mt-chip mt-muted">Exportable from Reports</span></div></div></div>
+      <div className="mt-drill-head"><div><h3 className="mt-panel-title">Drilldown</h3><div className="mt-panel-sub">Rows: {filteredRows.length} / {rawRows.length}. Relevant qty: {fmt(totalQty)}.</div><div className="mt-drill-meta"><span className="mt-chip mt-info">Readable summary</span><span className="mt-chip mt-muted">Filtered</span><span className="mt-chip mt-muted">Sortable</span><span className="mt-chip mt-muted">Full detail below</span></div></div></div>
       <div className="mt-toolbar" style={{margin:"0 0 10px"}}>
         <span className="mt-toolbar-label">Drill filters</span>
         <input className="mt-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search drill rows..." style={{minWidth:220}} />
@@ -3285,8 +3332,9 @@ function DashboardDrillDrawer({ drill, rows, ledger=[], onClose }){
         <select className="mt-select" value={owner} onChange={e=>setOwner(e.target.value)}><option value="all">All owners</option>{ownerOptions.filter(x=>x!=="all").map(x=><option key={x} value={x}>{x}</option>)}</select>
         <button className="mt-btn" onClick={clearFilters}>Clear</button>
       </div>
-      {drillSummaryRows(filteredRows).length > 1 && <div style={{marginBottom:10}}><SimpleTable title="Drill Subtotals — Dept / Owner / Buyer" sub="Quick meeting summary of the filtered drilldown before the style-size detail." rows={drillSummaryRows(filteredRows)} empty="No subtotal rows." /></div>}
-      <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{columns.map(c=><th key={c} className="mt-clickable-cell" onClick={()=>sortBy(c)} title="Click to sort">{c}{sortMark(c)}</th>)}</tr></thead><tbody>{filteredRows.length ? filteredRows.map((r,i)=><tr key={i}>{columns.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] === undefined || r[c] === null ? "" : r[c])}</td>)}</tr>) : <tr><td style={{padding:18}} colSpan={columns.length}>No rows for this drilldown/filter.</td></tr>}</tbody></table></div>
+      {drillSummaryRows(filteredRows).length > 1 && <div style={{marginBottom:10}}><SimpleTable title="Quick subtotal" sub="Dept / owner / buyer subtotal before row detail." rows={drillSummaryRows(filteredRows)} empty="No subtotal rows." /></div>}
+      <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{displayColumns.map(c=><th key={c} className="mt-clickable-cell" onClick={()=>sortBy(c)} title="Click to sort">{friendlyTableHeader(c)}{sortMark(c)}</th>)}</tr></thead><tbody>{displayRows.length ? displayRows.map((r,i)=><tr key={i}>{displayColumns.map(c=>{ const val = r[c]; return <td key={c} className={simpleTableCellTone(c,val)}>{typeof val === "number" ? fmt(val) : String(val === undefined || val === null ? "" : val)}</td>; })}</tr>) : <tr><td style={{padding:18}} colSpan={Math.max(1,displayColumns.length)}>No rows for this drilldown/filter.</td></tr>}</tbody></table></div>
+      <details className="mt-fold"><summary>Open full technical detail</summary><div className="mt-table-wrap"><table className="mt-table"><thead><tr>{columns.map(c=><th key={c} className="mt-clickable-cell" onClick={()=>sortBy(c)} title="Click to sort">{friendlyTableHeader(c)}{sortMark(c)}</th>)}</tr></thead><tbody>{filteredRows.length ? filteredRows.map((r,i)=><tr key={i}>{columns.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] === undefined || r[c] === null ? "" : r[c])}</td>)}</tr>) : <tr><td style={{padding:18}} colSpan={columns.length}>No rows for this drilldown/filter.</td></tr>}</tbody></table></div></details>
     </div>
   </div>;
 }
@@ -6154,6 +6202,8 @@ function MonthlyComparison({ rows, ledger=[], clearTick=0 }){
 
 function Reports({ rows, ledger }){
   const pack = buildReportSheets(rows, ledger);
+  const [reportView,setReportView] = useState(()=>safeJsonLoad(uiStorageKey("reports_view"), "summary"));
+  useEffect(()=>safeJsonSave(uiStorageKey("reports_view"), reportView), [reportView]);
   function exportDailyPack(){
     exportXlsx("daily_production_pack_horizontal.xlsx",[
       { name:"Factory Summary", rows:pack.factorySummary },
@@ -6211,13 +6261,36 @@ function Reports({ rows, ledger }){
     ]);
   }
   const reportCards = [
-    { title:"Daily Production Pack", desc:"Factory summary + one horizontal WIP sheet per department + owner chase + reconcile.", action:exportDailyPack },
-    { title:"Issue / Receive Control", desc:"Issued not received, completed not issued, received not processed, and handover aging.", action:exportIssueReceive },
-    { title:"Quality Loss Pack", desc:"Reject / alter / missing, reconcile, and audit entries.", action:exportQualityLoss },
-    { title:"Management Monthly Pack", desc:"WIP status, monthly comparison, print/emb, party pending, dispatch, closure, backdated audit.", action:exportManagementMonthly },
-    { title:"All Reports Workbook", desc:"Everything above in one workbook, all user-facing sheets horizontal.", action:exportAllReports },
+    { title:"Daily Production Pack", desc:"Factory summary + department sheets + owner chase + reconcile.", action:exportDailyPack },
+    { title:"Issue / Receive Control", desc:"Movement control: ready, with department and handover aging.", action:exportIssueReceive },
+    { title:"Quality Loss Pack", desc:"R/A/M, reconcile, and audit entries.", action:exportQualityLoss },
+    { title:"Management Monthly Pack", desc:"Monthly management pack with WIP, bottleneck, party, dispatch and audit.", action:exportManagementMonthly },
+    { title:"All Reports Workbook", desc:"All report sheets in one file.", action:exportAllReports },
   ];
-  return <div className="mt-two"><div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Excel Reports — Horizontal Format</h3><div className="mt-panel-sub">All team-facing size-wise reports use one row per style/order/colour/component/stage with size columns across and auto totals. Vertical format is only used for the audit ledger.</div></div><div className="mt-section" style={{display:"grid", gap:10}}>{reportCards.map(card=><div key={card.title} className="mt-card" style={{boxShadow:"none"}}><div className="mt-section"><h3 className="mt-panel-title" style={{fontSize:13}}>{card.title}</h3><div className="mt-panel-sub">{card.desc}</div><button className="mt-btn primary" style={{marginTop:9}} onClick={card.action}><Download size={14}/>Export</button></div></div>)}</div></div><PrintableHodSheet rows={rows}/></div>;
+  const wipSummary = [
+    { label:"Live WIP rows", value:(pack.wipStatus||[]).length, note:"Current style rows" },
+    { label:"R/A/M rows", value:(pack.ramRows||[]).length, note:"Quality/loss rows" },
+    { label:"Reconcile rows", value:(pack.reconcile||[]).length, note:"True correction tasks" },
+    { label:"Ledger entries", value:(pack.ledgerRows||[]).length, note:"Audit/activity entries" },
+  ];
+  const reportGraphRows = [
+    { Report:"Live WIP", Rows:(pack.wipStatus||[]).length },
+    { Report:"Department sheets", Rows:(pack.deptSheets||[]).reduce((a,s)=>a+(s.rows||[]).length,0) },
+    { Report:"R/A/M", Rows:(pack.ramRows||[]).length },
+    { Report:"Reconcile", Rows:(pack.reconcile||[]).length },
+    { Report:"Owner chase", Rows:(pack.ownerRows||[]).length },
+    { Report:"Audit ledger", Rows:(pack.ledgerRows||[]).length },
+  ].filter(r=>r.Rows>0);
+  return <div style={{display:"grid", gap:12}}>
+    <div className="mt-card"><div className="mt-section"><div className="mt-drill-head"><div><h3 className="mt-panel-title">Reports</h3><div className="mt-panel-sub"><b>Summary</b> explains what each report is for. <b>Graphs</b> shows quick report volume/quality signals. <b>Exports</b> creates the Excel packs.</div></div><div className="mt-toggle-row"><button className={`mt-btn ${reportView==="summary"?"active":""}`} onClick={()=>setReportView("summary")}>Summary</button><button className={`mt-btn ${reportView==="graphs"?"active":""}`} onClick={()=>setReportView("graphs")}>Graphs</button><button className={`mt-btn ${reportView==="exports"?"active":""}`} onClick={()=>setReportView("exports")}>Exports</button></div></div></div></div>
+    {reportView === "summary" && <>
+      <div className="mt-grid">{wipSummary.map((r,i)=><DashboardActionCard key={i} title={r.label} value={fmt(r.value)} sub={r.note} tone={r.label.includes("Reconcile") && r.value?"late":r.label.includes("R/A/M") && r.value?"warn":"info"}/>)}</div>
+      <div className="mt-two"><SimpleTable title="Management report summary" sub="Readable first layer before export. Use Exports for full detail." rows={pack.factorySummary || []} empty="No summary rows."/><SimpleTable title="Owner follow-up summary" sub="Who owns open WIP / action rows. Detailed chase stays in export." rows={(pack.ownerRows||[]).slice(0,10)} empty="No owner rows."/></div>
+      <details className="mt-fold"><summary>Printable HOD sheet</summary><PrintableHodSheet rows={rows}/></details>
+    </>}
+    {reportView === "graphs" && <div className="mt-two"><DashboardBarPanel title="Report data volume" sub="Shows which report sheets currently contain data." rows={reportGraphRows} labelKey="Report" valueKey="Rows"/><DashboardBarPanel title="Management risk rows" sub="Reconcile/RAM/closure/dispatch rows that need reading before export." rows={[{Risk:"Reconcile", Qty:(pack.reconcile||[]).length},{Risk:"R/A/M", Qty:(pack.ramRows||[]).length},{Risk:"Closure", Qty:(pack.closureRows||[]).length},{Risk:"Dispatch ready", Qty:(pack.dispatchRows||[]).length}]} labelKey="Risk" valueKey="Qty"/></div>}
+    {reportView === "exports" && <div className="mt-two"><div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Excel export packs</h3><div className="mt-panel-sub">Every export includes full audit/detail rows. Screen summaries stay simple.</div></div><div className="mt-section" style={{display:"grid", gap:10}}>{reportCards.map(card=><div key={card.title} className="mt-card" style={{boxShadow:"none"}}><div className="mt-section"><h3 className="mt-panel-title" style={{fontSize:13}}>{card.title}</h3><div className="mt-panel-sub">{card.desc}</div><button className="mt-btn primary" style={{marginTop:9}} onClick={card.action}><Download size={14}/>Export</button></div></div>)}</div></div><PrintableHodSheet rows={rows}/></div>}
+  </div>;
 }
 
 function PrintableHodSheet({ rows }){
@@ -7410,7 +7483,7 @@ function SettingsView({ onChanged }){
       <div className="mt-toolbar" style={{alignItems:"flex-start"}}><span className="mt-toolbar-label">Size groups</span><textarea className="mt-input" style={{minWidth:360, minHeight:140}} value={sizeSetsText} onChange={e=>setSizeSetsText(e.target.value)} placeholder={'alpha = XS, S, M, L, XL, XXL\nkids = 2-3Y, 3-4Y, 4-5Y\nwaist = 30, 32, 34, 36'} /><div style={{display:"grid",gap:8}}><button className="mt-btn primary" onClick={saveSizeSets}>Save Size Groups</button><button className="mt-btn ghost" onClick={resetSizeSets}>Reset Defaults</button></div><span className="mt-small">Format: group = size, size, size. Add buyer/category groups anytime, then select them in Styles or bulk upload.</span></div>
     </div>
     <div className="mt-section"><h3 className="mt-panel-title">Bottleneck metric guide</h3><div className="mt-panel-sub">Daily Rate = recent 7-day average output from ledger for that department. Days Cover = queue/open WIP ÷ Daily Rate. Bottleneck Score = Queue WIP + 2×Reconcile Qty + R/A/M Qty, so impossible movements and quality loss rank higher than normal queue.</div></div>
-    <div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included through V7.5.23 logic</b><ul className="mt-small"><li>Add/edit production styles manually with horizontal order-size breakup; Order Qty remains master and size shortage/excess is warned in manual and bulk upload.</li><li>Browser fallback persistence keeps style updates after refresh even when Supabase URL/key is not configured correctly.</li><li>Cutting Pending now appears correctly until cut/output/R/A/M/short-close accounts for order qty; Cutting short-close action is available in Cutting detail.</li><li>Editable size groups in Settings; Styles and bulk upload can use custom buyer/category size sets.</li><li>Order-wise rejection dispatch flag: approved rejected pieces can be included in Dispatch feed by size only for that order/style.</li><li>WIP Other Open Split column is now toggleable and hidden by default to avoid duplicate/confusing status reading.</li><li>Simple 6-day Excel-style planning grid: enter total day target by style/line without SMV/OPS complexity</li><li>WIP now separates one Pending Stage from All Activity by Cut %, so the grid stays narrow while still showing the full cut/order breakup</li><li>Selected department detail shows Good Output together with Reject/Missing/Alter and accounted/tail quantities for a complete HOD picture</li><li>Size-wise day entry with previous/updated total cross-check</li><li>Print / embroidery route toggles</li><li>Standard route changed to Checking → Packing → Dispatch; Iron removed as a normal department</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Dispatch hold: no dispatch when reconcile exists or dispatch-blocking R/A/M exceeds configured order %. Optional setting allows approved rejection to be dispatched while Missing/Alter still block.</li><li>Editable stitching line names in Settings used by Planning</li><li>Issued-to-department means accepted/with department; no normal issued-not-received bucket</li><li>Completed-not-issued-forward owner = Production Coordinator + Production Manager</li><li>Individual owner chase: Department HOD owns work-not-completed; Coordinator + Production Manager own completed-not-issued-forward</li><li>Style closure owner = Production Coordinator + Dept HOD; Production Manager handles movement/escalation/approval</li><li>WIP table page-specific filters, sorting, quick status buckets, and size-breakup toggle</li><li>Dashboard uses current-bin WIP logic: once a quantity moves to the next stage, it leaves the previous department bin.</li><li>Dashboard includes daily / 4-4-5 weekly / calendar-month production numbers, department × issue-type board, owner activity breakup, and production meeting focus.</li><li>Department-first dashboard pack: plan-vs-achieved/line efficiency, bottleneck/flow, aging/stuck WIP, quality/loss rate, party/outsource pending.</li><li>Dashboard drilldowns now use dashboard-specific rows, subtotal summaries, real size-stage data where available, and a visible size-source indicator.</li><li>Monthly comparison tab against Stitching Receiving with drillable summary filters</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Open-first WIP sheet modes: Open Control, Order View, Department View, Issue View, and Full Matrix</li><li>Focused WIP cell drawer shows selected department only; DPR entry shows only open styles for selected department/field; entry cells show open, previous, available, new entry, remaining and updated total; reductions/corrections require approval workflow later</li><li>Entry date / backdated audit logic with next-day default, same-day confirmation, reason and approval status</li><li>Live idle recalculation from production ledger where activity exists</li><li>Set convergence: a set packs/ships only min(components); Sets board + WIP chip show packable sets and unmatched pieces</li><li>Backdated entries validate feed as-of the entry date from the ledger; locked (older) backdated entries require reason + explicit manager-approval confirmation and are stamped in the audit ledger</li><li>Single configurable cutting tolerance replaces the old 8%/5%/0% mismatch</li><li>Party/outsource pending is consistent with the WIP open bucket (feed − output − R/A/M); outsourced stages label the with-department bucket as Pending at party</li><li>R/A/M day-entry path and impossible sequence reconcile checks</li><li>Planning tab: stitching line-wise rolling plan, department day-wise plan, department-specific planning pool, manual future plan, style-change-only changeover remaining-hours formula, plan-vs-achieved style adherence, and Review control room. Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-info"><Lock size={12}/> Future RLS</span> <span className="mt-small">Keep this as a development app. We tighten RLS before real users and live factory data.</span></div></div>;
+    <div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included through V6 logic</b><ul className="mt-small"><li>Add/edit production styles manually with horizontal order-size breakup; Order Qty remains master and size shortage/excess is warned in manual and bulk upload.</li><li>Browser fallback persistence keeps style updates after refresh even when Supabase URL/key is not configured correctly.</li><li>Cutting Pending now appears correctly until cut/output/R/A/M/short-close accounts for order qty; Cutting short-close action is available in Cutting detail.</li><li>Editable size groups in Settings; Styles and bulk upload can use custom buyer/category size sets.</li><li>Order-wise rejection dispatch flag: approved rejected pieces can be included in Dispatch feed by size only for that order/style.</li><li>WIP Other Open Split column is now toggleable and hidden by default to avoid duplicate/confusing status reading.</li><li>Simple 6-day Excel-style planning grid: enter total day target by style/line without SMV/OPS complexity</li><li>WIP now separates one Pending Stage from All Activity by Cut %, so the grid stays narrow while still showing the full cut/order breakup</li><li>Selected department detail shows Good Output together with Reject/Missing/Alter and accounted/tail quantities for a complete HOD picture</li><li>Size-wise day entry with previous/updated total cross-check</li><li>Print / embroidery route toggles</li><li>Standard route changed to Checking → Packing → Dispatch; Iron removed as a normal department</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Dispatch hold: no dispatch when reconcile exists or dispatch-blocking R/A/M exceeds configured order %. Optional setting allows approved rejection to be dispatched while Missing/Alter still block.</li><li>Editable stitching line names in Settings used by Planning</li><li>Issued-to-department means accepted/with department; no normal issued-not-received bucket</li><li>Completed-not-issued-forward owner = Production Coordinator + Production Manager</li><li>Individual owner chase: Department HOD owns work-not-completed; Coordinator + Production Manager own completed-not-issued-forward</li><li>Style closure owner = Production Coordinator + Dept HOD; Production Manager handles movement/escalation/approval</li><li>WIP table page-specific filters, sorting, quick status buckets, and size-breakup toggle</li><li>Dashboard uses current-bin WIP logic: once a quantity moves to the next stage, it leaves the previous department bin.</li><li>Dashboard includes daily / 4-4-5 weekly / calendar-month production numbers, department × issue-type board, owner activity breakup, and production meeting focus.</li><li>Department-first dashboard pack: plan-vs-achieved/line efficiency, bottleneck/flow, aging/stuck WIP, quality/loss rate, party/outsource pending.</li><li>Dashboard drilldowns now use dashboard-specific rows, subtotal summaries, real size-stage data where available, and a visible size-source indicator.</li><li>Monthly comparison tab against Stitching Receiving with drillable summary filters</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Open-first WIP sheet modes: Open Control, Order View, Department View, Issue View, and Full Matrix</li><li>Focused WIP cell drawer shows selected department only; DPR entry shows only open styles for selected department/field; entry cells show open, previous, available, new entry, remaining and updated total; reductions/corrections require approval workflow later</li><li>Entry date / backdated audit logic with next-day default, same-day confirmation, reason and approval status</li><li>Live idle recalculation from production ledger where activity exists</li><li>Set convergence: a set packs/ships only min(components); Sets board + WIP chip show packable sets and unmatched pieces</li><li>Backdated entries validate feed as-of the entry date from the ledger; locked (older) backdated entries require reason + explicit manager-approval confirmation and are stamped in the audit ledger</li><li>Single configurable cutting tolerance replaces the old 8%/5%/0% mismatch</li><li>Party/outsource pending is consistent with the WIP open bucket (feed − output − R/A/M); outsourced stages label the with-department bucket as Pending at party</li><li>R/A/M day-entry path and impossible sequence reconcile checks</li><li>Planning tab: stitching line-wise rolling plan, department day-wise plan, department-specific planning pool, manual future plan, style-change-only changeover remaining-hours formula, plan-vs-achieved style adherence, and Review control room. Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-info"><Lock size={12}/> Future RLS</span> <span className="mt-small">Keep this as a development app. We tighten RLS before real users and live factory data.</span></div></div>;
 }
 
 function withLiveIdle(rows, ledger=[], referenceDate=today()){
@@ -7565,7 +7638,7 @@ function UserAuditView({ profile, onSwitchUser, onLogout, presenceRows=[] }){
       const a = await fetchProductionAudit(300);
       setUsers(u.data || []); setAudit(a.data || []);
       const warnings = [u.error ? `Users: ${u.error.message}` : "", a.error ? `Audit: ${a.error.message}` : ""].filter(Boolean);
-      setMsg(warnings.length ? {tone:"warn", text:`Could not read all governance tables. Run the V7.5.44 SQL patch. ${warnings.join(" | ")}`} : {tone:"ok", text:`Loaded ${u.data?.length || 0} users and ${a.data?.length || 0} audit rows.`});
+      setMsg(warnings.length ? {tone:"warn", text:`Could not read all governance tables. Run the V6 SQL patch. ${warnings.join(" | ")}`} : {tone:"ok", text:`Loaded ${u.data?.length || 0} users and ${a.data?.length || 0} audit rows.`});
     } finally { setLoading(false); }
   }
   useEffect(()=>{ refresh(); }, []);
@@ -7587,7 +7660,7 @@ function UserAuditView({ profile, onSwitchUser, onLogout, presenceRows=[] }){
     await recordProductionAudit("reject_user", { table_name:"production_app_users", source:"Users/Audit", metadata:{ email:u.email } });
     refresh();
   }
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Users / Login Requests / Permissions / History</h3><div className="mt-panel-sub">Proper production login flow: users request access with email/password, then Super Admin/Admin/Production Manager assigns role. SQL patch V7.5.49 adds password/status columns.</div></div><div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-chip mt-info"><UserCheck size={12}/>{profile.name || "Not logged in"}</span><span className="mt-chip mt-muted">{profile.role}</span><span className="mt-chip mt-muted">{profile.department || "—"}</span><button className="mt-btn" onClick={refresh} disabled={loading}><RefreshCw size={14}/>Refresh History</button><button className="mt-btn ghost" onClick={onSwitchUser}><Users size={14}/>Switch User</button><button className="mt-btn ghost" onClick={onLogout}><LogOut size={14}/>Logout</button>{msg && <span className={`mt-chip ${statusClass(msg.tone)}`}>{msg.text}</span>}</div></div><div className="mt-section"><h3 className="mt-panel-title">Current Role Permissions</h3><div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>{PRODUCTION_PERMISSIONS.map(([key,label])=><span key={key} className={`mt-chip ${isFullAccessRole(profile.role) || perms.includes(key) ? "mt-ok" : "mt-muted"}`}>{label}</span>)}</div><div className="mt-small" style={{marginTop:8}}>Last local tab history: {localHistory.length ? localHistory.join(" → ") : "No tab history yet"}</div></div>
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Users / Login Requests / Permissions / History</h3><div className="mt-panel-sub">Proper production login flow: users request access with email/password, then Super Admin/Admin/Production Manager assigns role. SQL patch V6 adds password/status columns.</div></div><div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-chip mt-info"><UserCheck size={12}/>{profile.name || "Not logged in"}</span><span className="mt-chip mt-muted">{profile.role}</span><span className="mt-chip mt-muted">{profile.department || "—"}</span><button className="mt-btn" onClick={refresh} disabled={loading}><RefreshCw size={14}/>Refresh History</button><button className="mt-btn ghost" onClick={onSwitchUser}><Users size={14}/>Switch User</button><button className="mt-btn ghost" onClick={onLogout}><LogOut size={14}/>Logout</button>{msg && <span className={`mt-chip ${statusClass(msg.tone)}`}>{msg.text}</span>}</div></div><div className="mt-section"><h3 className="mt-panel-title">Current Role Permissions</h3><div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>{PRODUCTION_PERMISSIONS.map(([key,label])=><span key={key} className={`mt-chip ${isFullAccessRole(profile.role) || perms.includes(key) ? "mt-ok" : "mt-muted"}`}>{label}</span>)}</div><div className="mt-small" style={{marginTop:8}}>Last local tab history: {localHistory.length ? localHistory.join(" → ") : "No tab history yet"}</div></div>
     <div className="mt-section"><h3 className="mt-panel-title">Pending login requests</h3><div className="mt-panel-sub">Approve user role here. Pending users cannot open production screens.</div><div className="mt-table-wrap"><table className="mt-table"><thead><tr><th>User</th><th>Email</th><th>Requested Role</th><th>Department</th><th>Status</th><th>Approve As</th><th>Action</th></tr></thead><tbody>{pendingUsers.length ? pendingUsers.map(u=>{ const role=u.requested_role || "Data Operator"; return <tr key={u.email}><td>{u.display_name || u.user_name || displayNameFromEmail(u.email)}</td><td>{u.email}</td><td>{role}</td><td>{u.requested_department || u.department}</td><td><span className="mt-chip mt-warn">{u.access_status || "pending"}</span></td><td><select className="mt-select" defaultValue={role} onChange={e=>u.__approveRole=e.target.value}>{PRODUCTION_ROLES.filter(r=>r!=="Super Admin").map(r=><option key={r} value={r}>{r}</option>)}</select></td><td><button className="mt-btn" disabled={!canManage} onClick={()=>approveUser(u, u.__approveRole || role)}>Approve</button><button className="mt-btn ghost" disabled={!canManage} onClick={()=>rejectUser(u)}>Reject</button></td></tr>; }) : <tr><td colSpan="7">No pending requests.</td></tr>}</tbody></table></div></div>
     <SimpleTable title="Live presence — who is where now" sub="Supabase realtime presence. Shows current page/context, selected style/stage/drawer where available." rows={presenceRows.map(p=>({ User:p.User, Role:p.Role, Page:p.Page, Context:p.Context, Order:p.Order, Style:p.Style, Stage:p.Stage, Email:p.Email, Browser:p.Browser, Seen:p.Seen }))} empty="No live peers yet. Presence appears when multiple approved users keep the app open." exportName="production_live_presence"/><div style={{height:12}}/><SimpleTable title="Active / recent users" sub="From production_app_users. Shows approved users, requested users and recent browser access." rows={(users||[]).map(u=>({ User:u.display_name || u.user_name, Role:u.role, Requested_Role:u.requested_role, Department:u.department || u.requested_department, Email:u.email, Status:u.access_status || (u.is_active ? "approved" : "pending"), Current_Page:u.login_note || "—", Last_Seen:u.last_seen_at || u.created_at, Browser:u.browser_id }))} empty="No user rows yet. Run SQL patch and submit/approve one user." exportName="production_active_users"/><div style={{height:12}}/><SimpleTable title="Audit history — detailed" sub="Latest saves/corrections/sessions. Date column is production activity date where available; Time is when user actually typed/saved it." rows={(audit||[]).map(a=>({ Time:a.created_at, Activity_Date:a.entry_date || String(a.created_at||"").slice(0,10), User:a.user_name, Role:a.user_role, Action:a.action || a.event_type, Table:a.table_name, Order:a.order_no, Style:a.style_no, Colour:a.colour, Component:a.component, Dept:stageLabel(a.stage || ""), Activity:a.entry_type, Qty:a.qty, Source:a.source }))} empty="No audit rows yet or SQL patch not run." exportName="production_audit_history"/></div>;
 }
@@ -7738,11 +7811,11 @@ export default function App(){
         setPlanRows((planData || []).map(supabaseToPlanRow));
         setPlanSaveState({ tone:"ok", text:`Plan shared · ${planData?.length || 0} rows` });
       } else {
-        setPlanSaveState({ tone:"warn", text:"Plan local only — run V7.5.54 SQL" });
+        setPlanSaveState({ tone:"warn", text:"Plan local only — run V6 SQL" });
       }
       const stamp = new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" });
       setSharedSync({tone:planError?"warn":"ok", text:`Shared live · ${data?.length || 0} orders · ${entryData?.length || 0} entries · ${planError?"plan SQL pending":`${planData?.length || 0} plans`} · ${stamp}`});
-      if (!silent) setNotice({ tone:planError?"warn":"ok", text:`Pulled shared Supabase data: ${data?.length || 0} orders, ${entryData?.length || 0} entries${planError ? "; planning table not ready — run V7.5.54 SQL" : `, ${planData?.length || 0} plan rows`}. Reason: ${reason}.` });
+      if (!silent) setNotice({ tone:planError?"warn":"ok", text:`Pulled shared Supabase data: ${data?.length || 0} orders, ${entryData?.length || 0} entries${planError ? "; planning table not ready — run V6 SQL" : `, ${planData?.length || 0} plan rows`}. Reason: ${reason}.` });
       return { error:null, orders:data || [], entries:entryData || [], plans:planData || [] };
     } catch(e) {
       const msg = e?.message || "Shared pull failed";
