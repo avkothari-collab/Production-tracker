@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.70";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.70 current status ready-to-issue fix";
+const APP_VERSION = "V7.5.72";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.71 planning day ops uses max per line";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -2015,6 +2015,56 @@ function distribute(total, sizes){
     return [sz, Math.max(0, v)];
   }));
 }
+function parseSizeRatioText(text, sizes){
+  const cleanSizes = (sizes || []).map(cleanSizeToken).filter(Boolean);
+  const raw = String(text || "").trim().toUpperCase();
+  if (!raw || !cleanSizes.length) return { weights:{}, totalWeight:0, error:"Enter ratio like 1:2:2:1 or XS=1,S=2,M=2." };
+  const bySize = {};
+  let foundNamed = false;
+  raw.split(/[,;|]+/).forEach(part=>{
+    const bits = String(part || "").trim().split(/[:=]/);
+    if (bits.length < 2) return;
+    const key = cleanSizeToken(bits[0]);
+    const val = Number(String(bits.slice(1).join(":")).replace(/[^0-9.]/g,""));
+    if (cleanSizes.includes(key) && val > 0) { bySize[key] = val; foundNamed = true; }
+  });
+  if (foundNamed) {
+    const weights = Object.fromEntries(cleanSizes.map(sz=>[sz, Number(bySize[sz] || 0)]));
+    const totalWeight = Object.values(weights).reduce((a,b)=>a+b,0);
+    return totalWeight > 0 ? { weights, totalWeight, error:"" } : { weights:{}, totalWeight:0, error:"Named ratio has no positive values." };
+  }
+  const nums = raw.split(/[\s/:,;|]+/).map(x=>Number(String(x).replace(/[^0-9.]/g,""))).filter(x=>x>0);
+  if (!nums.length) return { weights:{}, totalWeight:0, error:"Ratio should contain positive numbers." };
+  if (nums.length !== cleanSizes.length) return { weights:{}, totalWeight:0, error:`Ratio has ${nums.length} parts but size set has ${cleanSizes.length} sizes (${cleanSizes.join(" / ")}).` };
+  const weights = Object.fromEntries(cleanSizes.map((sz,i)=>[sz, nums[i]]));
+  return { weights, totalWeight:nums.reduce((a,b)=>a+b,0), error:"" };
+}
+function distributeByRatio(total, sizes, ratioText){
+  const parsed = parseSizeRatioText(ratioText, sizes);
+  if (parsed.error) return { qty:{}, ...parsed };
+  let used = 0;
+  const cleanSizes = (sizes || []).map(cleanSizeToken).filter(Boolean);
+  const qty = Object.fromEntries(cleanSizes.map((sz,idx)=>{
+    const v = idx === cleanSizes.length - 1 ? n(total) - used : Math.round((n(total) * n(parsed.weights[sz])) / parsed.totalWeight);
+    used += v;
+    return [sz, Math.max(0, v)];
+  }));
+  return { qty, ...parsed };
+}
+function ratioTextFromSizeQty(map, sizes){
+  const clean = normalizeSizeQtyMap(map || {}, sizes || []);
+  const vals = (sizes || []).map(sz=>n(clean[sz]));
+  const positive = vals.filter(v=>v>0);
+  if (!positive.length) return "";
+  const gcd2 = (a,b)=> b ? gcd2(b, a % b) : Math.abs(a);
+  const g = positive.reduce((a,b)=>gcd2(a,b), positive[0]);
+  return vals.map(v=>v>0 && g>0 ? Math.round(v/g) : 0).join(":");
+}
+function ratioSummaryText(ratioText, sizes){
+  const parsed = parseSizeRatioText(ratioText, sizes);
+  if (parsed.error) return parsed.error;
+  return (sizes || []).map(sz=>`${sz} ${n(parsed.weights[cleanSizeToken(sz)])}`).join(" : " );
+}
 function sizeMatrix(row, stageKey, field="received"){
   const sizes = sizesFor(row);
   const base = stageKey === "cutting" && field === "received" ? sdata(row,"cutting").output : sdata(row, stageKey)[field];
@@ -2035,6 +2085,7 @@ function orderToSupabase(row){
   stageQty.__print_required = !!row.print_required;
   stageQty.__embroidery_required = !!row.embroidery_required;
   stageQty.__dispatch_reject_allowed = !!row.dispatch_reject_allowed;
+  stageQty.__size_ratio = row.size_ratio || "";
   return {
     // production_orders.id is NOT NULL in the current Supabase schema.
     // Always send a stable text id derived from Order+Style+Colour+Component for manual/demo rows.
@@ -2080,7 +2131,7 @@ function supabaseToOrder(row){
   return {
     id:row.id, order_no:row.order_no, style_no:row.style_no, buyer:row.buyer || row.brand || "", colour:row.colour || "", component:row.component || "",
     photo_url:row.photo_url || "", photo_thumb_url:row.photo_thumb_url || row.photo_url || "", photo_folder_url:row.photo_folder_url || "",
-    order_qty:n(row.order_qty), order_size_qty:normalizeSizeQtyMap(orderSizeRaw, sizeList), size_set:sizeSet, set_id:row.set_id || "",
+    order_qty:n(row.order_qty), order_size_qty:normalizeSizeQtyMap(orderSizeRaw, sizeList), size_set:sizeSet, size_ratio:row.size_ratio || raw.__size_ratio || "", set_id:row.set_id || "",
     line:row.default_line || raw.__default_line || "", difficulty:row.difficulty || raw.__difficulty || "Normal", priority:row.priority || raw.__priority || "Normal",
     daily_target:n(dailyTargetRaw), cutting_short_close_qty:n(row.cutting_short_close_qty || raw.__cutting_short_close_qty), cutting_short_close_reason:row.cutting_short_close_reason || raw.__cutting_short_close_reason || "",
     print_required:(printRequiredRaw ?? printFallback),
@@ -5155,10 +5206,16 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     });
     exportXlsx(`production_${activeDept}_weekly_line_board_${weekDays[0]}.xlsx`, [{ name:"Weekly Line Board", rows:out }, { name:"Plan Rows", rows:(planRows||[]).filter(p=>p.dept===activeDept && weekDays.includes(String(p.plan_date||"").slice(0,10))) }]);
   }
+  function lineDayOpsForPlan(line, day){
+    // Headcount is line manpower for the day, not additive per style slot.
+    // If the same line runs 2 styles in one day, use the highest OPS value on that line/day.
+    const vals = lineDayPlanRows(planRows, activeDept, line, day).map(p=>n(p.ops)).filter(Boolean);
+    return vals.length ? Math.max(...vals) : 0;
+  }
   const weekDayTotals = weekDays.map(day=>({
     day,
     qty:boardRows.reduce((a,line)=>a+lineDayPlanRows(planRows, activeDept, line, day).reduce((x,p)=>x+n(p.planned_qty),0),0),
-    ops:boardRows.reduce((a,line)=>a+lineDayPlanRows(planRows, activeDept, line, day).reduce((x,p)=>x+n(p.ops),0),0),
+    ops:boardRows.reduce((a,line)=>a+lineDayOpsForPlan(line, day),0),
     hours:boardRows.reduce((a,line)=>a+lineDayPlanRows(planRows, activeDept, line, day).reduce((x,p)=>x+planHours(p),0),0)
   }));
   function maxSlotsForLine(line){ return Math.max(1, ...weekDays.flatMap(day=>lineDayPlanRows(planRows, activeDept, line, day).map(planSlotNo))); }
@@ -5319,7 +5376,7 @@ function SimplePlanReadingView({ rows, planRows, ledger, activeDept, weekDays, m
     const plan = dayPlans.reduce((a,p)=>a+n(p.planned_qty),0);
     const achieved = dayPlans.reduce((a,p)=>a+achievedForPlan(p, rows, ledger),0);
     const styles = uniqueList(dayPlans.map(planStyleText).filter(Boolean));
-    return { Date:day, Day:shortDayLabel(day), Styles:styles.join(", "), Planned_Qty:plan, Achieved_Qty:achieved, Balance:Math.max(0,plan-achieved), Achievement:plan ? `${Math.round(achieved*1000/plan)/10}%` : "—", Plan_Hours:dayPlans.reduce((a,p)=>a+planHours(p),0), OPS:dayPlans.reduce((a,p)=>a+n(p.ops),0) };
+    return { Date:day, Day:shortDayLabel(day), Styles:styles.join(", "), Planned_Qty:plan, Achieved_Qty:achieved, Balance:Math.max(0,plan-achieved), Achievement:plan ? `${Math.round(achieved*1000/plan)/10}%` : "—", Plan_Hours:dayPlans.reduce((a,p)=>a+planHours(p),0), OPS:Object.values(dayPlans.reduce((m,p)=>{ const k=String(p.line||"Dept total"); m[k]=Math.max(n(m[k]), n(p.ops)); return m; },{})).reduce((a,v)=>a+n(v),0) };
   });
   const lineRows = lines.map(line=>{
     const lp = weekPlans.filter(p=>String(p.line || planCellLineKey(activeDept,line))===String(planCellLineKey(activeDept,line)));
@@ -6153,7 +6210,10 @@ function styleFromExcelRow(raw, existing){
   const oq = excelValue(raw,["Order Qty","Qty","Quantity","Order Quantity"]);
   const sizeSet = excelValue(raw,["Size Set","SizeSet","Sizes"]);
   const sizeSetNorm = sizeSet === "" ? inferSizeSetFromExcel(raw, existing?.size_set || "alpha") : normalizeSizeSetName(sizeSet);
-  const orderSizeQty = extractOrderSizeQtyFromExcel(raw, sizeSetNorm, existing);
+  const ratioVal = String(excelValue(raw,["Size Ratio","Ratio","Size Ratio Pattern","Order Ratio"]) || existing?.size_ratio || "").trim().toUpperCase();
+  let orderSizeQty = extractOrderSizeQtyFromExcel(raw, sizeSetNorm, existing);
+  const ratioApply = ratioVal ? distributeByRatio(oq === "" ? n(existing?.order_qty) : n(oq), getSizeSets()[sizeSetNorm] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha, ratioVal) : null;
+  if (ratioApply && !ratioApply.error) orderSizeQty = normalizeSizeQtyMap(ratioApply.qty, getSizeSets()[sizeSetNorm] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha);
   const orderSizeTotal = qtyMapTotal(orderSizeQty);
   const line = excelValue(raw,["Planning Line Override","Default Line","Line","Stitching Line"]);
   const printVal = excelValue(raw,["Print Required","Print","Printing"]);
@@ -6167,6 +6227,7 @@ function styleFromExcelRow(raw, existing){
     order_qty: oq === "" ? n(existing?.order_qty) : n(oq),
     order_size_qty: orderSizeQty,
     size_set: sizeSetNorm,
+    size_ratio: ratioVal,
     set_id: String(excelValue(raw,["Set ID","Set","SetId"]) || existing?.set_id || "").trim().toUpperCase(),
     line: String(line || existing?.line || "").trim(),
     print_required: printVal === "" ? !!existing?.print_required : parseExcelBool(printVal),
@@ -6186,15 +6247,15 @@ function styleTemplateRows(){
   const allSizes = Array.from(new Set(Object.values(getSizeSets()).flat())).slice(0,40);
   const blankSizeCols = Object.fromEntries(allSizes.map(size=>[`Size ${size}`, ""]));
   return [
-    { Action:"ADD_UPDATE", "Order No":"SO/25-26/100", "Style No":"STYLE-001", Buyer:"VMM", Colour:"BLACK", Component:"TOP", "Order Qty":1200, "Size Set":"alpha", ...blankSizeCols, "Size XS":100, "Size S":200, "Size M":300, "Size L":300, "Size XL":200, "Size XXL":100, "Set ID":"", "Planning Line Override":"", "Print Required":"No", "Embroidery Required":"No", Priority:"Normal", Difficulty:"Normal", "Photo URL":"", "OneDrive Folder URL":"" },
-    { Action:"ADD_UPDATE", "Order No":"SO/25-26/101", "Style No":"KIDS-001", Buyer:"HOPSCOTCH", Colour:"PINK", Component:"TOP", "Order Qty":400, "Size Set":"kids", ...blankSizeCols, "Size 2-3Y":80, "Size 3-4Y":80, "Size 4-5Y":80, "Size 5-6Y":80, "Size 7-8Y":80, "Order Size Breakup":"", "Set ID":"", "Planning Line Override":"", "Print Required":"No", "Embroidery Required":"Yes", Priority:"Normal", Difficulty:"Normal", "Photo URL":"", "OneDrive Folder URL":"" },
-    { Action:"HARD_DELETE", "Order No":"SO/25-26/OLD", "Style No":"WRONG-STYLE", Buyer:"", Colour:"BLACK", Component:"TOP", "Order Qty":"", "Size Set":"", ...blankSizeCols, "Order Size Breakup":"", "Set ID":"", "Planning Line Override":"", "Print Required":"", "Embroidery Required":"", Priority:"", Difficulty:"", "Photo URL":"", "OneDrive Folder URL":"" },
+    { Action:"ADD_UPDATE", "Order No":"SO/25-26/100", "Style No":"STYLE-001", Buyer:"VMM", Colour:"BLACK", Component:"TOP", "Order Qty":1200, "Size Set":"alpha", "Size Ratio":"1:2:3:3:2:1", ...blankSizeCols, "Size XS":100, "Size S":200, "Size M":300, "Size L":300, "Size XL":200, "Size XXL":100, "Set ID":"", "Planning Line Override":"", "Print Required":"No", "Embroidery Required":"No", Priority:"Normal", Difficulty:"Normal", "Photo URL":"", "OneDrive Folder URL":"" },
+    { Action:"ADD_UPDATE", "Order No":"SO/25-26/101", "Style No":"KIDS-001", Buyer:"HOPSCOTCH", Colour:"PINK", Component:"TOP", "Order Qty":400, "Size Set":"kids", "Size Ratio":"1:1:1:1:1:0", ...blankSizeCols, "Size 2-3Y":80, "Size 3-4Y":80, "Size 4-5Y":80, "Size 5-6Y":80, "Size 7-8Y":80, "Order Size Breakup":"", "Set ID":"", "Planning Line Override":"", "Print Required":"No", "Embroidery Required":"Yes", Priority:"Normal", Difficulty:"Normal", "Photo URL":"", "OneDrive Folder URL":"" },
+    { Action:"HARD_DELETE", "Order No":"SO/25-26/OLD", "Style No":"WRONG-STYLE", Buyer:"", Colour:"BLACK", Component:"TOP", "Order Qty":"", "Size Set":"", "Size Ratio":"", ...blankSizeCols, "Order Size Breakup":"", "Set ID":"", "Planning Line Override":"", "Print Required":"", "Embroidery Required":"", Priority:"", Difficulty:"", "Photo URL":"", "OneDrive Folder URL":"" },
   ];
 }
 
 function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0, onSharedSave }){
   const emptyForm = {
-    id:"", order_no:"", style_no:"", buyer:"", colour:"", component:"", set_components:"", order_qty:"", order_size_qty:{}, size_set:"alpha", set_id:"", line:"", dispatch_reject_allowed:false,
+    id:"", order_no:"", style_no:"", buyer:"", colour:"", component:"", set_components:"", order_qty:"", order_size_qty:{}, size_set:"alpha", size_ratio:"", set_id:"", line:"", dispatch_reject_allowed:false,
     print_required:false, embroidery_required:false, priority:"Normal", difficulty:"Normal", photo_url:"", photo_folder_url:""
   };
   const [form,setForm] = useState(emptyForm);
@@ -6232,11 +6293,29 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0, 
   }
   function distributeFormOrderQty(){ setForm(f=>({ ...f, order_size_qty:distribute(n(f.order_qty), getSizeSets()[f.size_set] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha) })); }
   function clearFormOrderSizes(){ setForm(f=>({ ...f, order_size_qty:{} })); }
+  function applyFormSizeRatio(){
+    setForm(f=>{
+      const sizes = getSizeSets()[f.size_set] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha;
+      const result = distributeByRatio(n(f.order_qty), sizes, f.size_ratio);
+      if (result.error) { setMsg({ tone:"late", text:result.error }); return f; }
+      setMsg({ tone:"ok", text:`Applied size ratio ${ratioSummaryText(f.size_ratio, sizes)} to order qty ${fmt(f.order_qty)}.` });
+      return { ...f, order_size_qty:result.qty };
+    });
+  }
+  function useCurrentSizesAsRatio(){
+    setForm(f=>{
+      const sizes = getSizeSets()[f.size_set] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha;
+      const ratio = ratioTextFromSizeQty(f.order_size_qty || {}, sizes);
+      if (!ratio) { setMsg({ tone:"warn", text:"Enter size quantities first, then use them as ratio." }); return f; }
+      setMsg({ tone:"ok", text:`Size ratio set from current breakup: ${ratio}.` });
+      return { ...f, size_ratio:ratio };
+    });
+  }
   function edit(row){
     setForm({
       id:row.id || "", order_no:row.order_no || "", style_no:row.style_no || "", buyer:row.buyer || "", colour:row.colour || "", component:row.component || "", order_qty:String(n(row.order_qty)||""),
       order_size_qty:normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row)),
-      size_set:row.size_set || "alpha", set_id:row.set_id || "", line:row.line || "",
+      size_set:row.size_set || "alpha", size_ratio:row.size_ratio || "", set_id:row.set_id || "", line:row.line || "",
       print_required:!!row.print_required, embroidery_required:!!row.embroidery_required, priority:row.priority || "Normal", difficulty:row.difficulty || "Normal",
       photo_url:row.photo_url || row.photo_thumb_url || "", photo_folder_url:row.photo_folder_url || "",
       set_components: row.set_id ? (allRows||[]).filter(r=>String(r.set_id||"").toUpperCase()===String(row.set_id||"").toUpperCase() && String(r.order_no||"").toUpperCase()===String(row.order_no||"").toUpperCase() && String(r.style_no||"").toUpperCase()===String(row.style_no||"").toUpperCase() && String(r.colour||"").toUpperCase()===String(row.colour||"").toUpperCase()).map(r=>r.component).filter(Boolean).join(", ") : ""
@@ -6258,6 +6337,7 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0, 
       colour:String(form.colour||"").trim().toUpperCase(),
       component:String(form.component||"").trim().toUpperCase(),
       set_id:String(form.set_id||"").trim().toUpperCase(),
+      size_ratio:String(form.size_ratio||"").trim().toUpperCase(),
       line:String(form.line||"").trim(),
       order_qty:n(form.order_qty),
       order_size_qty:cleanSizeQty,
@@ -6456,7 +6536,7 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
         <div className="mt-two"><div><label className="mt-small">Colour *</label><input className="mt-input" value={form.colour} onChange={e=>setField("colour",e.target.value.toUpperCase())}/></div><div><label className="mt-small">Component *</label><input className="mt-input" value={form.component} onChange={e=>setField("component",e.target.value.toUpperCase())}/></div></div>
         <div className="mt-two"><div><label className="mt-small">Size Set</label><select className="mt-select" value={form.size_set} onChange={e=>setField("size_set",e.target.value)}>{Object.entries(getSizeSets()).map(([k,arr])=><option key={k} value={k}>{k} · {arr.join(" / ")}</option>)}</select></div><div><label className="mt-small">Set ID</label><div style={{display:"flex", gap:6}}><input className="mt-input" style={{flex:1}} value={form.set_id} onChange={e=>setField("set_id",e.target.value.toUpperCase())} placeholder="Optional, TOP/BOTTOM set matching"/><button className="mt-btn ghost" type="button" onClick={()=>setField("set_id", suggestSetIdFor(form, allRows))}>Suggest</button></div>{duplicateSetId ? <div className="mt-small" style={{color:"var(--fg-warn)", fontWeight:800}}>Same Set ID exists on {naturalKeyLabel(duplicateSetId)}. Use same ID only for real set components.</div> : <div className="mt-small">System can suggest a clean Set ID so unrelated duplicates are avoided.</div>}</div></div>
         {!editing && String(form.set_id||"").trim() ? <div className="mt-order-size-card"><b>Set components — create together</b><div className="mt-small">Because this is a set, enter all components in one go so TOP/BOTTOM pieces do not get missed. Example: TOP, BOTTOM.</div><input className="mt-input" style={{width:"100%", marginTop:6}} value={form.set_components || ""} onChange={e=>setField("set_components", e.target.value.toUpperCase())} placeholder="TOP, BOTTOM"/><div className="mt-small">Add Style will create/update one row per component using the same Order Qty, size breakup, route and Set ID.</div></div> : null}
-        <div className="mt-order-size-card"><div style={{display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center"}}><div><b>Order Size Breakup</b><div className="mt-small">Order Qty is master. Size entries subtract from it; missing balance is shown instead of changing Order Qty.</div></div><div style={{display:"flex", gap:6, flexWrap:"wrap"}}><span className={`mt-chip ${statusClass(formSizeVariance.tone)}`}>{formSizeVariance.text}</span><span className="mt-chip mt-muted">Size total {fmt(formSizeTotal)} / Order {fmt(form.order_qty)}</span><button className="mt-btn ghost" type="button" onClick={distributeFormOrderQty}>Distribute Order Qty</button><button className="mt-btn ghost" type="button" onClick={clearFormOrderSizes}>Clear Sizes</button></div></div><div className="mt-order-size-row">{formSizes.map(size=><div className="mt-order-size-cell" key={size}><label>{size}</label><input className="mt-cell-input" style={{width:"100%"}} value={formOrderSizeQty[size] || ""} onChange={e=>setOrderSizeQty(size,e.target.value)} placeholder="0" /></div>)}</div><div className="mt-small">Bulk Excel uses the same size columns. Order Qty is mandatory; upload summary warns if size breakup is short/excess.</div></div>
+        <div className="mt-order-size-card"><div style={{display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center"}}><div><b>Order Size Breakup</b><div className="mt-small">Order Qty is master. Size entries subtract from it; missing balance is shown instead of changing Order Qty.</div></div><div style={{display:"flex", gap:6, flexWrap:"wrap"}}><span className={`mt-chip ${statusClass(formSizeVariance.tone)}`}>{formSizeVariance.text}</span><span className="mt-chip mt-muted">Size total {fmt(formSizeTotal)} / Order {fmt(form.order_qty)}</span><button className="mt-btn ghost" type="button" onClick={distributeFormOrderQty}>Distribute Order Qty</button><button className="mt-btn ghost" type="button" onClick={clearFormOrderSizes}>Clear Sizes</button></div></div><div className="mt-backdate-box" style={{alignItems:"flex-end"}}><div style={{minWidth:220, flex:"1 1 260px"}}><label className="mt-small">Size ratio</label><input className="mt-input" style={{width:"100%"}} value={form.size_ratio || ""} onChange={e=>setField("size_ratio", e.target.value.toUpperCase())} placeholder={`Example: ${(formSizes||[]).map((_,i)=>i===0||i===formSizes.length-1?1:2).join(":")}`} /></div><button className="mt-btn" type="button" onClick={applyFormSizeRatio}>Apply Ratio</button><button className="mt-btn ghost" type="button" onClick={useCurrentSizesAsRatio}>Use current sizes as ratio</button><span className="mt-chip mt-info">{form.size_ratio ? ratioSummaryText(form.size_ratio, formSizes) : "Ratio optional"}</span><div className="mt-small" style={{width:"100%"}}>Use simple ratio by size order, e.g. 1:2:3:3:2:1, or named ratio like XS=1,S=2,M=3. Apply ratio fills size quantities from Order Qty; manual size edits still win after that.</div></div><div className="mt-order-size-row">{formSizes.map(size=><div className="mt-order-size-cell" key={size}><label>{size}</label><input className="mt-cell-input" style={{width:"100%"}} value={formOrderSizeQty[size] || ""} onChange={e=>setOrderSizeQty(size,e.target.value)} placeholder="0" /></div>)}</div><div className="mt-small">Bulk Excel also accepts a Size Ratio column. Order Qty is mandatory; upload summary warns if size breakup is short/excess.</div></div>
         <div className="mt-two"><div><label className="mt-small">Planning line override</label><select className="mt-select" value={form.line} onChange={e=>setField("line",e.target.value)}><option value="">Not fixed — decide in Planning</option>{productionLineNames().map(l=><option key={l} value={l}>{l}</option>)}</select><div className="mt-small">Stitching line is normally decided later in Planning, not locked in Style Master.</div></div><div><label className="mt-small">Priority</label><select className="mt-select" value={form.priority} onChange={e=>setField("priority",e.target.value)}>{["Low","Normal","High","Urgent"].map(x=><option key={x}>{x}</option>)}</select></div></div>
         <div className="mt-two"><label className="mt-small"><input type="checkbox" checked={!!form.print_required} onChange={e=>setField("print_required",e.target.checked)}/> Print required</label><label className="mt-small"><input type="checkbox" checked={!!form.embroidery_required} onChange={e=>setField("embroidery_required",e.target.checked)}/> Embroidery required</label></div>
         <label className="mt-small"><input type="checkbox" checked={!!form.dispatch_reject_allowed} onChange={e=>setField("dispatch_reject_allowed",e.target.checked)}/> Allow rejection dispatch for this order/style only</label>
@@ -6476,7 +6556,7 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
     </div>
     <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Style List / Edit / Hard Delete</h3><div className="mt-panel-sub">Search, edit, delete unused rows, or hard delete demo rows with activity. For live production, hard delete should be replaced by archive/approval governance.</div></div>
       <div className="mt-section no-print"><div className="mt-toolbar"><Search size={14}/><input className="mt-input" value={q} onChange={e=>setQ(e.target.value)} placeholder="Search order / style / buyer / colour"/><span className="mt-chip mt-muted">{tableRows.length} rows</span></div></div>
-      <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style</th><th>Order</th><th>Buyer</th><th>Colour</th><th>Component</th><th>Qty</th><th>Route</th><th>Activity</th><th>Action</th></tr></thead><tbody>{tableRows.map(row=>{ const hasLedger=(ledger||[]).some(x=>ledgerRowMatchesStyle(x,row)); const hasActivity=styleHasStageActivity(row)||hasLedger; return <tr key={row.id}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.set_id ? `Set ${row.set_id} · ` : ""}{row.size_set}</div></div></div></td><td>{row.order_no}</td><td>{row.buyer}</td><td>{row.colour}</td><td>{row.component}</td><td><b>{fmt(row.order_qty)}</b><div className="mt-small">{explicitOrderSizeQtyTotal(row) ? sizesFor(row).map(sz=>`${sz} ${fmt(normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row))[sz]||0)}`).join(" · ") : <span style={{color:"var(--fg-warn)", fontWeight:800}}>Size breakup missing</span>}</div></td><td>{routeFor(row).map(stageLabel).join(" → ")}</td><td>{hasActivity ? <span className="mt-chip mt-warn">Has activity</span> : <span className="mt-chip mt-ok">Unused</span>}</td><td><button className="mt-btn" onClick={()=>edit(row)}>Edit</button> <button className="mt-btn ghost" disabled={busy} onClick={()=>remove(row)}>{hasActivity ? "Hard Delete" : "Delete"}</button>{hasActivity && <div className="mt-small">Demo cleanup only; removes matching ledger locally.</div>}</td></tr>; })}</tbody></table></div>
+      <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style</th><th>Order</th><th>Buyer</th><th>Colour</th><th>Component</th><th>Qty</th><th>Route</th><th>Activity</th><th>Action</th></tr></thead><tbody>{tableRows.map(row=>{ const hasLedger=(ledger||[]).some(x=>ledgerRowMatchesStyle(x,row)); const hasActivity=styleHasStageActivity(row)||hasLedger; return <tr key={row.id}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.set_id ? `Set ${row.set_id} · ` : ""}{row.size_set}{row.size_ratio ? ` · Ratio ${row.size_ratio}` : ""}</div></div></div></td><td>{row.order_no}</td><td>{row.buyer}</td><td>{row.colour}</td><td>{row.component}</td><td><b>{fmt(row.order_qty)}</b><div className="mt-small">{explicitOrderSizeQtyTotal(row) ? sizesFor(row).map(sz=>`${sz} ${fmt(normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row))[sz]||0)}`).join(" · ") : <span style={{color:"var(--fg-warn)", fontWeight:800}}>Size breakup missing</span>}</div></td><td>{routeFor(row).map(stageLabel).join(" → ")}</td><td>{hasActivity ? <span className="mt-chip mt-warn">Has activity</span> : <span className="mt-chip mt-ok">Unused</span>}</td><td><button className="mt-btn" onClick={()=>edit(row)}>Edit</button> <button className="mt-btn ghost" disabled={busy} onClick={()=>remove(row)}>{hasActivity ? "Hard Delete" : "Delete"}</button>{hasActivity && <div className="mt-small">Demo cleanup only; removes matching ledger locally.</div>}</td></tr>; })}</tbody></table></div>
     </div>
   </div>;
 }
@@ -6999,7 +7079,7 @@ export default function App(){
   return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
     <style>{FONT + CSS}</style>
     <LoginDialog open={showLogin} force={!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
-    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Planning board changeover clarity: compact cells now show both lost time and free time on 70% changeover days.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
+    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Planning OPS logic: same-line same-day multi-style slots use the highest OPS, not summed OPS.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
     <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Review · Reports. Supabase-first autosave · email login · audit/cell history · Excel-like exports.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className="mt-chip mt-info">{presenceSummaryText(presenceRows)}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${navCollapsed?"active":"ghost"}`} onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand left navigation"><Layers size={14}/>{navCollapsed?"Expand tabs":"Collapse tabs"}</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div></div><PresenceStrip peers={presenceRows}/></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
