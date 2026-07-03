@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.84";
+const APP_VERSION = "V7.5.85";
 const APP_COMMIT_MESSAGE = "Production DPR V7.5.83 tail closure not idle based";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
@@ -277,6 +277,17 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-update-popup .head { background:var(--ink); color:var(--bg); padding:14px 16px; font-family:'Archivo',sans-serif; font-weight:800; font-size:17px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .mt-update-popup .body { padding:16px; display:grid; gap:10px; }
 .mt-update-popup .actions { display:flex; justify-content:flex-end; gap:8px; padding:0 16px 16px; flex-wrap:wrap; }
+
+.mt-manager-decision-modal { width:min(720px,96vw); max-height:92vh; overflow:auto; background:var(--surface); border:1px solid var(--line-2); border-radius:18px; box-shadow:0 18px 60px rgba(0,0,0,.28); }
+.mt-manager-decision-modal .head { background:var(--ink); color:var(--bg); padding:14px 16px; display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.mt-manager-decision-modal .body { padding:16px; display:grid; gap:12px; }
+.mt-manager-decision-modal .actions { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
+.mt-manager-decision-kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
+.mt-manager-decision-kpis div { border:1px solid var(--line-2); background:#fffaf1; border-radius:12px; padding:9px; }
+.mt-manager-decision-kpis span { display:block; font-size:9px; color:var(--muted-2); font-weight:800; text-transform:uppercase; letter-spacing:.35px; }
+.mt-manager-decision-kpis b { display:block; margin-top:4px; font-family:'Archivo',sans-serif; font-size:18px; }
+.mt-check-row { display:flex; align-items:center; gap:8px; font-size:11px; font-weight:800; color:var(--muted-3); }
+@media (max-width:720px){ .mt-manager-decision-kpis{grid-template-columns:repeat(2,minmax(0,1fr));} }
 
 @media (max-width:1180px){ .mt-entry-metrics{grid-template-columns:repeat(2,minmax(0,1fr));} .mt-context-grid{grid-template-columns:1fr 1fr;} .mt-compact-hero{grid-template-columns:1fr 1fr;} }
 @media (max-width:720px){ .mt-context-grid,.mt-compact-hero{grid-template-columns:1fr;} .mt-bar-row{grid-template-columns:84px 1fr 54px;} }
@@ -5074,6 +5085,69 @@ function planImpactReviewRows(planRows=[], rows=[], ledger=[]){
     .sort((a,b)=>String(b.Date).localeCompare(String(a.Date)) || Math.abs(n(b.Variance))-Math.abs(n(a.Variance)));
 }
 
+
+function planRowsBetweenDates(planRows=[], dept="", style="", startDate="", endDate=""){
+  const st = String(style || "").trim().toUpperCase();
+  const start = String(startDate || "").slice(0,10);
+  const end = String(endDate || "").slice(0,10);
+  return (planRows||[]).filter(p=>{
+    const d = String(p.plan_date||"").slice(0,10);
+    if (!planStyleText(p) || planStyleText(p).toUpperCase() !== st) return false;
+    if (dept && String(p.dept||"") !== String(dept)) return false;
+    if (start && d < start) return false;
+    if (end && d > end) return false;
+    return true;
+  });
+}
+function actualForStyleDeptDate(style="", dept="", date="", rows=[], ledger=[]){
+  const st = String(style || "").trim().toUpperCase();
+  const day = String(date || "").slice(0,10);
+  const fromLedger = (ledger||[]).filter(e=>String(e.entry_date||"").slice(0,10)===day && String(e.stage||"")===String(dept||"") && String(e.style_no||e.style||"").trim().toUpperCase()===st && ["good_output","output","receive","received"].includes(String(e.entry_type||e.type||"").toLowerCase()));
+  if (fromLedger.length) return fromLedger.reduce((a,e)=>a+n(e.qty ?? e.delta ?? e.good_qty),0);
+  const row = (rows||[]).find(r=>String(r.style_no||"").trim().toUpperCase()===st);
+  if (!row) return 0;
+  const stg = sdata(row, dept);
+  return n(stg.output);
+}
+function coverRecoverySnapshot(commitPlan, planRows=[], rows=[], ledger=[]){
+  const style = planStyleText(commitPlan);
+  const dept = String(commitPlan?.dept || "stitching");
+  const sourceDate = String(commitPlan?.plan_date || today()).slice(0,10);
+  const due = String(commitPlan?.cover_due_date || commitPlan?.cover_date || today()).slice(0,10);
+  const committed = n(commitPlan?.cover_commitment_qty || commitPlan?.cover_qty || 0);
+  const dates = [];
+  const d = parseYmd(sourceDate);
+  const end = parseYmd(due);
+  d.setDate(d.getDate()+1);
+  while (d <= end) { if (d.getDay() !== 0) dates.push(ymd(d)); d.setDate(d.getDate()+1); }
+  let recovered = 0;
+  const daily = dates.map(day=>{
+    const dayPlans = planRowsBetweenDates(planRows, dept, style, day, day).filter(p=>!p.cover_recovery_slot && String(p.cover_source_plan_id||"") !== String(commitPlan?.id||""));
+    const basePlan = dayPlans.reduce((a,p)=>a+planRowEffectiveQty(p),0);
+    const actual = actualForStyleDeptDate(style, dept, day, rows, ledger);
+    const extra = Math.max(0, actual - basePlan);
+    const used = Math.min(Math.max(0, committed - recovered), extra);
+    recovered += used;
+    return { Date:day, Base_Plan:basePlan, Actual:actual, Extra_Available:extra, Used_For_Cover:used, Remaining_After:Math.max(0, committed-recovered) };
+  });
+  const remaining = Math.max(0, committed - recovered);
+  const status = !committed ? "No cover commitment" : remaining<=0 ? "Closed / covered" : (due < today() ? "Failed / overdue" : "Open cover commitment");
+  return { committed, recovered, remaining, due, status, daily };
+}
+function coverAdjustedPlanQty(p, planRows=[], rows=[], ledger=[]){
+  if (p?.cover_recovery_slot && p?.cover_source_plan_id) {
+    const src = (planRows||[]).find(x=>String(x.id)===String(p.cover_source_plan_id));
+    if (src) return coverRecoverySnapshot(src, planRows, rows, ledger).remaining;
+  }
+  return planRowEffectiveQty(p);
+}
+function coverCommitmentRows(planRows=[], rows=[], ledger=[]){
+  return (planRows||[]).filter(p=>n(p.cover_commitment_qty || p.cover_qty)>0 || String(p.manager_decision||"")==="part_cover" || String(p.status||"").toLowerCase().includes("cover")).map(p=>{
+    const snap = coverRecoverySnapshot(p, planRows, rows, ledger);
+    return { Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Style:planStyleText(p), Original_Short:n(p.cover_qty || p.cover_commitment_qty), Committed_Qty:snap.committed, Recovered_Qty:snap.recovered, Remaining_Qty:snap.remaining, Due_By:snap.due, Status:snap.status, Reason:p.cover_reason || "", Reviewed_By:p.manager_reviewed_by || "", Source_Plan_ID:p.id };
+  }).filter(r=>n(r.Committed_Qty)>0).sort((a,b)=>n(b.Remaining_Qty)-n(a.Remaining_Qty) || String(a.Due_By).localeCompare(String(b.Due_By)));
+}
+
 function repeatedStyleDelayRows(planRows=[], rows=[], ledger=[]){
   const todayIso = today();
   const pastPlans = (planRows||[])
@@ -5182,14 +5256,14 @@ function planRowToSupabase(p, rows=[], allPlanRows=[], ledger=[]){
     planned_qty:n(clean.planned_qty), ops:n(clean.ops), stitching_end_date:clean.stitching_end_date || null, remarks:clean.remarks || null, short_close:!!clean.short_close,
     source:clean.source || "manual_excel_board", source_label:clean.source_label || "Excel weekly line board", source_type:clean.source_type || "Manual / cascade checked",
     status:clean.short_close ? "Short close override" : (clean.status || (validation.level === "ok" ? "Draft / valid" : "Draft / review")), validation_status:validation.level, validation_message:validation.message, validation_snapshot:validation,
-    metadata:{ app_version:APP_VERSION, style_input:planStyleText(clean), route:linked ? routeFor(linked) : [], p0_guard:"cascade_as_of_plan_date", slot_no:planSlotNo(clean), full_day_output:n(clean.eight_hr_target || clean.full_day_output), eight_hr_target:n(clean.eight_hr_target || clean.full_day_output), remaining_hours:n(clean.remaining_hours || clean.run_hours || 0), day_remaining_after:n(clean.day_remaining_after), changeover:!!clean.changeover, changeover_override:!!clean.changeover_override, changeover_source:clean.changeover_override ? "manual" : "auto", qty_auto_mode:!!clean.qty_auto_mode, auto_qty:planAutoQtyFromTarget(clean), manager_review_status:clean.manager_review_status || "", manager_decision:clean.manager_decision || "", manager_reviewed_by:clean.manager_reviewed_by || "", manager_reviewed_at:clean.manager_reviewed_at || "", cover_qty:n(clean.cover_qty), cover_date:clean.cover_date || "", cover_reason:clean.cover_reason || "" },
+    metadata:{ app_version:APP_VERSION, style_input:planStyleText(clean), route:linked ? routeFor(linked) : [], p0_guard:"cascade_as_of_plan_date", slot_no:planSlotNo(clean), full_day_output:n(clean.eight_hr_target || clean.full_day_output), eight_hr_target:n(clean.eight_hr_target || clean.full_day_output), remaining_hours:n(clean.remaining_hours || clean.run_hours || 0), day_remaining_after:n(clean.day_remaining_after), changeover:!!clean.changeover, changeover_override:!!clean.changeover_override, changeover_source:clean.changeover_override ? "manual" : "auto", qty_auto_mode:!!clean.qty_auto_mode, auto_qty:planAutoQtyFromTarget(clean), manager_review_status:clean.manager_review_status || "", manager_decision:clean.manager_decision || "", manager_reviewed_by:clean.manager_reviewed_by || "", manager_reviewed_at:clean.manager_reviewed_at || "", cover_qty:n(clean.cover_qty), cover_date:clean.cover_date || "", cover_reason:clean.cover_reason || "", cover_status:clean.cover_status || "", cover_source_plan_id:clean.cover_source_plan_id || "", cover_due_date:clean.cover_due_date || clean.cover_date || "", cover_commitment_qty:n(clean.cover_commitment_qty || clean.cover_qty), cover_recovered_qty:n(clean.cover_recovered_qty), cover_remaining_qty:n(clean.cover_remaining_qty), cover_base_plan_qty:n(clean.cover_base_plan_qty), cover_recovery_slot:!!clean.cover_recovery_slot },
     updated_by:currentUserName(), updated_by_role:currentUserRole(), updated_at:new Date().toISOString(), created_by:clean.created_by || currentUserName(), created_at:clean.created_at || new Date().toISOString()
   };
 }
 function supabaseToPlanRow(row){
   const meta = row.metadata || {};
   return normalizePlanRowForState({
-    id:row.id, dept:row.dept, plan_date:row.plan_date, line:row.line || "", slot_no:planSlotNo(row), row_id:row.row_id || "", order_no:row.order_no || "", style_no:row.style_no || "", style_input:meta.style_input || row.style_no || "", buyer:row.buyer || "", colour:row.colour || "", component:row.component || "", planned_qty:n(row.planned_qty), ops:n(row.ops), stitching_end_date:row.stitching_end_date || "", remarks:row.remarks || "", short_close:!!row.short_close, eight_hr_target:n(meta.eight_hr_target || meta.full_day_output), remaining_hours:n(meta.remaining_hours || meta.run_hours || row.remaining_hours || 0), changeover:!!meta.changeover, changeover_override:!!meta.changeover_override, qty_auto_mode:!!meta.qty_auto_mode, source:row.source || "manual_excel_board", source_label:row.source_label || "Excel weekly line board", source_type:row.source_type || "Manual / cascade checked", status:row.status || "Draft", validation_status:row.validation_status || "", validation_message:row.validation_message || "", validation_snapshot:row.validation_snapshot || null, manager_review_status:meta.manager_review_status || "", manager_decision:meta.manager_decision || "", manager_reviewed_by:meta.manager_reviewed_by || "", manager_reviewed_at:meta.manager_reviewed_at || "", cover_qty:n(meta.cover_qty), cover_date:meta.cover_date || "", cover_reason:meta.cover_reason || "", updated_at:row.updated_at, created_at:row.created_at, created_by:row.created_by
+    id:row.id, dept:row.dept, plan_date:row.plan_date, line:row.line || "", slot_no:planSlotNo(row), row_id:row.row_id || "", order_no:row.order_no || "", style_no:row.style_no || "", style_input:meta.style_input || row.style_no || "", buyer:row.buyer || "", colour:row.colour || "", component:row.component || "", planned_qty:n(row.planned_qty), ops:n(row.ops), stitching_end_date:row.stitching_end_date || "", remarks:row.remarks || "", short_close:!!row.short_close, eight_hr_target:n(meta.eight_hr_target || meta.full_day_output), remaining_hours:n(meta.remaining_hours || meta.run_hours || row.remaining_hours || 0), changeover:!!meta.changeover, changeover_override:!!meta.changeover_override, qty_auto_mode:!!meta.qty_auto_mode, source:row.source || "manual_excel_board", source_label:row.source_label || "Excel weekly line board", source_type:row.source_type || "Manual / cascade checked", status:row.status || "Draft", validation_status:row.validation_status || "", validation_message:row.validation_message || "", validation_snapshot:row.validation_snapshot || null, manager_review_status:meta.manager_review_status || "", manager_decision:meta.manager_decision || "", manager_reviewed_by:meta.manager_reviewed_by || "", manager_reviewed_at:meta.manager_reviewed_at || "", cover_qty:n(meta.cover_qty || meta.cover_commitment_qty), cover_date:meta.cover_date || meta.cover_due_date || "", cover_reason:meta.cover_reason || "", cover_status:meta.cover_status || "", cover_source_plan_id:meta.cover_source_plan_id || "", cover_due_date:meta.cover_due_date || meta.cover_date || "", cover_commitment_qty:n(meta.cover_commitment_qty || meta.cover_qty), cover_recovered_qty:n(meta.cover_recovered_qty), cover_remaining_qty:n(meta.cover_remaining_qty), cover_base_plan_qty:n(meta.cover_base_plan_qty), cover_recovery_slot:!!meta.cover_recovery_slot, updated_at:row.updated_at, created_at:row.created_at, created_by:row.created_by
   });
 }
 async function robustUpsertPlanRowsToSupabase(planRows, rows=[], allPlanRows=[], ledger=[]){
@@ -5463,7 +5537,7 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
           const p=findCellSlot(line,day,slot)||{};
           row[`${shortDayLabel(day)} Style`] = planStyleText(p);
           row[`${shortDayLabel(day)} Brand`] = p.buyer || "";
-          row[`${shortDayLabel(day)} Qty`] = n(p.planned_qty) || "";
+          row[`${shortDayLabel(day)} Qty`] = coverAdjustedPlanQty(p, planRows, rows, ledger) || "";
           row[`${shortDayLabel(day)} Full_Day_Target`] = n(p.eight_hr_target) || "";
           row[`${shortDayLabel(day)} Plan_Hours`] = n(p.remaining_hours) || "";
           row[`${shortDayLabel(day)} Day_Remaining_After`] = p ? dayRemainingAfterSlot(lineDayPlanRows(planRows, activeDept, line, day), p) : "";
@@ -5485,7 +5559,7 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
   }
   const weekDayTotals = weekDays.map(day=>({
     day,
-    qty:boardRows.reduce((a,line)=>a+lineDayPlanRows(planRows, activeDept, line, day).reduce((x,p)=>x+n(p.planned_qty),0),0),
+    qty:boardRows.reduce((a,line)=>a+lineDayPlanRows(planRows, activeDept, line, day).reduce((x,p)=>x+coverAdjustedPlanQty(p, planRows, rows, ledger),0),0),
     ops:boardRows.reduce((a,line)=>a+lineDayOpsForPlan(line, day),0),
     hours:boardRows.reduce((a,line)=>a+lineDayPlanRows(planRows, activeDept, line, day).reduce((x,p)=>x+planHours(p),0),0)
   }));
@@ -5531,7 +5605,7 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
           const maxSlot = maxSlotsForLine(line);
           return Array.from({length:maxSlot}, (_,idx)=>idx+1).map(slotNo=>{
             const linePlans = weekDays.flatMap(day=>lineDayPlanRows(planRows, activeDept, line, day)).filter(p=>planSlotNo(p)===slotNo);
-            const lineQty = linePlans.reduce((a,p)=>a+n(p.planned_qty),0);
+            const lineQty = linePlans.reduce((a,p)=>a+coverAdjustedPlanQty(p, planRows, rows, ledger),0);
             return <tr key={`${line}-${slotNo}`}>
               <td className="line-cell"><b>{line}</b>{maxSlot>1 && <span>Slot {slotNo}</span>}</td>
               {weekDays.map(day=>{
@@ -5704,7 +5778,7 @@ function SimplePlanReadingView({ rows, planRows, ledger, activeDept, weekDays, m
   });
   const lineRows = lines.map(line=>{
     const lp = weekPlans.filter(p=>String(p.line || planCellLineKey(activeDept,line))===String(planCellLineKey(activeDept,line)));
-    const plan = lp.reduce((a,p)=>a+n(p.planned_qty),0);
+    const plan = lp.reduce((a,p)=>a+coverAdjustedPlanQty(p, planRows, rows, ledger),0);
     const achieved = lp.reduce((a,p)=>a+achievedForPlan(p, rows, ledger),0);
     return { Line:line, Styles:uniqueList(lp.map(planStyleText).filter(Boolean)).join(", "), Planned_Qty:plan, Achieved_Qty:achieved, Balance:Math.max(0,plan-achieved), Achievement:plan ? `${Math.round(achieved*1000/plan)/10}%` : "—", Plan_Hours:lp.reduce((a,p)=>a+planHours(p),0), OPS:lp.reduce((a,p)=>a+n(p.ops),0) };
   }).filter(r=>n(r.Planned_Qty) || n(r.Achieved_Qty) || r.Styles);
@@ -5722,13 +5796,13 @@ function SimplePlanReadingView({ rows, planRows, ledger, activeDept, weekDays, m
     <div className="mt-plan-action-grid">{(topActions.length?topActions:actionRows.slice(0,6)).map((r,i)=><div key={`${r.Date}-${r.Line}-${r.Style}-${i}`} className={`mt-plan-action-card ${planActionToneClass(r.tone)}`}><div className="mt-plan-action-top"><span>{r.Day} · {r.Line}</span><span>{r.Status}</span></div><div className="mt-plan-action-style">{r.Style}</div><div className="mt-plan-action-reading">Plan {fmt(r.Plan_Qty)} · Done {fmt(r.Done)} · Bal {fmt(r.Balance)} · Load {r.Load}</div><div className="mt-plan-action-next">{r.Next_Action}</div></div>)}</div>
     <div className="mt-plan-simple-grid">{lines.map(line=>{
       const lp = weekPlans.filter(p=>String(p.line || planCellLineKey(activeDept,line))===String(planCellLineKey(activeDept,line)));
-      const linePlan = lp.reduce((a,p)=>a+n(p.planned_qty),0);
+      const linePlan = lp.reduce((a,p)=>a+coverAdjustedPlanQty(p, planRows, rows, ledger),0);
       const lineAch = lp.reduce((a,p)=>a+achievedForPlan(p, rows, ledger),0);
       return <div key={line} className="mt-plan-simple-card"><div className="mt-plan-simple-head"><div className="mt-plan-simple-title">{line}</div><div className="mt-plan-simple-meta"><span className="mt-chip mt-info">Plan {fmt(linePlan)}</span><span className={`mt-chip ${lineAch>=linePlan && linePlan ? "mt-ok" : lineAch ? "mt-warn" : "mt-muted"}`}>Done {fmt(lineAch)}</span></div></div><div className="mt-plan-simple-body">{weekDays.map(day=>{
         const daySlots = lp.filter(p=>String(p.plan_date||"").slice(0,10)===day);
-        const dPlan = daySlots.reduce((a,p)=>a+n(p.planned_qty),0);
+        const dPlan = daySlots.reduce((a,p)=>a+coverAdjustedPlanQty(p, planRows, rows, ledger),0);
         const dAch = daySlots.reduce((a,p)=>a+achievedForPlan(p, rows, ledger),0);
-        return <div key={`${line}-${day}`} className="mt-plan-simple-slot"><div className="mt-plan-simple-meta"><b>{shortDayLabel(day)}</b><span>Plan {fmt(dPlan)}</span><span>Done {fmt(dAch)}</span><span>Bal {fmt(Math.max(0,dPlan-dAch))}</span></div>{daySlots.length ? daySlots.map(p=><div key={p.id || `${day}-${planSlotNo(p)}`}><div className="mt-plan-simple-style">{planStyleText(p) || "—"}</div><div className="mt-plan-simple-meta"><span>{p.buyer || ""}</span><span>Qty {fmt(p.planned_qty)}</span><span>{fmt(planHours(p))}h</span><span>OPS {fmt(p.ops)}</span><span>Load {planLoadReadyShort(p, rows, planRows, activeDept, line, day, ledger)}</span>{p.short_close ? <span className="mt-chip mt-purple">Short close</span> : null}</div></div>) : <div className="mt-plan-simple-empty">No style planned</div>}</div>;
+        return <div key={`${line}-${day}`} className="mt-plan-simple-slot"><div className="mt-plan-simple-meta"><b>{shortDayLabel(day)}</b><span>Plan {fmt(dPlan)}</span><span>Done {fmt(dAch)}</span><span>Bal {fmt(Math.max(0,dPlan-dAch))}</span></div>{daySlots.length ? daySlots.map(p=><div key={p.id || `${day}-${planSlotNo(p)}`}><div className="mt-plan-simple-style">{planStyleText(p) || "—"}</div><div className="mt-plan-simple-meta"><span>{p.buyer || ""}</span><span>Qty {fmt(coverAdjustedPlanQty(p, planRows, rows, ledger))}</span><span>{fmt(planHours(p))}h</span><span>OPS {fmt(p.ops)}</span><span>Load {planLoadReadyShort(p, rows, planRows, activeDept, line, day, ledger)}</span>{p.short_close ? <span className="mt-chip mt-purple">Short close</span> : null}</div></div>) : <div className="mt-plan-simple-empty">No style planned</div>}</div>;
       })}</div></div>;
     })}</div>
     <details className="mt-plan-collapse mt-plan-mini-table-toggle"><summary><span>Open day / line detail tables</span><span className="mt-chip mt-muted">optional</span></summary><div className="mt-plan-collapse-body"><SimpleTable title="Day-wise planned vs achieved" sub="Detailed day table. Main usable reading is the action cards above." rows={dayRows} empty="No plan rows for this week." /><div style={{height:12}}/><SimpleTable title="Line-wise planned vs achieved" sub="Detailed line table for export/review." rows={lineRows} empty="No line plan rows for this week." /></div></details>
@@ -5790,80 +5864,99 @@ function ManagerDeptCards({ taskRows, infoRows, query="" }){
   </details>)}</div>;
 }
 
+function ManagerDecisionPanel({ draft, onClose, onSave }){
+  const [form,setForm] = useState(()=>({ cover_qty:n(draft?.impact?.Short_Qty || 0), cover_date:nextProductionMonday(today()), line:draft?.impact?.Line || "", reason:"", create_plan_slot:true }));
+  if (!draft) return null;
+  const impact = draft.impact || {};
+  const decision = draft.decision;
+  const title = decision === "part_cover" ? "Cover commitment" : decision === "short_close" ? "Short close approval" : decision === "apply_cascade" ? "Cascade instruction" : decision === "no_change" ? "No plan change" : "Manual plan note";
+  const short = n(impact.Short_Qty);
+  const set = (k,v)=>setForm(f=>({ ...f, [k]:v }));
+  const notePlaceholder = decision === "part_cover" ? "Line agreed to recover by extra output before due date" : decision === "short_close" ? "Management approved short close" : decision === "apply_cascade" ? "Push remaining variance into future plan after review" : decision === "no_change" ? "Variance accepted / line will manage inside existing plan" : "Manager will edit weekly board manually";
+  return <div className="mt-update-backdrop no-print"><div className="mt-manager-decision-modal"><div className="head"><div><b>{title}</b><div className="mt-small">{impact.Style} · {impact.Date} · {impact.Dept} · {impact.Line}</div></div><button className="mt-btn ghost" onClick={onClose}>Close</button></div><div className="body">
+    <div className="mt-manager-decision-kpis"><div><span>Plan</span><b>{fmt(impact.Planned)}</b></div><div><span>Actual</span><b>{fmt(impact.Actual)}</b></div><div><span>Short</span><b>{fmt(impact.Short_Qty)}</b></div><div><span>Future plan</span><b>{fmt(impact.Future_Qty)}</b></div></div>
+    {decision === "part_cover" ? <>
+      <div className="mt-speed-note"><b>Floating recovery bucket:</b> this is <u>cover by date</u>, not fixed to one day. Extra production of the same style before/on the due date automatically reduces the open cover balance.</div>
+      <div className="mt-editor-grid"><label><span className="mt-toolbar-label">Cover qty</span><input className="mt-input" type="number" value={form.cover_qty} onChange={e=>set("cover_qty", e.target.value)} /></label><label><span className="mt-toolbar-label">Cover by</span><input className="mt-input" type="date" value={form.cover_date} onChange={e=>set("cover_date", e.target.value)} /></label><label><span className="mt-toolbar-label">Recovery line</span><input className="mt-input" value={form.line} onChange={e=>set("line", e.target.value)} /></label></div>
+      <label className="mt-check-row"><input type="checkbox" checked={!!form.create_plan_slot} onChange={e=>set("create_plan_slot", e.target.checked)} /> Show/update recovery target in weekly plan on the due date</label>
+      <div className="mt-small">Net cascade held now: {fmt(Math.max(0, short - n(form.cover_qty)))} · Cover commitment: {fmt(form.cover_qty)} by {form.cover_date || "—"}</div>
+    </> : null}
+    <label><span className="mt-toolbar-label">Reason / manager note</span><textarea className="mt-input" rows={3} value={form.reason} placeholder={notePlaceholder} onChange={e=>set("reason", e.target.value)} /></label>
+    <div className="actions"><button className="mt-btn ghost" onClick={onClose}>Cancel</button><button className="mt-btn primary" onClick={()=>onSave({ ...form, reason:String(form.reason || notePlaceholder).trim() })}>Save manager decision</button></div>
+  </div></div></div>;
+}
+
 function ManagerActionCenter({ rows, planRows, setPlanRows, ledger, onPlanUpsert }){
   const [section,setSection] = useState("impact");
   const [q,setQ] = useState("");
+  const [decisionDraft,setDecisionDraft] = useState(null);
   const canApprove = currentUserCan("production.manage_users") || isFullAccessRole(currentUserRole());
   const weekDays = planningSixDays(lineBoardWeekStart(today()));
   const impactRows = planImpactReviewRows(planRows, rows, ledger);
   const dprPendingRows = impactRows.filter(r=>n(r.Planned)>0 && n(r.Actual)===0 && String(r.Date||"").slice(0,10)<=today());
-  const shortRows = impactRows.filter(r=>n(r.Short_Qty)>0);
-  const excessRows = impactRows.filter(r=>n(r.Excess_Qty)>0);
   const repeatedRows = repeatedStyleDelayRows(planRows, rows, ledger);
-  const feedRows = STAGES.flatMap(st=>projectedFeedRows(planRows, rows, st.key, weekDays))
-    .filter(r=>!/Actual ready \/ OK/i.test(String(r.Feed_Status || "")));
+  const coverRows = coverCommitmentRows(planRows, rows, ledger);
+  const feedRows = STAGES.flatMap(st=>projectedFeedRows(planRows, rows, st.key, weekDays)).filter(r=>!/Actual ready \/ OK/i.test(String(r.Feed_Status || "")));
   const wipTaskRows = managerWipTaskRows(rows);
   const wipInfoRows = managerWipInfoRows(rows);
-  const wipRows = wipTaskRows;
-  const allRows = section === "impact" ? impactRows : section === "repeated" ? repeatedRows : section === "dpr" ? dprPendingRows : section === "feed" ? feedRows : section === "wip" ? wipTaskRows : section === "aging" ? wipInfoRows : [];
+  const allRows = section === "impact" ? impactRows : section === "cover" ? coverRows : section === "repeated" ? repeatedRows : section === "dpr" ? dprPendingRows : section === "feed" ? feedRows : section === "wip" ? wipTaskRows : section === "aging" ? wipInfoRows : [];
   const filtered = allRows.filter(r=>!q.trim() || Object.values(r).join(" ").toLowerCase().includes(q.trim().toLowerCase()));
-  function updatePlanDecision(impact, decision){
+  function openDecision(impact, decision){ if (!canApprove) return; setDecisionDraft({ impact, decision }); }
+  function saveDecision(form){
+    const draft = decisionDraft;
+    if (!draft) return;
+    const impact = draft.impact || {};
+    const decision = draft.decision;
     const plan = (planRows||[]).find(p=>String(p.id)===String(impact.Plan_ID));
-    if (!plan) { window.alert("Original plan row not found. Refresh shared data and try again."); return; }
-    let patch = { manager_review_status:"reviewed", manager_decision:decision, manager_reviewed_by:currentUserName(), manager_reviewed_at:new Date().toISOString() };
+    if (!plan) return setDecisionDraft(null);
+    const now = new Date().toISOString();
+    let patch = { manager_review_status:"reviewed", manager_decision:decision, manager_reviewed_by:currentUserName(), manager_reviewed_at:now, cover_reason:form.reason || "" };
+    let extraRows = [];
     if (decision === "part_cover") {
-      const coverQty = n(window.prompt(`Short qty is ${fmt(impact.Short_Qty)}. How much will line cover?`, String(Math.min(n(impact.Short_Qty), n(impact.Planned)) || "")));
-      if (!coverQty) return;
-      const coverDate = window.prompt("Cover by date (YYYY-MM-DD)", today()) || "";
-      const reason = window.prompt("Reason / agreement note", "Line agreed to cover with overtime / helper / higher output") || "";
-      patch = { ...patch, cover_qty:coverQty, cover_date:coverDate, cover_reason:reason, status:`Manager reviewed - cover promise ${fmt(coverQty)}` };
+      const coverQty = Math.min(n(form.cover_qty), n(impact.Short_Qty) || n(form.cover_qty));
+      if (!coverQty || !String(form.cover_date||"").trim() || !String(form.reason||"").trim()) return;
+      patch = { ...patch, cover_qty:coverQty, cover_commitment_qty:coverQty, cover_date:form.cover_date, cover_due_date:form.cover_date, cover_status:"Open cover commitment", cover_recovered_qty:0, cover_remaining_qty:coverQty, status:`Manager reviewed - cover by ${form.cover_date} (${fmt(coverQty)})`, remarks:[plan.remarks, `COVER COMMITMENT: ${fmt(coverQty)} by ${form.cover_date}. ${form.reason}`].filter(Boolean).join(" | ") };
+      if (form.create_plan_slot) {
+        const line = String(form.line || impact.Line || plan.line || "Dept total");
+        const existingSameDay = (planRows||[]).filter(p=>String(p.dept)===String(plan.dept) && String(p.line||"")===line && String(p.plan_date||"").slice(0,10)===String(form.cover_date).slice(0,10));
+        const slotNo = Math.max(1, ...existingSameDay.map(planSlotNo)) + 1;
+        const recovery = normalizePlanRowForState({ ...plan, id:stablePlanId(plan.dept, line, form.cover_date, slotNo), plan_date:form.cover_date, line, slot_no:slotNo, planned_qty:coverQty, qty_auto_mode:false, remaining_hours:0, changeover:false, source:"manager_cover_commitment", source_label:"Manager cover commitment", source_type:"Recovery target", status:`Cover target open - ${fmt(coverQty)} by ${form.cover_date}`, remarks:`RECOVERY TARGET for ${planStyleText(plan)}: ${fmt(coverQty)} by ${form.cover_date}. ${form.reason}`, cover_recovery_slot:true, cover_source_plan_id:plan.id, cover_due_date:form.cover_date, cover_commitment_qty:coverQty, cover_remaining_qty:coverQty, cover_status:"Open cover commitment", cover_reason:form.reason, manager_review_status:"reviewed", manager_decision:"cover_recovery_slot", manager_reviewed_by:currentUserName(), manager_reviewed_at:now });
+        extraRows.push(recovery);
+      }
     } else if (decision === "short_close") {
-      const reason = window.prompt("Short close reason is mandatory", "Management approved short close") || "";
-      if (!reason.trim()) return;
-      patch = { ...patch, short_close:true, cover_reason:reason, status:"Manager short close approved", remarks:[plan.remarks, `SHORT CLOSE APPROVED: ${reason}`].filter(Boolean).join(" | ") };
+      if (!String(form.reason||"").trim()) return;
+      patch = { ...patch, short_close:true, status:"Manager short close approved", remarks:[plan.remarks, `SHORT CLOSE APPROVED: ${form.reason}`].filter(Boolean).join(" | ") };
     } else if (decision === "no_change") {
-      const reason = window.prompt("Why no plan change?", "Line will manage within current plan / variance accepted") || "";
-      if (!reason.trim()) return;
-      patch = { ...patch, cover_reason:reason, status:"Manager reviewed - no plan change", remarks:[plan.remarks, `NO PLAN CHANGE: ${reason}`].filter(Boolean).join(" | ") };
+      if (!String(form.reason||"").trim()) return;
+      patch = { ...patch, status:"Manager reviewed - no plan change", remarks:[plan.remarks, `NO PLAN CHANGE: ${form.reason}`].filter(Boolean).join(" | ") };
     } else if (decision === "apply_cascade") {
-      const reason = window.prompt("Cascade instruction note", "Push shortage/excess into future plan. Manager will adjust board if needed.") || "";
-      if (!reason.trim()) return;
-      patch = { ...patch, cover_reason:reason, status:"Manager reviewed - cascade required", remarks:[plan.remarks, `CASCADE REQUIRED: ${reason}`].filter(Boolean).join(" | ") };
+      if (!String(form.reason||"").trim()) return;
+      patch = { ...patch, status:"Manager reviewed - cascade required", remarks:[plan.remarks, `CASCADE REQUIRED: ${form.reason}`].filter(Boolean).join(" | ") };
     } else if (decision === "manual_edit") {
-      const reason = window.prompt("Manual edit note", "Manager will edit the weekly board manually") || "";
-      if (!reason.trim()) return;
-      patch = { ...patch, cover_reason:reason, status:"Manager reviewed - manual board edit", remarks:[plan.remarks, `MANUAL PLAN EDIT: ${reason}`].filter(Boolean).join(" | ") };
+      if (!String(form.reason||"").trim()) return;
+      patch = { ...patch, status:"Manager reviewed - manual board edit", remarks:[plan.remarks, `MANUAL PLAN EDIT: ${form.reason}`].filter(Boolean).join(" | ") };
     }
-    const updated = normalizePlanRowForState({ ...plan, ...patch, updated_at:new Date().toISOString() });
-    setPlanRows(prev=>(prev||[]).map(p=>String(p.id)===String(updated.id) ? updated : p));
-    onPlanUpsert?.(updated, { dept:updated.dept, line:updated.line, day:updated.plan_date, slot_no:planSlotNo(updated), manager_decision:decision });
-    recordProductionAudit("manager_plan_impact_decision", { table_name:"production_plan_rows", order_no:updated.order_no, style_no:updated.style_no || updated.style_input, stage:updated.dept, entry_date:updated.plan_date, qty:updated.planned_qty, source:"Manager Action Center", after_data:{ decision, ...patch } });
+    const updated = normalizePlanRowForState({ ...plan, ...patch, updated_at:now });
+    const upserts = [updated, ...extraRows];
+    setPlanRows(prev=>{
+      const map = new Map((prev||[]).map(p=>[String(p.id),p]));
+      upserts.forEach(r=>map.set(String(r.id), r));
+      return Array.from(map.values());
+    });
+    upserts.forEach(r=>onPlanUpsert?.(r, { dept:r.dept, line:r.line, day:r.plan_date, slot_no:planSlotNo(r), manager_decision:decision }));
+    recordProductionAudit("manager_plan_impact_decision", { table_name:"production_plan_rows", order_no:updated.order_no, style_no:updated.style_no || updated.style_input, stage:updated.dept, entry_date:updated.plan_date, qty:updated.planned_qty, source:"Manager Action Center", after_data:{ decision, ...patch, recovery_slots:extraRows.length } });
+    setDecisionDraft(null);
   }
-  function exportManager(){
-    exportXlsx(`production_manager_action_center_${today()}.xlsx`, [
-      { name:"Plan Impact", rows:impactRows },
-      { name:"Repeated Style Delay", rows:repeatedRows },
-      { name:"DPR Pending", rows:dprPendingRows },
-      { name:"Feed Risks", rows:feedRows },
-      { name:"WIP Action Tasks", rows:wipTaskRows },
-      { name:"WIP Aging Info", rows:wipInfoRows }
-    ]);
-  }
-  const cards = [
-    ["impact","Plan Impact",impactRows.length,"DPR vs plan variance requiring manager decision"],
-    ["repeated","Repeated Delay",repeatedRows.length,"Styles missing plan repeatedly; reset target/line/feed plan"],
-    ["dpr","DPR Pending",dprPendingRows.length,"Planned rows where actual entry is still missing"],
-    ["feed","Feed Risk",feedRows.length,"Plans depending on upstream plan or over projected feed"],
-    ["wip","WIP Follow-up",wipTaskRows.length,"Exception tasks only: tail closure, feed discrepancy, late activity, R/A/M"],
-    ["aging","WIP Aging Info",wipInfoRows.length,"Normal pending issue / ready-to-move info, not an idle-day task"],
-  ];
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Manager Action Center</h3><div className="mt-panel-sub">Important data only: plan impact after DPR, follow-up activities, feed risks and WIP actions. Data operator entries do not change future plan; manager decisions are saved on the plan row and audit stamped.</div></div>
+  function exportManager(){ exportXlsx(`production_manager_action_center_${today()}.xlsx`, [{ name:"Plan Impact", rows:impactRows },{ name:"Cover Commitments", rows:coverRows },{ name:"Repeated Style Delay", rows:repeatedRows },{ name:"DPR Pending", rows:dprPendingRows },{ name:"Feed Risks", rows:feedRows },{ name:"WIP Action Tasks", rows:wipTaskRows },{ name:"WIP Aging Info", rows:wipInfoRows }]); }
+  const cards = [["impact","Plan Impact",impactRows.length,"DPR vs plan variance requiring manager decision"],["cover","Cover Commitments",coverRows.length,"Recovery promises: open, achieved, failed"],["repeated","Repeated Delay",repeatedRows.length,"Styles missing plan repeatedly; reset target/line/feed plan"],["dpr","DPR Pending",dprPendingRows.length,"Planned rows where actual entry is still missing"],["feed","Feed Risk",feedRows.length,"Plans depending on upstream plan or over projected feed"],["wip","WIP Follow-up",wipTaskRows.length,"Exception tasks only: tail closure, feed discrepancy, late activity, R/A/M"],["aging","WIP Aging Info",wipInfoRows.length,"Normal pending issue / ready-to-move info, not an idle-day task"]];
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Manager Action Center</h3><div className="mt-panel-sub">Important data only. Manager decisions open in an in-app review panel; no browser prompt popups. Cover commitments update the weekly plan as recovery targets and auto-reduce from extra actual output before the due date.</div></div>
     <div className="mt-section no-print"><div className="mt-summary-strip">{cards.map(([k,l,v,note])=><button key={k} className={`mt-summary-tile ${section===k?"active":""}`} onClick={()=>setSection(k)}><div className="label">{l}</div><div className="value">{fmt(v)}</div><div className="mt-small">{note}</div></button>)}</div><div className="mt-toolbar"><input className="mt-input" value={q} onChange={e=>setQ(e.target.value)} placeholder="Search style / line / owner / action"/><button className="mt-btn primary" onClick={exportManager}><Download size={14}/>Export Manager Pack</button><span className={`mt-chip ${canApprove?"mt-ok":"mt-warn"}`}>{canApprove ? "Manager actions enabled" : "Read-only for this role"}</span></div></div>
     <div className="mt-section">
-      {section === "impact" ? <div className="mt-manager-impact-list">{filtered.length ? filtered.map((r,idx)=><div key={`${r.Plan_ID}-${idx}`} className={`mt-manager-card ${n(r.Short_Qty)>0?"late":n(r.Excess_Qty)>0?"warn":"ok"}`}><div className="mt-manager-card-head"><div><b>{r.Style}</b><div className="mt-small">{r.Date} · {r.Dept} · {r.Line} · Slot {r.Slot}</div></div><span className={`mt-chip ${n(r.Short_Qty)>0?"mt-late":n(r.Excess_Qty)>0?"mt-warn":"mt-ok"}`}>{r.Review_Status}</span></div><div className="mt-manager-metrics"><span>Plan <b>{fmt(r.Planned)}</b></span><span>Actual <b>{fmt(r.Actual)}</b></span><span>Short <b>{fmt(r.Short_Qty)}</b></span><span>Excess <b>{fmt(r.Excess_Qty)}</b></span><span>Future <b>{fmt(r.Future_Qty)}</b></span></div><div className="mt-small">{r.Suggested_Action}</div><div className="mt-manager-actions no-print"><button className="mt-btn" disabled={!canApprove} onClick={()=>updatePlanDecision(r,"apply_cascade")}>Apply cascade instruction</button><button className="mt-btn" disabled={!canApprove || !n(r.Short_Qty)} onClick={()=>updatePlanDecision(r,"part_cover")}>Part qty cover</button><button className="mt-btn" disabled={!canApprove || !n(r.Short_Qty)} onClick={()=>updatePlanDecision(r,"short_close")}>Short close</button><button className="mt-btn ghost" disabled={!canApprove} onClick={()=>updatePlanDecision(r,"no_change")}>No plan change</button><button className="mt-btn ghost" disabled={!canApprove} onClick={()=>updatePlanDecision(r,"manual_edit")}>Manual edit note</button></div></div>) : <div className="mt-speed-note">No pending manager plan impacts.</div>}</div> :
+      {section === "impact" ? <div className="mt-manager-impact-list">{filtered.length ? filtered.map((r,idx)=><div key={`${r.Plan_ID}-${idx}`} className={`mt-manager-card ${n(r.Short_Qty)>0?"late":n(r.Excess_Qty)>0?"warn":"ok"}`}><div className="mt-manager-card-head"><div><b>{r.Style}</b><div className="mt-small">{r.Date} · {r.Dept} · {r.Line} · Slot {r.Slot}</div></div><span className={`mt-chip ${n(r.Short_Qty)>0?"mt-late":n(r.Excess_Qty)>0?"mt-warn":"mt-ok"}`}>{r.Review_Status}</span></div><div className="mt-manager-metrics"><span>Plan <b>{fmt(r.Planned)}</b></span><span>Actual <b>{fmt(r.Actual)}</b></span><span>Short <b>{fmt(r.Short_Qty)}</b></span><span>Excess <b>{fmt(r.Excess_Qty)}</b></span><span>Future <b>{fmt(r.Future_Qty)}</b></span></div><div className="mt-small">{r.Suggested_Action}</div><div className="mt-manager-actions no-print"><button className="mt-btn" disabled={!canApprove} onClick={()=>openDecision(r,"apply_cascade")}>Apply cascade instruction</button><button className="mt-btn" disabled={!canApprove || !n(r.Short_Qty)} onClick={()=>openDecision(r,"part_cover")}>Cover commitment</button><button className="mt-btn" disabled={!canApprove || !n(r.Short_Qty)} onClick={()=>openDecision(r,"short_close")}>Short close</button><button className="mt-btn ghost" disabled={!canApprove} onClick={()=>openDecision(r,"no_change")}>No plan change</button><button className="mt-btn ghost" disabled={!canApprove} onClick={()=>openDecision(r,"manual_edit")}>Manual edit note</button></div></div>) : <div className="mt-speed-note">No pending manager plan impacts.</div>}</div> :
       section === "wip" ? <ManagerDeptCards taskRows={wipTaskRows} infoRows={wipInfoRows} query={q}/> :
-      <SimpleTable title={cards.find(c=>c[0]===section)?.[1] || "Manager Detail"} sub={section === "aging" ? "Monitor-only WIP aging information. Pending issue / ready-to-move stock is not highlighted just because it is idle." : section === "repeated" ? "Pattern-based manager exception. A style appears here only when repeated plan misses/reviews show the style itself needs reset, line review, feed confirmation or cover/short-close decision." : "Action-first summary. Use export for meeting pack."} rows={filtered} empty="No rows for this section." />}
+      <SimpleTable title={cards.find(c=>c[0]===section)?.[1] || "Manager Detail"} sub={section === "cover" ? "Floating cover commitments. Extra production above base plan before/on due date reduces remaining cover automatically; recovery target slots appear in the weekly plan." : section === "aging" ? "Monitor-only WIP aging information. Pending issue / ready-to-move stock is not highlighted just because it is idle." : section === "repeated" ? "Pattern-based manager exception. A style appears here only when repeated plan misses/reviews show the style itself needs reset, line review, feed confirmation or cover/short-close decision." : "Action-first summary. Use export for meeting pack."} rows={filtered} empty="No rows for this section." />}
     </div>
+    {decisionDraft && <ManagerDecisionPanel draft={decisionDraft} onClose={()=>setDecisionDraft(null)} onSave={saveDecision}/>}  
   </div>;
 }
 
@@ -5887,7 +5980,7 @@ function PlanningView({ rows, planRows, setPlanRows, ledger, setRows, onPlanUpse
   const projectedRows = projectedFeedRows(planRows, rows, activeDept, weekDays);
   function exportWeekDetail(){
     exportXlsx(`production_${activeDept}_plan_detail_${normalizedWeekStart}.xlsx`, [
-      { name:"Plan Detail", rows:weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Slot:p.slot_no || 1, Style:p.style_no || p.style_input, Buyer:p.buyer, Qty:p.planned_qty, Full_Day_Target:p.eight_hr_target || "", Plan_Hours:p.remaining_hours || "", Changeover_Lost_Time:p.changeover?"Yes":"No", Qty_Mode:p.qty_auto_mode?"Auto":"Manual", End_Date:p.stitching_end_date, OPS:p.ops, Short_Close:p.short_close?"Yes":"No", Remarks:p.remarks, Status:p.status })) },
+      { name:"Plan Detail", rows:weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Slot:p.slot_no || 1, Style:p.style_no || p.style_input, Buyer:p.buyer, Qty:coverAdjustedPlanQty(p, planRows, rows, ledger), Full_Day_Target:p.eight_hr_target || "", Plan_Hours:p.remaining_hours || "", Changeover_Lost_Time:p.changeover?"Yes":"No", Qty_Mode:p.qty_auto_mode?"Auto":"Manual", End_Date:p.stitching_end_date, OPS:p.ops, Short_Close:p.short_close?"Yes":"No", Remarks:p.remarks, Status:p.status })) },
       { name:"Plan vs Achieved", rows:pva },
       { name:"Plan Impact Review", rows:impactRows },
       { name:"Projected Feed", rows:projectedRows }
@@ -5900,7 +5993,7 @@ function PlanningView({ rows, planRows, setPlanRows, ledger, setRows, onPlanUpse
     <div className="mt-section"><div className="mt-plan-week-total-strip no-print"><span><b>Impact review</b> {fmt(impactRows.length)}</span><span><b>Feed warnings</b> {fmt(projectedRows.filter(r=>String(r.Feed_Status||"").includes("Depends") || String(r.Feed_Status||"").includes("Over")).length)}</span><span><b>Plan rows</b> {fmt(weekPlanRows.length)}</span></div>
       <details className="mt-plan-collapse"><summary><span>Plan Impact Review — manager approval queue</span><span className="mt-chip mt-muted">{fmt(impactRows.length)} rows</span></summary><div className="mt-plan-collapse-body"><SimpleTable title="Plan Impact Review" sub="Only exceptions after DPR entry. Operator does not change future plan; manager reviews cascade, cover promise, short close or no-change." rows={impactRows} empty="No pending plan impacts for this department." /></div></details>
       <details className="mt-plan-collapse"><summary><span>Projected Feed Check</span><span className="mt-chip mt-muted">{fmt(projectedRows.length)} rows</span></summary><div className="mt-plan-collapse-body"><SimpleTable title="Projected Feed Check" sub="Actual-ready feed plus upstream planned feed ready by loading date. Open only when you need audit detail." rows={projectedRows} empty="No projected feed rows for this week." /></div></details>
-      <details className="mt-plan-collapse"><summary><span>{stageLabel(activeDept)} Week Plan Rows</span><span className="mt-chip mt-muted">{fmt(weekPlanRows.length)} rows</span></summary><div className="mt-plan-collapse-body"><SimpleTable title={`${stageLabel(activeDept)} Week Plan Rows`} sub="Underlying plan rows used for reporting/export." rows={weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Style:p.style_no || p.style_input, Buyer:p.buyer, Plan_Qty:p.planned_qty, End_Date:p.stitching_end_date||"", OPS:p.ops||"", Short_Close:p.short_close?"Yes":"No", Source:p.source_label, Load_Ready:planLoadReadyShort(p, rows, planRows, activeDept, p.line || "", p.plan_date, ledger), P0_Status:p.validation_status || planValidationSnapshot(p, rows, planRows, ledger).level, Status:p.status, Remarks:p.remarks }))} empty="No weekly plan cells filled yet." /></div></details>
+      <details className="mt-plan-collapse"><summary><span>{stageLabel(activeDept)} Week Plan Rows</span><span className="mt-chip mt-muted">{fmt(weekPlanRows.length)} rows</span></summary><div className="mt-plan-collapse-body"><SimpleTable title={`${stageLabel(activeDept)} Week Plan Rows`} sub="Underlying plan rows used for reporting/export." rows={weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Style:p.style_no || p.style_input, Buyer:p.buyer, Plan_Qty:coverAdjustedPlanQty(p, planRows, rows, ledger), End_Date:p.stitching_end_date||"", OPS:p.ops||"", Short_Close:p.short_close?"Yes":"No", Source:p.source_label, Load_Ready:planLoadReadyShort(p, rows, planRows, activeDept, p.line || "", p.plan_date, ledger), P0_Status:p.validation_status || planValidationSnapshot(p, rows, planRows, ledger).level, Status:p.status, Remarks:p.remarks }))} empty="No weekly plan cells filled yet." /></div></details>
       <details className="mt-plan-collapse"><summary><span>Plan vs Achieved / Style Adherence</span><span className="mt-chip mt-muted">{fmt(pva.length)} rows</span></summary><div className="mt-plan-collapse-body"><SimpleTable title="Plan vs Achieved / Style Adherence" sub="Compares planned style/date/line against actual production ledger." rows={pva} empty="No plan rows yet." /></div></details>
     </div>
   </div>;
@@ -7666,7 +7759,7 @@ export default function App(){
   return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
     <style>{FONT + CSS}</style>
     <LoginDialog open={showLogin} force={!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
-    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Style bulk upload now shows visual old/new differences before apply; size-set inference uses filled size values so infant/kids columns do not update alpha by mistake.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
+    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Manager cover commitments now use an in-app decision panel, update weekly plan recovery targets, and auto-track extra production against the commitment.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
     <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Review · Reports. Supabase-first autosave · email login · audit/cell history · Excel-like exports.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className="mt-chip mt-info">{presenceSummaryText(presenceRows)}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${navCollapsed?"active":"ghost"}`} onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand left navigation"><Layers size={14}/>{navCollapsed?"Expand tabs":"Collapse tabs"}</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div></div><PresenceStrip peers={presenceRows}/></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
