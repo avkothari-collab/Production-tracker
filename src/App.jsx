@@ -29,7 +29,7 @@ import {
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
 const APP_VERSION = "V6";
-const APP_COMMIT_MESSAGE = "Production DPR V6 dashboard and reports readability overhaul";
+const APP_COMMIT_MESSAGE = "Production DPR V6 factory whiteboard dashboard forced rebuild";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -3165,104 +3165,166 @@ function DashboardQuickTable({ title, sub, rows, empty, onRowClick, exportName }
   return <details className="mt-fold"><summary>{title} <span className="mt-small" style={{fontFamily:"JetBrains Mono, monospace", marginLeft:8}}>{Array.isArray(rows)?rows.length:0} rows</span></summary><SimpleTable title={title} sub={sub} rows={rows} empty={empty} onRowClick={onRowClick} exportName={exportName}/></details>;
 }
 function Dashboard({ rows, ledger=[], onDrill, clearTick=0 }){
-  const activityDate = latestActivityDate(ledger);
+  const activityDate = latestActivityDate(ledger) || today();
   const [selectedDate, setSelectedDate] = useState(()=>safeJsonLoad(uiStorageKey("dashboard_selected_date"), activityDate));
+  const [dashView, setDashViewRaw] = useState(()=>safeJsonLoad(uiStorageKey("dashboard_view"), "whiteboard"));
+  const [deptFilter, setDeptFilter] = useState(()=>safeJsonLoad(uiStorageKey("dashboard_dept_filter"), "all"));
+  const [search, setSearch] = useState(()=>safeJsonLoad(uiStorageKey("dashboard_search"), ""));
+  const setDashView = (v)=>setDashViewRaw(v === "summary" ? "whiteboard" : v);
+  const activeView = dashView === "summary" ? "whiteboard" : dashView;
+
   useEffect(()=>{ setSelectedDate(d => d || activityDate); }, [activityDate]);
   useEffect(()=>safeJsonSave(uiStorageKey("dashboard_selected_date"), selectedDate), [selectedDate]);
-  const cal = productionCalendar445(selectedDate || activityDate);
-  const buckets = rows.flatMap(row => issueBuckets(row).map(bucket => ({ ...bucket, row })));
-  const openBuckets = buckets.filter(b=>b.type!=="extra_cut" && b.type!=="dispatch_hold");
-  const openQty = openBuckets.reduce((a,b)=>a+n(b.qty),0);
-  const reconcile = buckets.filter(b=>b.type==="reconcile").reduce((a,b)=>a+n(b.qty),0);
-  const completedNotIssued = buckets.filter(b=>b.type==="completed_not_issued").reduce((a,b)=>a+n(b.qty),0);
-  const receivedNotProcessed = buckets.filter(b=>b.type==="received_not_processed").reduce((a,b)=>a+n(b.qty),0);
-  const ram = buckets.filter(b=>b.type==="ram").reduce((a,b)=>a+n(b.qty),0);
-  const tailQty = buckets.filter(b=>b.type==="tail_balance").reduce((a,b)=>a+n(b.qty),0);
-  const deptRows = departmentCurrentRows(rows);
-  const issueDeptRows = departmentIssueRows(rows);
-  const ownerRows = ownerActivityRows(rows);
-  const periodRows = dailyWeeklyMonthlyRows(rows, ledger, selectedDate || activityDate);
-  const reconciliationRows = reconciliationBoardRows(rows, ledger);
-  const meetingRows = meetingFocusRows(rows);
-  const lineRows = lineEfficiencyRows(rows, ledger, cal.weekStart, cal.weekEnd);
-  const bottleneckRows = flowBottleneckRows(rows, ledger);
-  const agingRows = agingStuckRows(rows);
-  const qualityRows = qualityLossRows(rows);
-  const partyRows = partyPendingRows(rows);
-  const setRows = setConvergenceRows(rows);
-  const setsUnmatched = setRows.reduce((a,r)=>a+n(r.Unmatched),0);
-  const orderRows = orderSummaryRows(rows);
-  const [dashView, setDashView] = useState(()=>safeJsonLoad(uiStorageKey("dashboard_view"), "summary"));
-  useEffect(()=>safeJsonSave(uiStorageKey("dashboard_view"), dashView), [dashView]);
-  useEffect(()=>{ if (!clearTick) return; setDashView("summary"); setSelectedDate(activityDate); }, [clearTick]);
-  const issueMixRows = [
-    { Issue:"With department", Qty:receivedNotProcessed, kind:"received_not_processed", note:"Normal WIP being processed." },
-    { Issue:"Ready to move", Qty:completedNotIssued, kind:"completed_not_issued", note:"Information unless it blocks plan." },
-    { Issue:"R/A/M", Qty:ram, kind:"ram", note:"Reject / alter / missing." },
-    { Issue:"Reconcile", Qty:reconcile, kind:"reconcile", note:"Needs correction/review." },
-  ].filter(x=>x.Qty>0);
-  const deptChartRows = deptRows.map(r=>({ Dept:r.Dept, Qty:n(r.Total_Open || r.Open_Qty || r.Qty), stage:r.stage, note:`${r.Styles || 0} styles` })).filter(r=>r.Qty>0);
-  const daily = periodRows[0] || {};
-  const hardActionQty = reconcile + ram + setsUnmatched;
-  const normalInfoQty = Math.max(0, openQty - hardActionQty);
-  const topActionRows = [
-    reconcile ? { title:"Reconcile / blocked", qty:reconcile, tone:"late", action:"Fix impossible quantity movement", drill:{kind:"reconcile", title:"Reconcile / Blocked"} } : null,
-    ram ? { title:"R/A/M", qty:ram, tone:"warn", action:"Review rejection/alter/missing", drill:{kind:"ram", title:"Reject / Alter / Missing"} } : null,
-    setsUnmatched ? { title:"Set mismatch", qty:setsUnmatched, tone:"warn", action:"Match top/bottom components", drill:{kind:"sets", title:"Sets Convergence"} } : null,
-    meetingRows.length ? { title:"Meeting focus", qty:meetingRows.length, tone:"info", action:"Open exception list", drill:{kind:"meeting_focus", title:"Production Meeting Focus"} } : null,
-  ].filter(Boolean);
-  const todayOutputRows = [
-    { Dept:"Cutting", Qty:n(daily.Cutting), kind:"period" },
-    { Dept:"Stitching receiving", Qty:n(daily.Stitching_Receiving), kind:"period" },
-    { Dept:"Checking", Qty:n(daily.Checking), kind:"period" },
-    { Dept:"Packing", Qty:n(daily.Packing), kind:"period" },
-    { Dept:"Dispatch", Qty:n(daily.Dispatch), kind:"period" },
-  ].filter(x=>x.Qty>0);
+  useEffect(()=>safeJsonSave(uiStorageKey("dashboard_view"), activeView), [activeView]);
+  useEffect(()=>safeJsonSave(uiStorageKey("dashboard_dept_filter"), deptFilter), [deptFilter]);
+  useEffect(()=>safeJsonSave(uiStorageKey("dashboard_search"), search), [search]);
+  useEffect(()=>{ if (!clearTick) return; setDashView("whiteboard"); setSelectedDate(activityDate); setDeptFilter("all"); setSearch(""); }, [clearTick, activityDate]);
+
+  const selectedDay = selectedDate || activityDate || today();
+  const cal = productionCalendar445(selectedDay);
+  const dashboardRows = useMemo(()=>{
+    const q = String(search || "").trim().toLowerCase();
+    return (rows || []).filter(row=>{
+      const deptOk = deptFilter === "all" || routeFor(row).includes(deptFilter);
+      const text = [row.order_no,row.style_no,row.buyer,row.colour,row.component,row.line,row.owner,row.merchant].join(" ").toLowerCase();
+      return deptOk && (!q || text.includes(q));
+    });
+  }, [rows, deptFilter, search]);
+
+  const outputTypes = ["good_output","receive","output","dispatch","issue"];
+  const entryTypeOf = (x)=>String(x.entry_type || x.entryType || "").toLowerCase();
+  const stagePeriodQty = (stage, start, end) => (ledger || [])
+    .filter(x => String(x.stage) === stage && inDateRange(x.entry_date || x.entryDate || x.date, start, end))
+    .filter(x => outputTypes.includes(entryTypeOf(x)))
+    .reduce((a,x)=>a+Math.max(0,n(x.qty ?? x.delta)),0);
+  const stagePeriodPlan = (stage, start, end) => (ledger || [])
+    .filter(x => String(x.stage) === stage && inDateRange(x.entry_date || x.entryDate || x.date, start, end))
+    .reduce((a,x)=>a+n(x.plan_qty || x.target_qty || x.planned_qty),0);
+  const pctText = (done, plan) => plan ? `${Math.round((n(done)*1000)/Math.max(1,n(plan)))/10}%` : (done ? "actual" : "—");
+  const achTone = (done, plan) => !plan ? (done ? "info" : "muted") : done >= plan ? "ok" : done >= plan*0.9 ? "warn" : "late";
+  const achReading = (done, plan) => !plan ? (done ? "Output posted" : "No output") : done >= plan ? "On track" : done > 0 ? `Short ${fmt(Math.max(0,plan-done))}` : "DPR pending";
+
+  const todayDept = STAGES.map(s=>{
+    const done = stagePeriodQty(s.key, selectedDay, selectedDay);
+    const plan = stagePeriodPlan(s.key, selectedDay, selectedDay);
+    return { stage:s.key, Dept:s.label, Done:done, Plan:plan, Balance: plan ? done-plan : "—", Achv:pctText(done,plan), Reading:achReading(done,plan), tone:achTone(done,plan) };
+  }).filter(r=>r.Done || r.Plan || deptFilter === "all");
+  const weekDept = STAGES.map(s=>{
+    const done = stagePeriodQty(s.key, cal.weekStart, cal.weekEnd);
+    const plan = stagePeriodPlan(s.key, cal.weekStart, cal.weekEnd);
+    return { stage:s.key, Dept:s.label, Done:done, Plan:plan, Balance: plan ? done-plan : "—", Achv:pctText(done,plan), Reading:achReading(done,plan), tone:achTone(done,plan) };
+  }).filter(r=>r.Done || r.Plan || deptFilter === "all");
+
+  const todayDone = todayDept.reduce((a,r)=>a+n(r.Done),0);
+  const todayPlan = todayDept.reduce((a,r)=>a+n(r.Plan),0);
+  const weekDone = weekDept.reduce((a,r)=>a+n(r.Done),0);
+  const weekPlan = weekDept.reduce((a,r)=>a+n(r.Plan),0);
+
+  const lineToday = lineEfficiencyRows(dashboardRows, ledger, selectedDay, selectedDay).map(r=>({ ...r, Plan:n(r.Plan_Target), Done:n(r.Achieved), tone: n(r.Plan_Target) ? achTone(n(r.Achieved),n(r.Plan_Target)) : (n(r.Achieved)?"info":"muted") }));
+  const dprPending = lineToday.filter(r=>n(r.Plan_Target) > 0 && n(r.Achieved) <= 0);
+
+  const deptCurrent = departmentCurrentRows(dashboardRows);
+  const normalWipQty = deptCurrent.reduce((a,r)=>a+n(r.Production_Qty),0);
+  const reconcileQty = deptCurrent.reduce((a,r)=>a+n(r.Reconcile_Qty),0);
+  const ramQty = deptCurrent.reduce((a,r)=>a+n(r.RAM_Qty),0);
+  const tailQty = deptCurrent.reduce((a,r)=>a+n(r.Tail_Close_Due),0);
+  const actionQty = reconcileQty + ramQty + tailQty;
+
+  const sittingMap = new Map();
+  dashboardRows.forEach(row=>{
+    const route = routeFor(row);
+    route.forEach((stage, idx)=>{
+      const next = route[idx+1];
+      if (!next) return;
+      const ready = Math.max(0, n(sdata(row,stage).output) - n(sdata(row,stage).issued));
+      if (!ready) return;
+      const key = `${stageLabel(stage)} → ${stageLabel(next)}`;
+      const old = sittingMap.get(key) || { Pair:key, Qty:0, Styles:new Set(), stage };
+      old.Qty += ready; old.Styles.add(row.id || row.style_no); sittingMap.set(key, old);
+    });
+  });
+  const sittingRows = Array.from(sittingMap.values()).map(x=>({ Pair:x.Pair, Qty:x.Qty, Styles:x.Styles.size, stage:x.stage, note:`${x.Styles.size} styles` })).sort((a,b)=>b.Qty-a.Qty);
+
+  const readyQueueRows = deptCurrent.map(r=>({ Dept:r.Dept, Qty:n(r.Production_Qty), Styles:r.Styles, stage:r.stage, note:`${r.Styles} styles ready/with dept` })).filter(r=>r.Qty>0).sort((a,b)=>b.Qty-a.Qty);
+  const qualityRows = qualityLossRows(dashboardRows);
+  const qualitySummary = qualityRows.map(r=>({ Dept:r.Dept, Qty:n(r.RAM_Total), Reject:r.Reject, Alter:r.Alter, Missing:r.Missing, stage:r.stage, note:`R ${fmt(r.Reject)} · A ${fmt(r.Alter)} · M ${fmt(r.Missing)}` })).filter(r=>r.Qty>0).sort((a,b)=>b.Qty-a.Qty);
+  const orderRows = orderSummaryRows(dashboardRows);
+  const dispatchRiskRows = orderRows.filter(r=>n(r.Reconcile)||n(r.RAM)||n(r.Open_WIP)).slice(0,8).map(r=>({ Order:r.Order, Buyer:r.Buyer, Qty:n(r.Open_WIP)+n(r.Reconcile)*2+n(r.RAM), Status:n(r.Reconcile)?"Reconcile":n(r.RAM)?"R/A/M":"In flow", Styles:r.Styles, Ship:r.Ship || "—" }));
+
+  const actionCards = [
+    ...(reconcileQty ? [{ title:"Reconcile / mismatch", qty:reconcileQty, tone:"late", action:"Impossible movement or quantity mismatch. Needs correction/review.", drill:{kind:"meeting_focus", title:"Reconcile / Mismatch"} }] : []),
+    ...(ramQty ? [{ title:"R/A/M to review", qty:ramQty, tone:"warn", action:"Reject / alter / missing. Check style reasons and recovery.", drill:{kind:"quality_loss", title:"R/A/M Quality Detail"} }] : []),
+    ...(tailQty ? [{ title:"Tail closure", qty:tailQty, tone:"warn", action:"Only small tail-ending balances. Decide close / recover / short close.", drill:{kind:"meeting_focus", title:"Tail Closure Review"} }] : []),
+    ...(dprPending.length ? [{ title:"DPR data pending", qty:dprPending.length, tone:"warn", action:"Planned lines with no actual entry yet. Ask operator/HOD to update.", drill:{kind:"line_efficiency", start:selectedDay, end:selectedDay, title:"DPR Pending"} }] : [])
+  ];
+
+  const InfoPill = ({label,value,tone="info"}) => <span className={`mt-chip ${statusClass(tone)}`} style={{marginRight:5, marginBottom:5}}>{label}: {value}</span>;
+  const DeptTile = ({r, period="today"}) => <button type="button" className="mt-card" onClick={()=>onDrill?.({kind:"stage", stage:r.stage, title:`${r.Dept} ${period}`})} style={{textAlign:"left", padding:0, cursor:"pointer", boxShadow:"none", background:r.tone==="late"?"#fff4f1":r.tone==="warn"?"#fff9e5":r.tone==="ok"?"#f0fbf6":"var(--surface)"}}>
+    <div className="mt-section" style={{padding:12}}>
+      <div style={{display:"flex", justifyContent:"space-between", gap:8, alignItems:"baseline"}}><b style={{fontFamily:"Archivo, sans-serif", fontSize:15}}>{r.Dept}</b><span className={`mt-chip ${statusClass(r.tone)}`}>{r.Achv}</span></div>
+      <div style={{fontFamily:"Archivo, sans-serif", fontWeight:800, fontSize:22, marginTop:8}}>{fmt(r.Done)}</div>
+      <div className="mt-small">{r.Plan ? `${fmt(r.Done)} / ${fmt(r.Plan)} plan` : "Actual output"}</div>
+      <div className="mt-small" style={{marginTop:4}}>{r.Reading}</div>
+    </div>
+  </button>;
+
   return <>
-    <div className="mt-card" style={{marginBottom:12}}><div className="mt-section">
-      <div className="mt-drill-head"><div><h3 className="mt-panel-title">Dashboard</h3><div className="mt-panel-sub"><b>Summary</b> = what to act on now. <b>Graphs</b> = easy visual comparison. <b>Tables</b> = expandable detail for audit/export. Every card and row is drillable.</div></div><div className="mt-toggle-row"><button className={`mt-btn ${dashView==="summary"?"active":""}`} onClick={()=>setDashView("summary")}>Summary</button><button className={`mt-btn ${dashView==="charts"?"active":""}`} onClick={()=>setDashView("charts")}>Graphs</button><button className={`mt-btn ${dashView==="tables"?"active":""}`} onClick={()=>setDashView("tables")}>Tables</button></div></div>
-      <div className="mt-toolbar" style={{marginTop:10}}><span className="mt-toolbar-label">Activity date</span><input className="mt-input mt-entry-date" type="date" value={selectedDate || activityDate} onChange={e=>setSelectedDate(e.target.value)} /><span className="mt-chip mt-info">{cal.fullLabel}</span><span className="mt-chip mt-muted">Month {fullMonthLabel(parseYmd(selectedDate || activityDate))}</span></div>
-    </div></div>
+    <div className="mt-drill-head">
+      <div><h3 className="mt-panel-title">Factory Whiteboard</h3><div className="mt-panel-sub"><b>WHITEBOARD MODE ACTIVE.</b> Live floor scoreboard first. Graphs and tables are support views. Normal WIP is information; only true exceptions go to action.</div></div>
+      <div className="mt-toggle-row">{[["whiteboard","Whiteboard"],["graphs","Graphs"],["tables","Tables"]].map(([k,l])=><button key={k} className={`mt-btn ${activeView===k?"active":"ghost"}`} onClick={()=>setDashView(k)}>{l}</button>)}</div>
+    </div>
+    <div className="mt-filter-row" style={{marginBottom:12}}>
+      <div className="mt-filter-group"><span className="mt-toolbar-label">Date</span><input className="mt-input" type="date" value={selectedDay} onChange={e=>setSelectedDate(e.target.value)} /></div>
+      <div className="mt-filter-group"><span className="mt-toolbar-label">Dept</span><select className="mt-select" value={deptFilter} onChange={e=>setDeptFilter(e.target.value)}><option value="all">All departments</option>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select></div>
+      <div className="mt-filter-group" style={{flex:1}}><span className="mt-toolbar-label">Search</span><input className="mt-input" style={{minWidth:260, flex:1}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="order / style / buyer / colour" /></div>
+      <button className="mt-btn ghost" onClick={()=>{ setDeptFilter("all"); setSearch(""); setSelectedDate(activityDate); }}>Reset</button>
+      <span className="mt-chip mt-info">{dashboardRows.length} styles</span>
+    </div>
 
-    {dashView === "summary" && <>
+    {activeView === "whiteboard" && <>
       <div className="mt-grid" style={{marginBottom:12}}>
-        <DashboardActionCard title="Needs action" value={fmt(hardActionQty)} sub={hardActionQty ? "Reconcile, R/A/M or set mismatch. Open before meeting." : "No hard blocker in current filter."} tone={hardActionQty?"late":"ok"} onClick={()=>onDrill?.(hardActionQty ? {kind:"meeting_focus", title:"Dashboard Action List"} : {kind:"all_styles", title:"All Styles"})}/>
-        <DashboardActionCard title="Normal WIP / info" value={fmt(normalInfoQty)} sub="With department / ready to move. Monitor, not automatically a manager task." tone="info" onClick={()=>onDrill?.({kind:"open_qty", title:"Normal WIP / Current Bins"})}/>
-        <DashboardActionCard title="Today output" value={fmt(todayOutputRows.reduce((a,r)=>a+n(r.Qty),0))} sub={`${selectedDate || activityDate}. Click for daily ledger rows.`} tone="ok" onClick={()=>onDrill?.({kind:"period", period:"daily", start:selectedDate || activityDate, end:selectedDate || activityDate, title:`Daily Activity — ${selectedDate || activityDate}`})}/>
-        <DashboardActionCard title="Active styles" value={rows.length} sub="All styles in current filter. Use drilldown for style detail." tone="info" onClick={()=>onDrill?.({kind:"all_styles", title:"Active Styles"})}/>
+        <DashboardActionCard title="Today output" value={fmt(todayDone)} sub={todayPlan ? `${fmt(todayDone)} / ${fmt(todayPlan)} plan · ${pctText(todayDone,todayPlan)}` : `${selectedDay} actual output`} tone={achTone(todayDone,todayPlan)} onClick={()=>onDrill?.({kind:"period", period:"daily", start:selectedDay, end:selectedDay, title:`Today Output — ${selectedDay}`})}/>
+        <DashboardActionCard title="Week output" value={fmt(weekDone)} sub={weekPlan ? `${fmt(weekDone)} / ${fmt(weekPlan)} target · ${pctText(weekDone,weekPlan)}` : `${cal.fullLabel} actual output`} tone={achTone(weekDone,weekPlan)} onClick={()=>onDrill?.({kind:"period", period:"production_week", start:cal.weekStart, end:cal.weekEnd, title:`Week Output — ${cal.fullLabel}`})}/>
+        <DashboardActionCard title="DPR data pending" value={dprPending.length} sub={dprPending.length ? "Planned line/style missing actual entry." : "No missing line actual in this scope."} tone={dprPending.length?"warn":"ok"} onClick={()=>onDrill?.({kind:"line_efficiency", start:selectedDay, end:selectedDay, title:"DPR Data Pending"})}/>
+        <DashboardActionCard title="Action items" value={actionCards.length} sub={actionCards.length ? "True exceptions only." : "No hard exception in current filter."} tone={actionCards.length?"late":"ok"} onClick={()=>onDrill?.({kind:"meeting_focus", title:"Manager Action List"})}/>
       </div>
+
+      <div className="mt-card" style={{marginBottom:12}}><div className="mt-section"><div className="mt-drill-head"><div><h3 className="mt-panel-title">Today output by department</h3><div className="mt-panel-sub">Actual production posted today. Cards are clickable for style/detail.</div></div><span className="mt-chip mt-muted">{selectedDay}</span></div><div className="mt-grid">{todayDept.map(r=><DeptTile key={r.stage} r={r} period="today" />)}</div></div></div>
+
       <div className="mt-two" style={{marginBottom:12}}>
-        <div className="mt-card"><div className="mt-section"><div className="mt-drill-head"><div><h3 className="mt-panel-title">Today’s factory reading</h3><div className="mt-panel-sub">Plain-language meeting list. These are summaries; click for rows.</div></div><span className="mt-chip mt-muted">{topActionRows.length || 1} items</span></div>
-          <div style={{display:"grid", gap:8, marginTop:10}}>{topActionRows.length ? topActionRows.map((r,i)=><button key={i} className="mt-card" style={{boxShadow:"none", textAlign:"left", cursor:"pointer"}} onClick={()=>onDrill?.(r.drill)}><div className="mt-section" style={{padding:10}}><div style={{display:"flex", justifyContent:"space-between", gap:8}}><b>{r.title}</b><span className={`mt-chip ${statusClass(r.tone)}`}>{fmt(r.qty)}</span></div><div className="mt-small" style={{marginTop:5}}>{r.action}</div></div></button>) : <div className="mt-card" style={{boxShadow:"none"}}><div className="mt-section" style={{padding:10}}><b>Looks clear</b><div className="mt-small" style={{marginTop:5}}>No hard blocker in this filter. Use Normal WIP to monitor flow.</div></div></div>}</div>
-        </div></div>
-        <DashboardBarPanel title="Department load" sub="Where the quantity is sitting now. Click a department for style detail." rows={deptChartRows} labelKey="Dept" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"stage", stage:r.stage, title:`${r.Dept} Current WIP`})}/>
+        <div className="mt-card"><div className="mt-section"><div className="mt-drill-head"><div><h3 className="mt-panel-title">Today by line</h3><div className="mt-panel-sub">Stitching line scoreboard. Red means reason/follow-up needed.</div></div><span className="mt-chip mt-muted">{lineToday.length} lines</span></div><div style={{display:"grid", gap:8}}>{lineToday.length ? lineToday.slice(0,10).map(r=><button key={r.Line} className="mt-card" style={{boxShadow:"none", textAlign:"left", padding:0}} onClick={()=>onDrill?.({kind:"line_efficiency", start:selectedDay, end:selectedDay, title:`Line ${r.Line} — ${selectedDay}`})}><div className="mt-section" style={{padding:10}}><div style={{display:"grid", gridTemplateColumns:"110px 1fr 120px", gap:10, alignItems:"center"}}><div><b>{r.Line}</b><div className="mt-small">{r.Styles} styles</div></div><div className="mt-bar-track"><div className="mt-bar-fill" style={{width:`${Math.min(100, n(r.Plan)?(n(r.Done)*100/Math.max(1,n(r.Plan))):100)}%`}}/></div><div style={{textAlign:"right"}}><b>{fmt(r.Done)}{r.Plan?` / ${fmt(r.Plan)}`:""}</b><div className={`mt-small ${r.tone==="late"?"warn":""}`}>{r.Plan ? pctText(r.Done,r.Plan) : "Actual only"}</div></div></div></div></button>) : <div className="mt-small">No line output for this date.</div>}</div></div></div>
+        <DashboardBarPanel title="Sitting now" sub="Goods between departments. This is normal WIP/info, not automatically a manager issue." rows={sittingRows} labelKey="Pair" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"stage", stage:r.stage, title:`${r.Pair} Sitting WIP`})}/>
       </div>
+
+      <div className="mt-two" style={{marginBottom:12}}>
+        <DashboardBarPanel title="Ready queue" sub="Actual work available with departments now." rows={readyQueueRows} labelKey="Dept" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"stage", stage:r.stage, title:`${r.Dept} Ready Queue`})}/>
+        <DashboardBarPanel title="R/A/M quality" sub="Reject + alter + missing. Click for style/detail." rows={qualitySummary} labelKey="Dept" valueKey="Qty" onRowClick={()=>onDrill?.({kind:"quality_loss", title:"R/A/M Quality Detail"})}/>
+      </div>
+
       <div className="mt-two">
-        <SimpleTable title="Order summary" sub="Order-level first so many styles do not become noise. Click order for style rows." rows={orderRows.slice(0,10)} empty="No orders in current dashboard scope." onRowClick={(r)=>onDrill?.({kind:"order", order:r.Order, title:`Order — ${r.Order}`})}/>
-        <SimpleTable title="Line output summary" sub="Stitching line plan/actual reading for selected production week." rows={lineRows.slice(0,10)} empty="No line output yet." onRowClick={()=>onDrill?.({kind:"line_efficiency", start:cal.weekStart, end:cal.weekEnd, title:`Line Output — ${cal.fullLabel}`})}/>
+        <div className="mt-card"><div className="mt-section"><div className="mt-drill-head"><div><h3 className="mt-panel-title">Top attention items</h3><div className="mt-panel-sub">Only things that need action. Normal pending issue/WIP aging stays out of this list.</div></div><span className="mt-chip mt-muted">{actionCards.length} items</span></div><div style={{display:"grid", gap:8}}>{actionCards.length ? actionCards.map((r,i)=><button key={i} className="mt-card" style={{boxShadow:"none", textAlign:"left", padding:0}} onClick={()=>onDrill?.(r.drill)}><div className="mt-section" style={{padding:10}}><div style={{display:"flex", justifyContent:"space-between", gap:8}}><b>{r.title}</b><span className={`mt-chip ${statusClass(r.tone)}`}>{fmt(r.qty)}</span></div><div className="mt-small" style={{marginTop:5}}>{r.action}</div></div></button>) : <div className="mt-small">No hard exception in current filter.</div>}</div></div></div>
+        <div className="mt-card"><div className="mt-section"><div className="mt-drill-head"><div><h3 className="mt-panel-title">Order / dispatch risk</h3><div className="mt-panel-sub">Order-level first so many styles do not become noise.</div></div><span className="mt-chip mt-muted">{dispatchRiskRows.length} orders</span></div><SimpleTable title="Order risk" sub="Click order for style breakup." rows={dispatchRiskRows} empty="No order risk in current filter." onRowClick={(r)=>onDrill?.({kind:"order", order:r.Order, title:`Order — ${r.Order}`})}/></div></div>
       </div>
     </>}
 
-    {dashView === "charts" && <>
+    {activeView === "graphs" && <>
       <div className="mt-grid" style={{marginBottom:12}}>
-        <DashboardBarPanel title="Today output by department" sub="Actual entry posted on selected date." rows={todayOutputRows} labelKey="Dept" valueKey="Qty" onRowClick={()=>onDrill?.({kind:"period", period:"daily", start:selectedDate || activityDate, end:selectedDate || activityDate, title:`Daily Activity — ${selectedDate || activityDate}`})}/>
-        <DashboardBarPanel title="Department WIP" sub="Current open quantity by department." rows={deptChartRows} labelKey="Dept" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"stage", stage:r.stage, title:`${r.Dept} Current WIP`})}/>
-        <DashboardBarPanel title="Issue mix" sub="Normal info vs true issues." rows={issueMixRows} labelKey="Issue" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:r.kind, title:r.Issue})}/>
-        <DashboardBarPanel title="Top risky orders" sub="Open WIP + higher weight for reconcile/RAM." rows={orderRows.map(r=>({ Order:r.Order, Qty:n(r.Open_WIP)+n(r.Reconcile)*2+n(r.RAM), Raw:r })).filter(r=>r.Qty>0)} labelKey="Order" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"order", order:r.Order, title:`Order — ${r.Order}`})}/>
+        <DashboardBarPanel title="Today output by department" sub="Actual production posted today." rows={todayDept.map(r=>({Dept:r.Dept, Qty:r.Done, stage:r.stage, note:r.Plan ? `Plan ${fmt(r.Plan)} · ${r.Achv}` : "Actual only"}))} labelKey="Dept" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"stage", stage:r.stage, title:`${r.Dept} Today`})}/>
+        <DashboardBarPanel title="Week output by department" sub="Actual production this production week." rows={weekDept.map(r=>({Dept:r.Dept, Qty:r.Done, stage:r.stage, note:r.Plan ? `Target ${fmt(r.Plan)} · ${r.Achv}` : "Actual only"}))} labelKey="Dept" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"stage", stage:r.stage, title:`${r.Dept} Week`})}/>
+        <DashboardBarPanel title="WIP sitting" sub="Goods between departments." rows={sittingRows} labelKey="Pair" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"stage", stage:r.stage, title:`${r.Pair} Sitting WIP`})}/>
+        <DashboardBarPanel title="Quality / R-A-M" sub="Loss/repair/missing by department." rows={qualitySummary} labelKey="Dept" valueKey="Qty" onRowClick={()=>onDrill?.({kind:"quality_loss", title:"R/A/M Quality Detail"})}/>
       </div>
-      <div className="mt-two"><DashboardBarPanel title="Bottleneck score" sub="Queue + R/A/M + reconcile pressure." rows={bottleneckRows.map(r=>({ Dept:r.Dept, Qty:n(r.Bottleneck_Score), stage:r.stage, note:`Queue ${fmt(r.Queue_WIP)} · cover ${r.Days_Cover}d` }))} labelKey="Dept" valueKey="Qty" onRowClick={()=>onDrill?.({kind:"bottleneck", title:"Bottleneck / Flow"})}/><DashboardBarPanel title="Quality / loss" sub="R/A/M by department." rows={qualityRows.map(r=>({ Dept:r.Dept, Qty:n(r.RAM_Qty || r.Total_Loss || r.Loss_Qty), stage:r.stage }))} labelKey="Dept" valueKey="Qty" onRowClick={()=>onDrill?.({kind:"quality_loss", title:"Quality / Loss"})}/></div>
+      <div className="mt-two"><DashboardBarPanel title="Ready queue" sub="Actual work available now." rows={readyQueueRows} labelKey="Dept" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"stage", stage:r.stage, title:`${r.Dept} Ready Queue`})}/><DashboardBarPanel title="Order risk" sub="Open WIP + R/A/M/reconcile weighted." rows={dispatchRiskRows.map(r=>({Order:r.Order, Qty:r.Qty, note:r.Status}))} labelKey="Order" valueKey="Qty" onRowClick={(r)=>onDrill?.({kind:"order", order:r.Order, title:`Order — ${r.Order}`})}/></div>
     </>}
 
-    {dashView === "tables" && <>
-      <DashboardQuickTable title="Order-wise summary" sub="Grouped order view. Expand only when needed." rows={orderRows} empty="No orders in current scope." onRowClick={(r)=>onDrill?.({kind:"order", order:r.Order, title:`Order — ${r.Order}`})} exportName="dashboard_order_summary"/>
-      <DashboardQuickTable title="Daily / weekly / monthly output" sub="Period numbers use activity entry date." rows={periodRows} empty="No period activity rows." onRowClick={(r)=>onDrill?.({kind:"period", period:r.period, start:r.Start_Date, end:r.End_Date, title:`${r.Period} Activity`})} exportName="dashboard_period_output"/>
-      <DashboardQuickTable title="Department WIP" sub="Department-wise current bins. Normal WIP is information; exceptions are highlighted separately." rows={deptRows.map(({stage,...r})=>r)} empty="No department WIP." onRowClick={(r)=>{ const match = deptRows.find(x=>x.Dept===r.Dept); onDrill?.({kind:"stage", stage:match?.stage, title:`${r.Dept} Current WIP`}); }} exportName="dashboard_department_wip"/>
-      <DashboardQuickTable title="Department issue summary" sub="Issue by department. Click for style/size rows." rows={issueDeptRows.map(({stage,type,...r})=>r)} empty="No issue rows." onRowClick={(r)=>{ const match = issueDeptRows.find(x=>x.Dept===r.Dept && x.Issue===r.Issue); onDrill?.({kind:"dept_issue", stage:match?.stage, type:match?.type, title:`${r.Dept} — ${r.Issue}`}); }} exportName="dashboard_dept_issue"/>
-      <DashboardQuickTable title="Owner summary" sub="Owner-wise activity. Use this after department summary." rows={ownerRows} empty="No owner rows." onRowClick={(r)=>onDrill?.({kind:"owner", owner:r.Owner, title:`Owner — ${r.Owner}`})} exportName="dashboard_owner_summary"/>
-      <DashboardQuickTable title="Quality / R/A/M" sub="Reject, alter, missing and loss reading." rows={qualityRows.map(({stage,...r})=>r)} empty="No quality/loss rows." onRowClick={()=>onDrill?.({kind:"quality_loss", title:"Quality / Loss"})} exportName="dashboard_quality"/>
-      <DashboardQuickTable title="Party / outsource" sub="Outsource pending by party/process." rows={partyRows.map(({stage,...r})=>r)} empty="No party pending rows." onRowClick={()=>onDrill?.({kind:"party_pending", title:"Party / Outsource"})} exportName="dashboard_party"/>
-      <DashboardQuickTable title="Reconcile blockers" sub="Only impossible/blocked movements. True manager task." rows={reconciliationRows.map(({stage,type,...r})=>r)} empty="No reconciliation blockers." onRowClick={(r)=>{ const match = reconciliationRows.find(x=>x.Dept===r.Dept && x.Reconcile_Type===r.Reconcile_Type); onDrill?.({kind:"dept_issue", stage:match?.stage, type:"reconcile", title:`Reconciliation — ${r.Dept}`}); }} exportName="dashboard_reconcile"/>
-      <DashboardQuickTable title="Production meeting focus" sub="Exception list for meeting. Not normal WIP aging." rows={meetingRows} empty="No meeting focus rows." onRowClick={()=>onDrill?.({kind:"meeting_focus", title:"Production Meeting Focus"})} exportName="dashboard_meeting_focus"/>
+    {activeView === "tables" && <>
+      <DashboardQuickTable title="Today department output" sub="Readable daily production table." rows={todayDept.map(({stage,tone,...r})=>r)} empty="No daily output rows." onRowClick={(r)=>{ const match=todayDept.find(x=>x.Dept===r.Dept); onDrill?.({kind:"stage", stage:match?.stage, title:`${r.Dept} Today`}); }} exportName="dashboard_today_output"/>
+      <DashboardQuickTable title="Week department output" sub="Readable weekly production table." rows={weekDept.map(({stage,tone,...r})=>r)} empty="No weekly output rows." onRowClick={(r)=>{ const match=weekDept.find(x=>x.Dept===r.Dept); onDrill?.({kind:"stage", stage:match?.stage, title:`${r.Dept} Week`}); }} exportName="dashboard_week_output"/>
+      <DashboardQuickTable title="Line output" sub="Stitching line output for selected date." rows={lineToday.map(({tone,...r})=>r)} empty="No line rows." onRowClick={()=>onDrill?.({kind:"line_efficiency", start:selectedDay, end:selectedDay, title:`Line Output — ${selectedDay}`})} exportName="dashboard_line_output"/>
+      <DashboardQuickTable title="Sitting WIP" sub="Goods between departments; normal info unless exception exists." rows={sittingRows.map(({stage,...r})=>r)} empty="No sitting WIP." onRowClick={(r)=>onDrill?.({kind:"open_qty", title:`${r.Pair} Sitting WIP`})} exportName="dashboard_sitting_wip"/>
+      <DashboardQuickTable title="Ready queue" sub="Actual work available with departments now." rows={readyQueueRows.map(({stage,...r})=>r)} empty="No ready queue." onRowClick={(r)=>onDrill?.({kind:"open_qty", title:`${r.Dept} Ready Queue`})} exportName="dashboard_ready_queue"/>
+      <DashboardQuickTable title="Quality / R-A-M" sub="Reject, alter, missing by department." rows={qualityRows.map(({stage,...r})=>r)} empty="No R/A/M rows." onRowClick={()=>onDrill?.({kind:"quality_loss", title:"R/A/M Quality Detail"})} exportName="dashboard_quality"/>
+      <DashboardQuickTable title="Order risk" sub="Order-level first; drill for styles." rows={dispatchRiskRows} empty="No order risk." onRowClick={(r)=>onDrill?.({kind:"order", order:r.Order, title:`Order — ${r.Order}`})} exportName="dashboard_order_risk"/>
     </>}
   </>;
 }
