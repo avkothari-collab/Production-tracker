@@ -17,6 +17,8 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  LogOut,
+  UserCheck,
   Shirt,
   Truck,
   Upload,
@@ -26,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.43";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.43 autosave shared ledger sync";
+const APP_VERSION = "V7.5.45";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.45 current status links and delete tombstones";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -256,6 +258,7 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-primary-stage-card .big { font-family:'Archivo',sans-serif; font-size:16px; font-weight:800; color:var(--ink); }
 .mt-cut-breakup-mini { max-width:240px; min-width:170px; }
 .mt-status-link:hover { outline:2px solid rgba(201,111,22,.18); }
+.mt-status-link.mt-route-balance-late { background:#fee2e2; border-color:#fca5a5; color:#991b1b; }
 .mt-status-link .dept-name { font-weight:800; font-size:10px; }
 .mt-status-link .dept-qty { font-family:'Archivo',sans-serif; font-weight:800; font-size:13px; color:var(--ink); }
 .mt-status-link .dept-pct { font-size:9px; color:var(--muted-2); font-weight:800; }
@@ -431,9 +434,122 @@ function previousWorkingDay(from=today()){
   do { d.setDate(d.getDate() - 1); } while (d.getDay() === 0); // Sunday normally non-working
   return d.toISOString().slice(0,10);
 }
+const PRODUCTION_PERMISSIONS = [
+  ["production.view", "View production app"],
+  ["production.entry_dpr", "Enter DPR / WIP movements"],
+  ["production.correct_entry", "Correct old register entries"],
+  ["production.edit_styles", "Add / edit styles"],
+  ["production.delete_styles", "Delete / hard-delete styles"],
+  ["production.export", "Export reports"],
+  ["production.manage_photos", "Manage photos"],
+  ["production.manage_routes", "Manage routes"],
+  ["production.manage_settings", "Manage settings"],
+  ["production.manage_users", "Manage users / permissions"],
+  ["production.audit_view", "View audit history"],
+];
+const ROLE_PERMISSIONS = {
+  Management: ["production.view","production.export","production.audit_view"],
+  "Production Manager": ["production.view","production.entry_dpr","production.correct_entry","production.edit_styles","production.delete_styles","production.export","production.manage_photos","production.manage_routes","production.manage_settings","production.audit_view"],
+  "Production Coordinator": ["production.view","production.entry_dpr","production.correct_entry","production.edit_styles","production.export","production.manage_photos","production.manage_routes","production.audit_view"],
+  "Cutting HOD": ["production.view","production.entry_dpr","production.correct_entry","production.audit_view"],
+  "Printing HOD": ["production.view","production.entry_dpr","production.correct_entry","production.audit_view"],
+  "Embroidery HOD": ["production.view","production.entry_dpr","production.correct_entry","production.audit_view"],
+  "Stitching HOD": ["production.view","production.entry_dpr","production.correct_entry","production.audit_view"],
+  "Checking HOD": ["production.view","production.entry_dpr","production.correct_entry","production.audit_view"],
+  "Packing HOD": ["production.view","production.entry_dpr","production.correct_entry","production.audit_view"],
+  "Dispatch User": ["production.view","production.entry_dpr","production.audit_view"],
+  "Merchant Read-only": ["production.view"],
+  Admin: PRODUCTION_PERMISSIONS.map(p=>p[0]),
+};
+const PRODUCTION_ROLES = Object.keys(ROLE_PERMISSIONS);
+function defaultUserProfile(){
+  return { name:"", email:"", role:"Production Coordinator", department:"Production", permissions:[] };
+}
+function currentUserProfile(){
+  try {
+    const raw = localStorage.getItem("production_user_profile");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return { ...defaultUserProfile(), ...parsed, name:String(parsed?.name || parsed?.display_name || "").trim() };
+    }
+    const legacy = localStorage.getItem("production_user_name") || localStorage.getItem("mt_user_name") || "";
+    if (legacy) return { ...defaultUserProfile(), name:legacy, role:localStorage.getItem("production_user_role") || "Production Coordinator", department:localStorage.getItem("production_user_department") || "Production" };
+  } catch {}
+  return defaultUserProfile();
+}
+function saveCurrentUserProfile(profile){
+  const clean = { ...defaultUserProfile(), ...profile, name:String(profile?.name || "").trim(), role:profile?.role || "Production Coordinator", department:profile?.department || "Production" };
+  try {
+    localStorage.setItem("production_user_profile", JSON.stringify(clean));
+    localStorage.setItem("production_user_name", clean.name);
+    localStorage.setItem("production_user_role", clean.role);
+    localStorage.setItem("production_user_department", clean.department);
+  } catch {}
+  return clean;
+}
+function clearCurrentUserProfile(){
+  try {
+    localStorage.removeItem("production_user_profile");
+    localStorage.removeItem("production_user_name");
+    localStorage.removeItem("production_user_role");
+    localStorage.removeItem("production_user_department");
+  } catch {}
+}
 function currentUserName(){
-  try { return localStorage.getItem("production_user_name") || localStorage.getItem("mt_user_name") || "Current user"; }
-  catch { return "Current user"; }
+  const p = currentUserProfile();
+  return p.name || "Not logged in";
+}
+function currentUserRole(){ return currentUserProfile().role || "Production Coordinator"; }
+function rolePermissions(role){ return new Set([...(ROLE_PERMISSIONS[role] || []), ...((currentUserProfile().permissions || []))]); }
+function currentUserCan(permission){
+  const p = currentUserProfile();
+  if (!p.name) return false;
+  if (p.role === "Admin") return true;
+  return rolePermissions(p.role).has(permission);
+}
+function requireCurrentPermission(permission, actionLabel="this action"){
+  if (currentUserCan(permission)) return null;
+  return { error:{ message:`Permission blocked: ${currentUserName()} (${currentUserRole()}) cannot ${actionLabel}. Required: ${permission}` } };
+}
+function productionBrowserId(){
+  try {
+    let id = localStorage.getItem("production_browser_id");
+    if (!id) { id = `browser_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`; localStorage.setItem("production_browser_id", id); }
+    return id;
+  } catch { return "browser_unknown"; }
+}
+function userAuditBase(extra={}){
+  const p = currentUserProfile();
+  return {
+    user_name:p.name || "Not logged in", user_email:p.email || "", user_role:p.role || "", user_department:p.department || "",
+    browser_id:productionBrowserId(), app_version:APP_VERSION, created_at:new Date().toISOString(), ...extra
+  };
+}
+async function upsertProductionAppUser(profile=currentUserProfile()){
+  if (!profile?.name || !hasValidSupabaseEnv()) return { skipped:true };
+  const row = {
+    display_name:profile.name, email:profile.email || null, role:profile.role || "Production Coordinator", department:profile.department || "Production", is_active:true,
+    browser_id:productionBrowserId(), last_seen_at:new Date().toISOString(), app_version:APP_VERSION
+  };
+  return fetchRestUpsertToSupabase("production_app_users", [row], "display_name");
+}
+async function recordUserSession(event_type, profile=currentUserProfile(), extra={}){
+  if (!profile?.name || !hasValidSupabaseEnv()) return { skipped:true };
+  const row = userAuditBase({ event_type, action:event_type, metadata:extra });
+  const result = await fetchRestInsertToSupabase("production_user_sessions", [row]);
+  await upsertProductionAppUser(profile);
+  return result;
+}
+async function recordProductionAudit(action, meta={}){
+  if (!hasValidSupabaseEnv()) return { skipped:true };
+  const row = userAuditBase({ action, event_type:action, table_name:meta.table_name || "", order_no:meta.order_no || "", style_no:meta.style_no || "", colour:meta.colour || "", component:meta.component || "", stage:meta.stage || "", entry_type:meta.entry_type || "", entry_date:meta.entry_date || null, qty:n(meta.qty || 0), source:meta.source || "app", before_data:meta.before_data || null, after_data:meta.after_data || null, metadata:meta.metadata || {} });
+  return fetchRestInsertToSupabase("production_audit_log", [row]);
+}
+async function fetchProductionAudit(limit=250){
+  return fetchRestSelectFromSupabase("production_audit_log", `select=*&order=created_at.desc&limit=${limit}`);
+}
+async function fetchProductionUsers(){
+  return fetchRestSelectFromSupabase("production_app_users", "select=*&order=last_seen_at.desc&limit=500");
 }
 function defaultEntryDate(ledger=[]){
   // Factory reality: production is normally entered next day. Use latest activity date if present,
@@ -969,22 +1085,8 @@ function StatusCell({ row, onOpen }){
   if (!parts.length) return <div className="mt-status-stack"><span className="mt-chip mt-ok">Closed / Balanced</span><div className="mt-status-line">No open production issue</div></div>;
   return <div className="mt-status-stack"><StatusDeptLinks row={row} onOpen={onOpen} compact={false}/></div>;
 }
-function PrimaryPendingStage({ row, onOpen }){
-  const bucket = statusDistribution(row)[0];
-  if (!bucket) return <button className="mt-primary-stage-card mt-dept-dispatch" onClick={(e)=>e.stopPropagation()} title="No pending stage"><span><b>Closed</b><br/><span className="mt-small">Balanced</span></span><span className="big">100%</span></button>;
-  const orderBase = statusOrderBaseQty(row);
-  const cutBase = statusCutBaseQty(row);
-  const pctBase = pctOf(bucket.qty, isFinite(cutBase) ? cutBase : orderBase);
-  const isCutPending = bucket.type === "cutting_pending";
-  const cutDonePct = orderBase > 0 ? pctOf(sdata(row,"cutting").output, orderBase) : 0;
-  const pctText = isCutPending ? `${pctOf(bucket.qty, orderBase)}% pending` : dualBaseText(row, bucket.qty);
-  const title = isCutPending
-    ? `Cutting pending · ${fmt(bucket.qty)} pcs still not cut/short-closed · Cut done ${cutDonePct}% of order`
-    : `Primary pending stage · ${fmt(bucket.qty)} pcs · ${dualBaseText(row, bucket.qty)}. Order base ${fmt(orderBase)}, cut base ${fmt(cutBase)}.`;
-  return <button className={`mt-primary-stage-card ${deptClass(bucket.stage)}`} onClick={(e)=>{e.stopPropagation(); onOpen?.(bucket.stage,bucket);}} title={title}>
-    <span><b>{stageLabel(bucket.stage)}</b><br/><span className="mt-small">{isCutPending ? "Pending to Cut" : shortStatusLabel(bucket)}</span></span>
-    <span style={{textAlign:"right"}}><span className="big">{fmt(bucket.qty)}</span><br/><span className="mt-small">{pctText}</span>{isCutPending ? <><br/><span className="mt-small">Cut done {cutDonePct}%</span></> : null}</span>
-  </button>;
+function PrimaryPendingStage({ row, onOpen, onEntry }){
+  return <CurrentStatusLinks row={row} onEntry={onEntry} onOpen={onOpen} compact={true}/>;
 }
 function statusClass(tone){ return tone === "late" ? "mt-late" : tone === "warn" ? "mt-warn" : tone === "ok" ? "mt-ok" : tone === "purple" ? "mt-purple" : tone === "info" ? "mt-info" : "mt-muted"; }
 function deptClass(stageKey){ return stageKey ? `mt-dept-${stageKey}` : ""; }
@@ -1024,6 +1126,86 @@ function statusDistributionByCut(row){
     pctCut: pctOf(b.qty, cutBase),
   }));
 }
+
+function currentStatusEntryField(part){
+  if (!part) return "output";
+  if (part.type === "cutting_pending") return "output";
+  if (part.type === "ready_next" || part.type === "issued_forward") return "issued";
+  if (part.type === "with_dept" || part.type === "output_pending") return "output";
+  if (part.type === "ram") return "reject";
+  return "output";
+}
+function currentMovementStatusParts(row){
+  const route = routeFor(row);
+  const parts = [];
+  const cut = sdata(row, "cutting");
+  const cutQty = Math.max(n(cut.output), n(cut.issued), n(cut.received));
+  const cutPending = cuttingAccountableOpen(row);
+  if (cutPending > 0) parts.push({ type:"cutting_pending", stage:"cutting", label:"Cutting Pending", qty:cutPending, tone:"warn", field:"output", note:"Enter cutting output / short close" });
+  // Show active production positions only. Tail / short-close / closure buckets are intentionally ignored here.
+  route.forEach((stage, idx)=>{
+    if (stage === "cutting") return;
+    const st = sdata(row, stage);
+    const feed = stageFeed(row, stage);
+    const loss = n(st.reject) + n(st.alter) + n(st.missing);
+    const output = n(st.output);
+    const issued = n(st.issued);
+    const accountedPct = feed > 0 ? ((output + loss) / feed) * 100 : 0;
+    const withDept = Math.max(0, feed - output - loss);
+    if (withDept > 0 && accountedPct < 95) parts.push({ type:"with_dept", stage, label:`With ${stageLabel(stage)}`, qty:withDept, tone:"info", field:"output", note:"Enter department output" });
+    const nextStage = route[idx+1];
+    const readyNext = Math.max(0, output - issued);
+    if (readyNext > 0 && nextStage) parts.push({ type:"ready_next", stage, toStage:nextStage, label:`Ready for ${stageLabel(nextStage)}`, qty:readyNext, tone:"info", field:"issued", note:"Enter issue forward" });
+    // User asked current status to show real movement like Stitching issued also. Keep this as movement evidence, not closure.
+    if (issued > 0 && nextStage) {
+      const nextOutput = n(sdata(row,nextStage).output) + n(sdata(row,nextStage).reject) + n(sdata(row,nextStage).alter) + n(sdata(row,nextStage).missing);
+      const stillRelevant = nextOutput < issued;
+      if (stillRelevant) parts.push({ type:"issued_forward", stage, toStage:nextStage, label:`${stageLabel(stage)} Issued`, qty:issued, tone:"purple", field:"issued", note:`Issued to ${stageLabel(nextStage)}` });
+    }
+  });
+  // If there is no active position but there are blocking errors, show reconcile/RAM from issue buckets as the action.
+  if (!parts.length) {
+    issueBuckets(row).filter(b=>isActionableBucket(row,b) && ["reconcile","dispatch_hold","ram"].includes(b.type)).slice(0,3).forEach(b=>parts.push({ ...b, label:shortStatusLabel(b), field: b.type === "ram" ? "reject" : "output" }));
+  }
+  return parts.sort((a,b)=> route.indexOf(a.stage)-route.indexOf(b.stage) || n(b.qty)-n(a.qty));
+}
+function routeProgressSnapshot(row){
+  const route = routeFor(row);
+  const cutQty = Math.max(n(sdata(row,"cutting").output), n(sdata(row,"cutting").issued), n(sdata(row,"cutting").received));
+  const parts = [];
+  if (cutQty > 0) parts.push({ stage:"cutting", label:`Cut ${fmt(cutQty)}`, qty:cutQty, tone:"info", title:"Actual cut quantity" });
+  route.filter(stage=>stage!=="cutting").forEach(stage=>{
+    const st = sdata(row, stage);
+    const output = n(st.output);
+    const issued = n(st.issued);
+    if (output > 0) parts.push({ stage, label:`${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} done ${fmt(output)}`, qty:output, tone:"ok", title:`${stageLabel(stage)} completed/output` });
+    if (issued > 0) parts.push({ stage, label:`${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} issued ${fmt(issued)}`, qty:issued, tone:"purple", title:`${stageLabel(stage)} issued forward` });
+  });
+  const pack = sdata(row,"packing");
+  const packAccounted = n(pack.output) + n(pack.reject) + n(pack.alter) + n(pack.missing);
+  const packBalance = Math.max(0, cutQty - packAccounted);
+  if (packBalance > 0) parts.push({ stage:"packing", label:`Pack balance ${fmt(packBalance)}`, qty:packBalance, tone:"late", title:"Cut qty not yet packed/accounted" });
+  return parts;
+}
+function CurrentStatusLinks({ row, onEntry, onOpen, compact=false }){
+  const parts = currentMovementStatusParts(row).slice(0, compact ? 4 : 8);
+  if (!parts.length) return <button className="mt-primary-stage-card mt-dept-dispatch" onClick={(e)=>e.stopPropagation()} title="No active production status"><span><b>Closed</b><br/><span className="mt-small">Balanced</span></span><span className="big">100%</span></button>;
+  return <div className="mt-status-cell-wrap compact-wrap">{parts.map((p,idx)=><button key={`${p.type}-${p.stage}-${idx}`} className={`mt-status-link ${deptClass(p.stage)}`} onClick={(e)=>{ e.stopPropagation(); onEntry ? onEntry(row, p.stage, p.field || currentStatusEntryField(p)) : onOpen?.(p.stage,p); }} title={`${p.note || p["action"] || "Open DPR Entry"}. Click to open DPR Entry for ${stageLabel(p.stage)} · ${fieldLabel(p.field || currentStatusEntryField(p))}`}>
+    <span><span className="dept-name">{stageLabel(p.stage)}</span><br/><span className="mt-small">{p.label || shortStatusLabel(p)}</span></span>
+    <span style={{textAlign:"right"}}><span className="dept-qty">{fmt(p.qty)}</span><br/><span className="dept-pct">{dualBaseText(row,p.qty)}</span></span>
+  </button>)}{parts.length>1 && <div className="mt-current-split-note">Current movement split · click to enter/edit DPR</div>}</div>;
+}
+function RouteProgressSnapshot({ row, onOpen, compact=false }){
+  const parts = routeProgressSnapshot(row).slice(0, compact ? 8 : 12);
+  const orderBase = statusOrderBaseQty(row);
+  const cutBase = statusCutBaseQty(row);
+  if (!parts.length) return <div className="mt-cut-breakup-mini"><span className="mt-chip mt-muted">No route progress yet</span><div className="mt-small">Order {fmt(orderBase)}</div></div>;
+  return <div className="mt-status-cell-wrap compact-wrap mt-cut-status-wrap mt-cut-breakup-mini"><div className="mt-current-split-note" style={{width:"100%"}}>Route progress · Order {fmt(orderBase)} · Cut {fmt(cutBase)}</div>{parts.map((p,idx)=><button key={`route-progress-${p.stage}-${idx}`} className={`mt-status-link compact ${deptClass(p.stage)} ${p.tone==="late"?"mt-route-balance-late":""}`} onClick={(e)=>{ e.stopPropagation(); onOpen?.(p.stage,p); }} title={p.title || `Open ${stageLabel(p.stage)} detail`}>
+    <span><span className="dept-name">{p.label}</span></span>
+    <span style={{textAlign:"right"}}><span className="dept-pct">{dualBaseText(row,p.qty)}</span></span>
+  </button>)}</div>;
+}
+
 function StatusDeptLinks({ row, onOpen, compact=false }){
   const parts = statusDistribution(row).slice(0, compact ? 3 : 5);
   if (!parts.length) return <span className="mt-chip mt-ok">Closed / Balanced</span>;
@@ -1078,8 +1260,8 @@ function wipMatrixColumnText(row, key){
   if (String(key || "").startsWith("stage:")) return wipStageFilterText(row, String(key).slice(6));
   const rs = rowStatus(row);
   if (key === "style") return [row.order_no,row.style_no,row.buyer,row.colour,row.component,row.set_id,routeType(row)].join(" ");
-  if (key === "status") return [statusText(row), stageLabel(rs.stage), rs.status, rs.qty, rs.idle, rs.action].join(" ");
-  if (key === "other") return statusDistributionByCut(row).slice(1).map(b=>[stageLabel(b.stage), STAGE_BY_KEY[b.stage]?.short, b.status, bucketTypeLabel(b.type), b.qty, `${b.pctCut}%`].join(" ")).join(" | ");
+  if (key === "status") return [statusText(row), stageLabel(rs.stage), rs.status, rs.qty, rs.idle, rs.action, ...currentMovementStatusParts(row).map(p=>[stageLabel(p.stage), p.label, p.qty, p.note, fieldLabel(p.field || currentStatusEntryField(p))].join(" "))].join(" ");
+  if (key === "other") return routeProgressSnapshot(row).map(p=>[stageLabel(p.stage), STAGE_BY_KEY[p.stage]?.short, p.label, p.qty, p.title].join(" ")).join(" | ");
   if (key === "owner") return [rs.owner, rs.support, ...rowOwnerNames(row)].join(" ");
   if (key === "route") return [routeType(row), ...routeFor(row).map(k=>`${stageLabel(k)} ${STAGE_BY_KEY[k]?.short || ""}`)].join(" ");
   if (key === "open") return `${fmt(rs.qty)} ${rs.qty}`;
@@ -1472,6 +1654,8 @@ function orderToSupabase(row){
     reject_qty:Object.fromEntries(routeFor(row).map(k=>[k, n(sdata(row,k).reject)])),
     alter_qty:Object.fromEntries(routeFor(row).map(k=>[k, n(sdata(row,k).alter)])),
     missing_qty:Object.fromEntries(routeFor(row).map(k=>[k, n(sdata(row,k).missing)])),
+    updated_by:currentUserName(),
+    updated_by_role:currentUserRole(),
   };
 }
 function supabaseToOrder(row){
@@ -1593,6 +1777,12 @@ const demoRows = [
 const LOCAL_ROWS_KEY = "production_dpr_rows_local_v1";
 const LOCAL_LEDGER_KEY = "production_dpr_ledger_local_v1";
 const LOCAL_PLAN_KEY = "production_dpr_plan_rows_local_v1";
+const DELETED_STYLE_KEYS_KEY = "production_dpr_deleted_style_tombstones_v1";
+function deletedStyleKeys(){ return safeJsonLoad(DELETED_STYLE_KEYS_KEY, []); }
+function rememberDeletedStyle(row){ const key=styleCompositeKey(row); if(!key) return; const next=Array.from(new Set([key, ...deletedStyleKeys()])).slice(0,500); safeJsonSave(DELETED_STYLE_KEYS_KEY, next); }
+function forgetDeletedStyle(row){ const key=styleCompositeKey(row); if(!key) return; safeJsonSave(DELETED_STYLE_KEYS_KEY, deletedStyleKeys().filter(k=>k!==key)); }
+function isDeletedStyle(row){ return deletedStyleKeys().includes(styleCompositeKey(row)); }
+function filterDeletedStyles(rows){ const tomb=deletedStyleKeys(); if(!tomb.length) return rows || []; return (rows||[]).filter(r=>!tomb.includes(styleCompositeKey(r))); }
 function uiStorageKey(name){
   const user = String(currentUserName()).replace(/[^a-z0-9]+/gi,"_").toLowerCase() || "current_user";
   return `production_dpr_ui_${user}_${name}`;
@@ -1610,8 +1800,8 @@ function safeJsonSave(key, value){
 }
 function loadInitialRows(){
   const saved = safeJsonLoad(LOCAL_ROWS_KEY, null);
-  if (Array.isArray(saved) && saved.length) return saved.map(r=>({ ...r, route:routeFor(r) }));
-  return demoRows.map(r=>({ ...r, route:routeFor(r) }));
+  if (Array.isArray(saved) && saved.length) return filterDeletedStyles(saved.map(r=>({ ...r, route:routeFor(r) })));
+  return filterDeletedStyles(demoRows.map(r=>({ ...r, route:routeFor(r) })));
 }
 function loadInitialLedger(){
   const saved = safeJsonLoad(LOCAL_LEDGER_KEY, null);
@@ -2353,7 +2543,7 @@ function DashboardDrillDrawer({ drill, rows, ledger=[], onClose }){
   </div>;
 }
 
-function WipStatus({ rows, onOpen, clearTick=0 }){
+function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
   const [localSearch,setLocalSearch] = useState(()=>safeJsonLoad(uiStorageKey("wip_search"), ""));
   const [dept,setDept] = useState(()=>safeJsonLoad(uiStorageKey("wip_dept"), "all"));
   const [issue,setIssue] = useState(()=>safeJsonLoad(uiStorageKey("wip_issue"), "all"));
@@ -2403,7 +2593,7 @@ function WipStatus({ rows, onOpen, clearTick=0 }){
   const openRowDrill = (row, stage) => onOpen?.(row, stage || rowStatus(row).stage || routeFor(row)[0] || "cutting");
   const modeRows = viewMode === "order" ? wipOrderViewRows(filtered) : viewMode === "department" ? departmentCurrentRows(filtered).map(({stage,...r})=>r) : viewMode === "issue" ? departmentIssueRows(filtered).map(({stage,type,...r})=>r) : [];
   return <div className="mt-card">
-    <div className="mt-section"><h3 className="mt-panel-title">Live WIP Status — Grid / Open Control</h3><div className="mt-panel-sub">Pending Stage = one main action. Optional Other Open Split shows smaller leftover/tail/R-A-M buckets by cut/order %, so it can be hidden when the sheet feels busy.</div></div>
+    <div className="mt-section"><h3 className="mt-panel-title">Live WIP Status — Grid / Open Control</h3><div className="mt-panel-sub">Pending Stage = one main action. Optional Route Progress / Balance shows cut, stage done, issued-forward and pack balance so the sheet stays precise but still traceable.</div></div>
     <div className="mt-section no-print">
       <div className="mt-summary-strip">{summary.map(s=><button key={s.key} className={`mt-summary-tile ${issue===s.key || (s.key==="all"&&issue==="all") ? "active" : ""}`} onClick={()=>setIssue(s.key)}><div className="label">{s.label}</div><div className="value">{typeof s.value === "number" && s.key!=="all" ? fmt(s.value) : s.value}</div><div className="mt-small">{s.note}</div></button>)}</div>
       <div className="mt-filter-row">
@@ -2416,14 +2606,14 @@ function WipStatus({ rows, onOpen, clearTick=0 }){
         <button className={`mt-btn ${hasGridColumnFilters ? "primary" : "ghost"}`} onClick={clearWipFilters}>Clear WIP Filters</button>
         <span className="mt-page-filter-note">{filtered.length} rows · {controlRows.length} open/control rows</span>
       </div>
-      <div className="mt-view-mode-bar"><span className="mt-toolbar-label">Sheet View</span>{[["matrix","Grid View"],["control","Open Control"],["order","Order View"],["department","Department View"],["issue","Issue View"]].map(([k,l])=><button key={k} className={`mt-btn ${viewMode===k?"active":"ghost"}`} onClick={()=>setViewMode(k)}>{l}</button>)}<button className={`mt-btn ${showCutActivity?"active":"ghost"}`} onClick={()=>setShowCutActivity(v=>!v)}>{showCutActivity ? "Hide Other Open Split" : "Show Other Open Split"}</button></div>
+      <div className="mt-view-mode-bar"><span className="mt-toolbar-label">Sheet View</span>{[["matrix","Grid View"],["control","Open Control"],["order","Order View"],["department","Department View"],["issue","Issue View"]].map(([k,l])=><button key={k} className={`mt-btn ${viewMode===k?"active":"ghost"}`} onClick={()=>setViewMode(k)}>{l}</button>)}<button className={`mt-btn ${showCutActivity?"active":"ghost"}`} onClick={()=>setShowCutActivity(v=>!v)}>{showCutActivity ? "Hide Route Progress" : "Show Route Progress"}</button></div>
     </div>
-    {viewMode === "order" || viewMode === "department" || viewMode === "issue" ? <SimpleTable title={viewMode==="order"?"Order-wise WIP summary":viewMode==="department"?"Department open summary":"Issue-wise open summary"} sub="Summary view first. Click Full Matrix or drill dashboards only when style-level detail is needed." rows={modeRows} empty="No rows in this view." /> : viewMode === "control" ? <div className="mt-table-wrap"><table className="mt-table mt-compact-wip-table"><thead><tr><th className="mt-sticky">Open Style / Order</th><th>Pending Stage</th><th>Next Action</th>{showCutActivity && <th>Other Open Split</th>}<th>Open Qty</th><th>R/A/M</th><th>Idle</th><th>Owner</th></tr></thead><tbody>{controlRows.length ? controlRows.map(({row,status})=>{ const stage=status.stage || routeFor(row)[0] || "cutting"; const st=sdata(row,stage); const c=cellBreakup(row,stage); return <React.Fragment key={row.id}><tr className="drillable" onClick={()=>openRowDrill(row,stage)}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}</div></div></td><td><PrimaryPendingStage row={row} onOpen={(st)=>openRowDrill(row,st)}/></td><td><div className="mt-small">{status.action}</div></td>{showCutActivity && <td><StatusByCutQty row={row} compact={true} excludePrimary={true} onOpen={(st)=>openRowDrill(row,st)}/></td>}<td><div className="mt-open-big">{fmt(status.qty)}</div><div className="mt-small">{c.note}</div></td><td>{fmt(c.ram)}</td><td>{status.idle}d</td><td><b>{status.owner}</b>{status.support ? <div className="mt-small">Support: {status.support}</div> : null}</td></tr>{sizeBreak && <tr className="mt-subrow"><td colSpan={showCutActivity ? 8 : 7}><SizeBreakupStrip row={row} stage={selectedDeptForSize || stage}/></td></tr>}</React.Fragment>; }) : <tr><td colSpan={showCutActivity ? 8 : 7} style={{padding:18}}>No open/control rows in the current WIP filters.</td></tr>}</tbody></table></div> : <div className="mt-table-wrap"><table className="mt-table"><thead><tr><SortTh sticky label="Style" sortKey="style" sort={sort} setSort={setSort}/><SortTh label="Pending Stage" sortKey="status" sort={sort} setSort={setSort}/>{showCutActivity && <th>Other Open Split</th>}<SortTh label="Owner" sortKey="owner" sort={sort} setSort={setSort}/><SortTh label="Route" sortKey="route" sort={sort} setSort={setSort}/>{STAGES.map(stage=><th key={stage.key}>{stage.short}</th>)}<SortTh label="Open" sortKey="open" sort={sort} setSort={setSort}/><SortTh label="Idle" sortKey="idle" sort={sort} setSort={setSort}/><th>Next Action</th></tr><tr className="mt-col-filter-row"><th className="mt-sticky"><input className="mt-col-filter-input" value={columnFilters.style || ""} onChange={e=>setGridColumnFilter("style", e.target.value)} placeholder="order/style/buyer/colour" /></th><th><input className="mt-col-filter-input" value={columnFilters.status || ""} onChange={e=>setGridColumnFilter("status", e.target.value)} placeholder="pending/status" /></th>{showCutActivity && <th><input className="mt-col-filter-input" value={columnFilters.other || ""} onChange={e=>setGridColumnFilter("other", e.target.value)} placeholder="other split" /></th>}<th><input className="mt-col-filter-input" value={columnFilters.owner || ""} onChange={e=>setGridColumnFilter("owner", e.target.value)} placeholder="owner" /></th><th><input className="mt-col-filter-input" value={columnFilters.route || ""} onChange={e=>setGridColumnFilter("route", e.target.value)} placeholder="route" /></th>{STAGES.map(stage=><th key={`filter-${stage.key}`}><input className="mt-col-filter-input stage" value={columnFilters[`stage:${stage.key}`] || ""} onChange={e=>setGridColumnFilter(`stage:${stage.key}`, e.target.value)} placeholder={`${stage.short} status`} title={`Filter ${stage.label} cell. Try: open, skip, over, 0R, feed, good qty`} /></th>)}<th><input className="mt-col-filter-input" value={columnFilters.open || ""} onChange={e=>setGridColumnFilter("open", e.target.value)} placeholder="qty" /></th><th><input className="mt-col-filter-input" value={columnFilters.idle || ""} onChange={e=>setGridColumnFilter("idle", e.target.value)} placeholder="idle" /></th><th><div style={{display:"flex",gap:4}}><input className="mt-col-filter-input" value={columnFilters.action || ""} onChange={e=>setGridColumnFilter("action", e.target.value)} placeholder="action" /><button className="mt-btn ghost mt-col-filter-clear" onClick={()=>setColumnFilters({})} title="Clear only grid column filters">Clear</button></div></th></tr></thead><tbody>
+    {viewMode === "order" || viewMode === "department" || viewMode === "issue" ? <SimpleTable title={viewMode==="order"?"Order-wise WIP summary":viewMode==="department"?"Department open summary":"Issue-wise open summary"} sub="Summary view first. Click Full Matrix or drill dashboards only when style-level detail is needed." rows={modeRows} empty="No rows in this view." /> : viewMode === "control" ? <div className="mt-table-wrap"><table className="mt-table mt-compact-wip-table"><thead><tr><th className="mt-sticky">Open Style / Order</th><th>Current Status / Entry</th><th>Next Action</th>{showCutActivity && <th>Route Progress / Balance</th>}<th>Open Qty</th><th>R/A/M</th><th>Idle</th><th>Owner</th></tr></thead><tbody>{controlRows.length ? controlRows.map(({row,status})=>{ const stage=status.stage || routeFor(row)[0] || "cutting"; const st=sdata(row,stage); const c=cellBreakup(row,stage); return <React.Fragment key={row.id}><tr className="drillable" onClick={()=>openRowDrill(row,stage)}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}</div></div></td><td><PrimaryPendingStage row={row} onOpen={(st)=>openRowDrill(row,st)} onEntry={onEntry}/></td><td><div className="mt-small">{status.action}</div></td>{showCutActivity && <td><RouteProgressSnapshot row={row} compact={true} onOpen={(st)=>openRowDrill(row,st)}/></td>}<td><div className="mt-open-big">{fmt(status.qty)}</div><div className="mt-small">{c.note}</div></td><td>{fmt(c.ram)}</td><td>{status.idle}d</td><td><b>{status.owner}</b>{status.support ? <div className="mt-small">Support: {status.support}</div> : null}</td></tr>{sizeBreak && <tr className="mt-subrow"><td colSpan={showCutActivity ? 8 : 7}><SizeBreakupStrip row={row} stage={selectedDeptForSize || stage}/></td></tr>}</React.Fragment>; }) : <tr><td colSpan={showCutActivity ? 8 : 7} style={{padding:18}}>No open/control rows in the current WIP filters.</td></tr>}</tbody></table></div> : <div className="mt-table-wrap"><table className="mt-table"><thead><tr><SortTh sticky label="Style" sortKey="style" sort={sort} setSort={setSort}/><SortTh label="Current Status / Entry" sortKey="status" sort={sort} setSort={setSort}/>{showCutActivity && <th>Route Progress / Balance</th>}<SortTh label="Owner" sortKey="owner" sort={sort} setSort={setSort}/><SortTh label="Route" sortKey="route" sort={sort} setSort={setSort}/>{STAGES.map(stage=><th key={stage.key}>{stage.short}</th>)}<SortTh label="Open" sortKey="open" sort={sort} setSort={setSort}/><SortTh label="Idle" sortKey="idle" sort={sort} setSort={setSort}/><th>Next Action</th></tr><tr className="mt-col-filter-row"><th className="mt-sticky"><input className="mt-col-filter-input" value={columnFilters.style || ""} onChange={e=>setGridColumnFilter("style", e.target.value)} placeholder="order/style/buyer/colour" /></th><th><input className="mt-col-filter-input" value={columnFilters.status || ""} onChange={e=>setGridColumnFilter("status", e.target.value)} placeholder="status/dept/qty" /></th>{showCutActivity && <th><input className="mt-col-filter-input" value={columnFilters.other || ""} onChange={e=>setGridColumnFilter("other", e.target.value)} placeholder="route progress" /></th>}<th><input className="mt-col-filter-input" value={columnFilters.owner || ""} onChange={e=>setGridColumnFilter("owner", e.target.value)} placeholder="owner" /></th><th><input className="mt-col-filter-input" value={columnFilters.route || ""} onChange={e=>setGridColumnFilter("route", e.target.value)} placeholder="route" /></th>{STAGES.map(stage=><th key={`filter-${stage.key}`}><input className="mt-col-filter-input stage" value={columnFilters[`stage:${stage.key}`] || ""} onChange={e=>setGridColumnFilter(`stage:${stage.key}`, e.target.value)} placeholder={`${stage.short} status`} title={`Filter ${stage.label} cell. Try: open, skip, over, 0R, feed, good qty`} /></th>)}<th><input className="mt-col-filter-input" value={columnFilters.open || ""} onChange={e=>setGridColumnFilter("open", e.target.value)} placeholder="qty" /></th><th><input className="mt-col-filter-input" value={columnFilters.idle || ""} onChange={e=>setGridColumnFilter("idle", e.target.value)} placeholder="idle" /></th><th><div style={{display:"flex",gap:4}}><input className="mt-col-filter-input" value={columnFilters.action || ""} onChange={e=>setGridColumnFilter("action", e.target.value)} placeholder="action" /><button className="mt-btn ghost mt-col-filter-clear" onClick={()=>setColumnFilters({})} title="Clear only grid column filters">Clear</button></div></th></tr></thead><tbody>
       {filtered.map(row => { const rs = rowStatus(row); const sizeStage = selectedDeptForSize || rs.stage; const openDrill = () => openRowDrill(row, rs.stage || routeFor(row)[0] || "cutting"); return <React.Fragment key={row.id}>
         <tr>
           <td className="mt-sticky mt-clickable-cell" onClick={openDrill} title="Click to open selected/current department"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}<div className="mt-drill-hint">Open detail</div></div></div></td>
-          <td className="mt-clickable-cell" onClick={openDrill}><PrimaryPendingStage row={row} onOpen={(stage)=>onOpen?.(row, stage)}/><div className="mt-small">Idle {rs.idle}d</div></td>
-          {showCutActivity && <td><StatusByCutQty row={row} compact={true} excludePrimary={true} onOpen={(stage)=>onOpen?.(row, stage)}/></td>}
+          <td className="mt-clickable-cell" onClick={openDrill}><PrimaryPendingStage row={row} onOpen={(stage)=>onOpen?.(row, stage)} onEntry={onEntry}/><div className="mt-small">Idle {rs.idle}d</div></td>
+          {showCutActivity && <td><RouteProgressSnapshot row={row} compact={true} onOpen={(stage)=>onOpen?.(row, stage)}/></td>}
           <td className="mt-clickable-cell" onClick={openDrill}><b>{rs.owner}</b>{rs.support ? <div className="mt-small">Support: {rs.support}</div> : null}</td>
           <td className="mt-clickable-cell" onClick={openDrill}><span className="mt-chip mt-info">{routeType(row)}</span><div style={{marginTop:4}}>{routeFor(row).map(k=><span key={k} className="mt-chip mt-muted" style={{margin:"0 3px 3px 0"}}>{STAGE_BY_KEY[k].short}</span>)}</div></td>
           {STAGES.map(s=><StageCell key={s.key} row={row} stageKey={s.key} onOpen={onOpen}/>) }
@@ -2433,7 +2623,7 @@ function WipStatus({ rows, onOpen, clearTick=0 }){
       </React.Fragment>;})}
       {!filtered.length && <tr><td colSpan={STAGES.length + (showCutActivity ? 9 : 8)} style={{padding:18}}>No rows match current WIP filters.</td></tr>}
     </tbody></table></div>}
-    <div className="mt-section"><span className="mt-chip mt-ok">Pending Stage = main action</span> <span className="mt-chip mt-info">Other Open Split = toggleable</span> <span className="mt-chip mt-warn">Click any row/cell for selected department only</span></div>
+    <div className="mt-section"><span className="mt-chip mt-ok">Current Status = clickable DPR entry context</span> <span className="mt-chip mt-info">Route Progress / Balance = toggleable</span> <span className="mt-chip mt-warn">Click any row/cell for selected department only</span></div>
   </div>;
 }
 
@@ -2796,6 +2986,7 @@ function applyDailySizeEntries({ rows, targetRows, stage, field, getVal }){
 function buildLedgerRows({ changes, stage, field, entryDate, reason, source }){
   const risk = backdateRisk(entryDate);
   const created = new Date().toISOString();
+  const profile = currentUserProfile();
   return changes.map(c => ({
     id:uid("led"),
     entry_date:entryDate,
@@ -2815,25 +3006,40 @@ function buildLedgerRows({ changes, stage, field, entryDate, reason, source }){
     is_backdated:risk.days > 0,
     backdate_reason:risk.days > 0 ? reason : "",
     approval_status:risk.approval,
-    changed_by:currentUserName(),
+    changed_by:profile.name || currentUserName(),
+    changed_by_role:profile.role || "",
+    changed_by_department:profile.department || "",
     entry_source:source,
     validation_scope:"size_wise_as_of_entry_date",
-    remarks:`${source}: positive size-wise day entry. Entry date ${entryDate}; actual saved ${created.slice(0,10)} by ${currentUserName()}.`
+    remarks:`${source}: size-wise ledger entry. Entry date ${entryDate}; actual saved ${created.slice(0,10)} by ${profile.name || currentUserName()}.`
   }));
 }
 async function saveLedgerToSupabase(newLedger, field){
   if (!newLedger.length) return { skipped:true, warning:"No ledger rows to save." };
-  const payload = newLedger.map(({id, changed_by, ...x})=>({
+  const isCorrection = (newLedger || []).some(x=>String(x.entry_source || "").toLowerCase().includes("correction") || n(x.qty) < 0);
+  const perm = requireCurrentPermission(isCorrection ? "production.correct_entry" : "production.entry_dpr", isCorrection ? "correct old register entries" : "enter DPR / WIP movements");
+  if (perm) return perm;
+  const profile = currentUserProfile();
+  const payload = newLedger.map(({id, ...x})=>({
     ...x,
+    changed_by:x.changed_by || profile.name || currentUserName(),
+    changed_by_role:x.changed_by_role || profile.role || "",
+    changed_by_department:x.changed_by_department || profile.department || "",
     qty:n(x.qty),
     good_qty:["output","alter_clear"].includes(field) ? n(x.qty) : 0,
     reject_qty:field==="reject" ? n(x.qty) : 0,
     alter_qty:field==="alter" ? n(x.qty) : 0,
     missing_qty:field==="missing" ? n(x.qty) : 0,
-    validation_snapshot:{ old_qty:x.old_qty, new_qty:x.new_qty, entry_source:x.entry_source, is_backdated:x.is_backdated, approval_status:x.approval_status, changed_by }
+    validation_snapshot:{ old_qty:x.old_qty, new_qty:x.new_qty, entry_source:x.entry_source, is_backdated:x.is_backdated, approval_status:x.approval_status, changed_by:x.changed_by || profile.name, changed_by_role:x.changed_by_role || profile.role, changed_by_department:x.changed_by_department || profile.department }
   }));
   const result = await robustInsertEntriesToSupabase(payload);
   if(result?.error) console.warn("Supabase production_entries save failed", result.error);
+  if(!result?.error && !result?.skipped && !result?.warning) {
+    const first = payload[0] || {};
+    recordProductionAudit(isCorrection ? "ledger_correction" : "ledger_insert", {
+      table_name:"production_entries", order_no:first.order_no, style_no:first.style_no, colour:first.colour, component:first.component, stage:first.stage, entry_type:first.entry_type, entry_date:first.entry_date, qty:payload.reduce((a,b)=>a+n(b.qty),0), source:first.entry_source || "DPR Entry", metadata:{ row_count:payload.length, field, via:result.via || "supabase" }
+    });
+  }
   return result;
 }
 function receivingHistoryRows(row, stage, ledger=[]){
@@ -3012,7 +3218,7 @@ Save locally in this browser anyway? Other users will not see it until Supabase 
   </div>;
 }
 
-function QuickEntry({ rows, setRows, ledger, setLedger, onSharedSave }){
+function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave }){
   const [stage, setStage] = useState(()=>safeJsonLoad(uiStorageKey("entry_stage"), "stitching"));
   const [field, setField] = useState(()=>safeJsonLoad(uiStorageKey("entry_field"), "output"));
   const [entryDate, setEntryDate] = useState(()=>safeJsonLoad(uiStorageKey("entry_date"), defaultEntryDate(ledger)));
@@ -3023,6 +3229,12 @@ function QuickEntry({ rows, setRows, ledger, setLedger, onSharedSave }){
   useEffect(()=>safeJsonSave(uiStorageKey("entry_date"), entryDate), [entryDate]);
   useEffect(()=>safeJsonSave(uiStorageKey("entry_reason"), reason), [reason]);
   useEffect(()=>safeJsonSave(uiStorageKey("entry_draft"), draft), [draft]);
+  useEffect(()=>{
+    if (!focus?.id) return;
+    setStage(focus.stage || "cutting");
+    setField(focus.field || "output");
+    setDraft({});
+  }, [focus?.id]);
   const allStageRows = rows.filter(r => routeFor(r).includes(stage));
   const activeRows = allStageRows.filter(r => entryOpenQty(r, stage, field) > 0);
   const risk = backdateRisk(entryDate);
@@ -4590,6 +4802,8 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0, 
   }
   function reset(){ setForm(emptyForm); setMsg(null); }
   async function save(){
+    const permission = requireCurrentPermission("production.edit_styles", "add/edit production styles");
+    if (permission) { setMsg({ tone:"late", text:permission.error.message }); return; }
     const cleanSizeQty = normalizeSizeQtyMap(form.order_size_qty || {}, formSizes);
     const cleanSizeTotal = qtyMapTotal(cleanSizeQty);
     const clean = {
@@ -4660,9 +4874,10 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0, 
     try {
       setRows(prev=>{
         let next = [...prev];
-        rowsToSave.forEach(rowToSave=>{
-          const exists = next.some(r=>String(r.id)===String(rowToSave.id));
-          next = exists ? next.map(r=>String(r.id)===String(rowToSave.id) ? rowToSave : r) : [rowToSave, ...next];
+        rowsToSave.forEach(rowToSave=>{ forgetDeletedStyle(rowToSave);
+          const key = styleCompositeKey(rowToSave);
+          const exists = next.some(r=>String(r.id)===String(rowToSave.id) || styleCompositeKey(r)===key);
+          next = exists ? next.map(r=>(String(r.id)===String(rowToSave.id) || styleCompositeKey(r)===key) ? rowToSave : r) : [rowToSave, ...next];
         });
         return next;
       });
@@ -4676,11 +4891,16 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0, 
       if (error) setMsg({ tone:"late", text:`${saveLabel} in browser, Supabase save failed: ${error.message}` });
       else if (warning) setMsg({ tone:"warn", text:`${saveLabel} in browser. ${warning}` });
       else setMsg({ tone:variance.diff ? "warn" : "ok", text:`${saveLabel}. ${variance.diff ? variance.text + " " : ""}${skipped ? "Browser/demo save only." : supabaseSaveLabel({via})}${shortRecoveredSupabaseNote(recoveredFrom)}` });
-      if (!error && !warning) onSharedSave?.({ skipped, via, recoveredFrom }, saveLabel);
+      if (!error && !warning) {
+        recordProductionAudit(editing ? "style_update" : "style_add", { table_name:"production_orders", order_no:mainRow.order_no, style_no:mainRow.style_no, colour:mainRow.colour, component:mainRow.component, qty:mainRow.order_qty, source:"Styles", after_data:{ rows:rowsToSave.length, components:componentList } });
+        onSharedSave?.({ skipped, via, recoveredFrom }, saveLabel);
+      }
       if (!editing) setForm(emptyForm);
     } finally { setBusy(false); }
   }
   async function remove(row){
+    const permission = requireCurrentPermission("production.delete_styles", "delete production styles");
+    if (permission) { setMsg({ tone:"late", text:permission.error.message }); return; }
     const hasLedger = (ledger||[]).some(x=>ledgerRowMatchesStyle(x,row));
     const hasActivity = styleHasStageActivity(row) || hasLedger;
     const word = hasActivity ? "HARD DELETE" : "DELETE";
@@ -4699,9 +4919,11 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
         const led = await deleteStyleLedgerFromSupabase(row);
         if (led.error) cleanupWarning = [cleanupWarning, `Supabase ledger cleanup failed: ${led.error.message}`].filter(Boolean).join(" · ");
       }
-      setRows(prev=>prev.filter(r=>String(r.id)!==String(row.id)));
+      rememberDeletedStyle(row);
+      setRows(prev=>prev.filter(r=>String(r.id)!==String(row.id) && styleCompositeKey(r)!==styleCompositeKey(row)));
       setLedger?.(prev=>(prev||[]).filter(x=>!ledgerRowMatchesStyle(x,row)));
       setMsg(cleanupWarning ? { tone:"warn", text:`${hasActivity ? "Hard deleted" : "Deleted"} locally/demo. ${cleanupWarning}. If Pull brings it back, delete the Supabase row manually or check table RLS.` } : { tone:"ok", text:`${hasActivity ? "Hard deleted" : "Deleted"} ${row.style_no}. ${isSupabaseConfigured ? "Supabase cleanup completed." : "Local/demo cleanup only."}` });
+      if (!cleanupWarning) recordProductionAudit(hasActivity ? "style_hard_delete" : "style_delete", { table_name:"production_orders", order_no:row.order_no, style_no:row.style_no, colour:row.colour, component:row.component, qty:row.order_qty, source:"Styles delete", before_data:{ had_activity:hasActivity, had_ledger:hasLedger } });
       if (String(form.id)===String(row.id)) reset();
     } finally { setBusy(false); }
   }
@@ -4719,6 +4941,8 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
     ]);
   }
   async function bulkUploadExcel(file){
+    const permission = requireCurrentPermission("production.edit_styles", "bulk update production styles");
+    if (permission) { setBulkMsg({ tone:"late", text:permission.error.message }); return; }
     if (!file) return;
     setBusy(true); setBulkMsg({ tone:"info", text:"Reading Excel bulk update..." });
     try {
@@ -4741,7 +4965,8 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
         if (["DELETE","HARD_DELETE","REMOVE"].includes(action)) {
           if (!existing) { skipped++; errors.push(`Row ${rowNo}: delete target not found.`); continue; }
           nextRows = nextRows.filter(r=>styleCompositeKey(r)!==styleCompositeKey(existing));
-          deletes.push(existing); deleted++; continue;
+          deletes.push(existing); rememberDeletedStyle(existing);
+          deleted++; continue;
         }
         const clean = styleFromExcelRow(raw, existing);
         const rawSizeSet = excelValue(raw,["Size Set","SizeSet","Sizes"]);
@@ -4772,6 +4997,7 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
         }
       }
       setBulkMsg({ tone:errors.length ? "warn" : "ok", text:`Bulk update done. Added ${added}, updated ${updated}, hard deleted ${deleted}, skipped ${skipped}.${errors.length ? " Issues: "+errors.slice(0,4).join(" | ")+(errors.length>4?` | +${errors.length-4} more`:"") : ""}` });
+      recordProductionAudit("style_bulk_update", { table_name:"production_orders", qty:upserts.length, source:"Styles bulk upload", metadata:{ added, updated, deleted, skipped, error_count:errors.length } });
     } catch(e) {
       setBulkMsg({ tone:"late", text:e?.message || "Bulk Excel update failed." });
     } finally { setBusy(false); }
@@ -4890,6 +5116,44 @@ function PageFilters({ tab, query, setQuery, buyer, setBuyer, buyers, order, set
   </div>;
 }
 
+
+function PermissionGate({ permission, children, label }){
+  if (currentUserCan(permission)) return children;
+  return <div className="mt-card"><div className="mt-section"><span className="mt-chip mt-late"><Lock size={12}/>Permission blocked</span><div className="mt-panel-sub" style={{marginTop:8}}>{currentUserName()} ({currentUserRole()}) cannot open {label || "this screen"}. Required permission: <b>{permission}</b>.</div></div></div>;
+}
+function LoginDialog({ open, profile, onSave, onClose, force=false }){
+  const [form,setForm] = useState(()=>({ ...defaultUserProfile(), ...profile }));
+  useEffect(()=>setForm({ ...defaultUserProfile(), ...profile }), [profile?.name, profile?.role, profile?.department]);
+  if (!open) return null;
+  async function save(){
+    if (!String(form.name||"").trim()) { alert("User name is mandatory."); return; }
+    const clean = saveCurrentUserProfile(form);
+    await recordUserSession("login", clean, { force, note:"Production DPR user login" });
+    onSave?.(clean);
+  }
+  return <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>{force ? "Login required" : "Change user"}</span><span className="mt-chip mt-info">User-wise audit</span></div><div className="body"><div><b>Enter the person using this browser.</b></div><div className="mt-small">This stamps DPR entries, register corrections, style changes and login/session history. Full password auth can later move to Supabase Auth; this patch gives user-wise factory accountability now.</div><label className="mt-small">User name *</label><input className="mt-input" value={form.name || ""} onChange={e=>setForm(f=>({ ...f, name:e.target.value }))} placeholder="Example: RAMESH CUTTING"/><label className="mt-small">Role</label><select className="mt-select" value={form.role || "Production Coordinator"} onChange={e=>setForm(f=>({ ...f, role:e.target.value }))}>{PRODUCTION_ROLES.map(r=><option key={r} value={r}>{r}</option>)}</select><label className="mt-small">Department</label><input className="mt-input" value={form.department || ""} onChange={e=>setForm(f=>({ ...f, department:e.target.value }))} placeholder="Cutting / Stitching / Production"/><label className="mt-small">Email / phone optional</label><input className="mt-input" value={form.email || ""} onChange={e=>setForm(f=>({ ...f, email:e.target.value }))} placeholder="Optional"/><div className="mt-card"><div className="mt-section"><b>Permissions for selected role</b><div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>{PRODUCTION_PERMISSIONS.map(([key,label])=><span key={key} className={`mt-chip ${(ROLE_PERMISSIONS[form.role]||[]).includes(key) || form.role==="Admin" ? "mt-ok" : "mt-muted"}`}>{label}</span>)}</div></div></div></div><div className="actions">{!force && <button className="mt-btn ghost" onClick={onClose}>Cancel</button>}<button className="mt-btn primary" onClick={save}><UserCheck size={14}/>Login / continue</button></div></div></div>;
+}
+function UserAuditView({ profile, onSwitchUser, onLogout }){
+  const [audit,setAudit] = useState([]);
+  const [users,setUsers] = useState([]);
+  const [msg,setMsg] = useState(null);
+  const [loading,setLoading] = useState(false);
+  async function refresh(){
+    setLoading(true); setMsg({tone:"info", text:"Loading users and audit history..."});
+    try {
+      const u = await fetchProductionUsers();
+      const a = await fetchProductionAudit(300);
+      setUsers(u.data || []); setAudit(a.data || []);
+      const warnings = [u.error ? `Users: ${u.error.message}` : "", a.error ? `Audit: ${a.error.message}` : ""].filter(Boolean);
+      setMsg(warnings.length ? {tone:"warn", text:`Could not read all governance tables. Run the V7.5.44 SQL patch. ${warnings.join(" | ")}`} : {tone:"ok", text:`Loaded ${u.data?.length || 0} users and ${a.data?.length || 0} audit rows.`});
+    } finally { setLoading(false); }
+  }
+  useEffect(()=>{ refresh(); }, []);
+  const perms = ROLE_PERMISSIONS[profile.role] || [];
+  const localHistory = safeJsonLoad(uiStorageKey("tab_history"), []);
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Users / Permissions / History</h3><div className="mt-panel-sub">User-wise accountability for multi-user Production DPR. Login/session and audit tables require the V7.5.44 SQL patch.</div></div><div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-chip mt-info"><UserCheck size={12}/>{profile.name || "Not logged in"}</span><span className="mt-chip mt-muted">{profile.role}</span><span className="mt-chip mt-muted">{profile.department || "—"}</span><button className="mt-btn" onClick={refresh} disabled={loading}><RefreshCw size={14}/>Refresh History</button><button className="mt-btn ghost" onClick={onSwitchUser}><Users size={14}/>Switch User</button><button className="mt-btn ghost" onClick={onLogout}><LogOut size={14}/>Logout</button>{msg && <span className={`mt-chip ${statusClass(msg.tone)}`}>{msg.text}</span>}</div></div><div className="mt-section"><h3 className="mt-panel-title">Current Role Permissions</h3><div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>{PRODUCTION_PERMISSIONS.map(([key,label])=><span key={key} className={`mt-chip ${profile.role==="Admin" || perms.includes(key) ? "mt-ok" : "mt-muted"}`}>{label}</span>)}</div><div className="mt-small" style={{marginTop:8}}>Last local tab history: {localHistory.length ? localHistory.join(" → ") : "No tab history yet"}</div></div><SimpleTable title="Active / recent users" sub="From production_app_users. Shows who has opened or logged in from browsers." rows={(users||[]).map(u=>({ User:u.display_name || u.user_name, Role:u.role, Department:u.department, Email:u.email, Last_Seen:u.last_seen_at || u.created_at, Browser:u.browser_id, Active:u.is_active ? "Yes" : "No" }))} empty="No user rows yet. Login once after running SQL patch."/><div style={{height:12}}/><SimpleTable title="Audit history" sub="Latest saves/corrections/sessions. Keep this horizontal and management-readable; raw JSON stays in metadata only." rows={(audit||[]).map(a=>({ Time:a.created_at, User:a.user_name, Role:a.user_role, Action:a.action || a.event_type, Table:a.table_name, Order:a.order_no, Style:a.style_no, Colour:a.colour, Component:a.component, Dept:stageLabel(a.stage || ""), Activity:a.entry_type, Date:a.entry_date, Qty:a.qty, Source:a.source }))} empty="No audit rows yet or SQL patch not run."/></div>;
+}
+
 export default function App(){
   const [tab,setTab] = useState(()=>safeJsonLoad(uiStorageKey("active_tab"), "dashboard"));
   const [settingsTick,setSettingsTick] = useState(0);
@@ -4903,13 +5167,17 @@ export default function App(){
   const [drawer,setDrawer] = useState(null);
   const [dashboardDrill,setDashboardDrill] = useState(null);
   const [registerFocus,setRegisterFocus] = useState(null);
+  const [entryFocus,setEntryFocus] = useState(null);
   const [notice,setNotice] = useState(null);
   const [sharedSync,setSharedSync] = useState(()=>hasValidSupabaseEnv() ? { tone:"warn", text:"Shared sync starting…" } : { tone:"late", text:"Supabase not configured" });
   const [clearFiltersTick,setClearFiltersTick] = useState(0);
   const [showUpdatePopup,setShowUpdatePopup] = useState(()=>{
     try { return localStorage.getItem("production_app_seen_version") !== APP_VERSION; } catch { return true; }
   });
+  const [userProfile,setUserProfile] = useState(()=>currentUserProfile());
+  const [showLogin,setShowLogin] = useState(()=>!currentUserProfile().name);
   useEffect(()=>{ safeJsonSave(LOCAL_ROWS_KEY, rows); }, [rows]);
+  useEffect(()=>{ if (userProfile?.name) { saveCurrentUserProfile(userProfile); upsertProductionAppUser(userProfile); recordUserSession("app_open", userProfile, { tab }); } }, [userProfile?.name, userProfile?.role, userProfile?.department]);
   useEffect(()=>{ safeJsonSave(LOCAL_LEDGER_KEY, ledger); }, [ledger]);
   useEffect(()=>{ safeJsonSave(LOCAL_PLAN_KEY, planRows); }, [planRows]);
   useEffect(()=>safeJsonSave(uiStorageKey("global_query"), query), [query]);
@@ -4954,12 +5222,12 @@ export default function App(){
       }
       const {data:entryData,error:entryError} = await supabase.from("production_entries").select("*").limit(10000).order("entry_date",{ascending:false});
       if(entryError){
-        setRows((data || []).map(supabaseToOrder));
+        setRows(filterDeletedStyles((data || []).map(supabaseToOrder)));
         if (!silent) setNotice({tone:"warn", text:`Pulled orders, but entries failed: ${entryError.message}`});
         setSharedSync({tone:"warn", text:`Orders shared · entries pull failed`});
         return { error:entryError };
       }
-      setRows((data || []).map(supabaseToOrder));
+      setRows(filterDeletedStyles((data || []).map(supabaseToOrder)));
       setLedger(entryData || []);
       const stamp = new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" });
       setSharedSync({tone:"ok", text:`Shared live · ${data?.length || 0} orders · ${entryData?.length || 0} entries · ${stamp}`});
@@ -5045,6 +5313,14 @@ export default function App(){
     setDrawer(null);
     setTab("register");
   }
+  function openEntryFromWip(row, stage, field="output"){
+    if (!row) return;
+    setEntryFocus({ id:uid("entryfocus"), rowKey:styleCompositeKey(row), stage:stage || "cutting", field:field || "output", order_no:row.order_no || "", style_no:row.style_no || "", colour:row.colour || "", component:row.component || "" });
+    setOrder(row.order_no || "All");
+    setQuery([row.style_no, row.colour, row.component].filter(Boolean).join(" "));
+    setDrawer(null);
+    setTab("entry");
+  }
   function clearAllScreenFilters(){
     setQuery("");
     setBuyer("All");
@@ -5075,18 +5351,43 @@ export default function App(){
       { name:"Backdated Audit", rows:pack.ledgerRows },
     ]);
   }
+  function tabPermission(k){
+    if (["entry"].includes(k)) return "production.entry_dpr";
+    if (["register"].includes(k)) return "production.correct_entry";
+    if (["styles"].includes(k)) return "production.edit_styles";
+    if (["routes"].includes(k)) return "production.manage_routes";
+    if (["photos"].includes(k)) return "production.manage_photos";
+    if (["reports","monthly"].includes(k)) return "production.export";
+    if (["settings"].includes(k)) return "production.manage_settings";
+    if (["users"].includes(k)) return "production.audit_view";
+    return "production.view";
+  }
+  function canOpenTab(k){ return currentUserCan(tabPermission(k)); }
+  useEffect(()=>{ if (userProfile?.name && !canOpenTab(tab)) setTab("dashboard"); }, [userProfile?.name, userProfile?.role, tab]);
+  async function logoutUser(){
+    await recordUserSession("logout", userProfile, { note:"User clicked logout" });
+    clearCurrentUserProfile();
+    const blank = defaultUserProfile();
+    setUserProfile(blank);
+    setShowLogin(true);
+    setNotice({ tone:"warn", text:"Logged out. Login is required before production entry/edit actions." });
+  }
   const tabs = [
-    ["dashboard","Dashboard",BarChart3], ["planning","Planning",ClipboardList], ["wip","Live WIP",Warehouse], ["entry","DPR Entry",ClipboardList], ["register","Register",FileSpreadsheet], ["review","Review",ShieldCheck], ["owners","Who to Chase",Users], ["monthly","Monthly",FileSpreadsheet], ["styles","Styles",Shirt], ["routes","Routes",Filter], ["photos","Photos",ImageIcon], ["reports","Reports",FileSpreadsheet], ["settings","Settings",Settings]
+    ["dashboard","Dashboard",BarChart3], ["planning","Planning",ClipboardList], ["wip","Live WIP",Warehouse], ["entry","DPR Entry",ClipboardList], ["register","Register",FileSpreadsheet], ["review","Review",ShieldCheck], ["owners","Who to Chase",Users], ["monthly","Monthly",FileSpreadsheet], ["styles","Styles",Shirt], ["routes","Routes",Filter], ["photos","Photos",ImageIcon], ["reports","Reports",FileSpreadsheet], ["users","Users/Audit",UserCheck], ["settings","Settings",Settings]
   ];
-  return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}><style>{FONT + CSS}</style>{showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Autosave shared-sync patch: DPR/Register entries save to Supabase first, live/poll sync refreshes other browsers, and WIP rebuilds current quantities from shared ledger rows.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}<div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Reports. Supabase-first autosave with live shared sync across browsers.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button><button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button><button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
+  return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
+    <style>{FONT + CSS}</style>
+    <LoginDialog open={showLogin} force={!userProfile?.name} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
+    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Current status links open the exact DPR entry context; toggleable route progress shows cut/order/cut-stage balance; deleted styles are protected from reappearing by local tombstones while Supabase delete verification is fixed.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
+    <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Reports. Supabase-first autosave · user login · permissions · audit history.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className={`mt-chip ${userProfile?.name ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=>{ const allowed = canOpenTab(k); return <button key={k} className={tab===k?"active":""} disabled={!allowed} title={allowed ? label : `Blocked: ${tabPermission(k)}`} onClick={()=>allowed && setTab(k)}><Icon size={14}/> {label}{!allowed ? " 🔒" : ""}</button>; })}</div></div></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
       <PageFilters tab={tab} query={query} setQuery={setQuery} buyer={buyer} setBuyer={setBuyer} buyers={buyers} order={order} setOrder={setOrder} orders={orders} visibleRows={visibleRows}/>
       <div className="mt-keepalive-note slim no-print"><span className="mt-chip mt-info">Remembered tab/draft</span><span className="mt-small">This browser remembers your tab/drafts. Saved production data is shared through Supabase and refreshes by realtime/polling.</span></div>
       <div className="mt-tab-panel" style={{display:tab==="dashboard"?"block":"none"}} aria-hidden={tab!=="dashboard"}><Dashboard rows={visibleRows} ledger={ledger} onDrill={setDashboardDrill} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="planning"?"block":"none"}} aria-hidden={tab!=="planning"}><PlanningView rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} ledger={ledger}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="wip"?"block":"none"}} aria-hidden={tab!=="wip"}><WipStatus rows={visibleRows} onOpen={(row,stage)=>setDrawer({row,stage})} clearTick={clearFiltersTick}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="entry"?"block":"none"}} aria-hidden={tab!=="entry"}><QuickEntry rows={visibleRows} setRows={setRows} ledger={ledger} setLedger={setLedger} onSharedSave={handleSharedSave}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="wip"?"block":"none"}} aria-hidden={tab!=="wip"}><WipStatus rows={visibleRows} onOpen={(row,stage)=>setDrawer({row,stage})} onEntry={openEntryFromWip} clearTick={clearFiltersTick}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="entry"?"block":"none"}} aria-hidden={tab!=="entry"}><QuickEntry rows={visibleRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={entryFocus} onSharedSave={handleSharedSave}/></div>
       <div className="mt-tab-panel" style={{display:tab==="register"?"block":"none"}} aria-hidden={tab!=="register"}><OutputRegisterView rows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={registerFocus} clearTick={clearFiltersTick} onSharedSave={handleSharedSave}/></div>
       <div className="mt-tab-panel" style={{display:tab==="review"?"block":"none"}} aria-hidden={tab!=="review"}><ReviewView rows={visibleRows} ledger={ledger} planRows={planRows}/></div>
       <div className="mt-tab-panel" style={{display:tab==="owners"?"block":"none"}} aria-hidden={tab!=="owners"}><WhoToChase rows={visibleRows}/></div>
@@ -5094,8 +5395,9 @@ export default function App(){
       <div className="mt-tab-panel" style={{display:tab==="styles"?"block":"none"}} aria-hidden={tab!=="styles"}><StyleManager rows={visibleRows} allRows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} clearTick={clearFiltersTick} onSharedSave={handleSharedSave}/></div>
       <div className="mt-tab-panel" style={{display:tab==="routes"?"block":"none"}} aria-hidden={tab!=="routes"}><ProcessRoutes rows={visibleRows} setRows={setRows}/></div>
       <div className="mt-tab-panel" style={{display:tab==="photos"?"block":"none"}} aria-hidden={tab!=="photos"}><PhotoManager rows={visibleRows} setRows={setRows} clearTick={clearFiltersTick}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="reports"?"block":"none"}} aria-hidden={tab!=="reports"}><Reports rows={visibleRows} ledger={ledger}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="settings"?"block":"none"}} aria-hidden={tab!=="settings"}><SettingsView onChanged={()=>setSettingsTick(t=>t+1)}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="reports"?"block":"none"}} aria-hidden={tab!=="reports"}>{currentUserCan("production.export") ? <Reports rows={visibleRows} ledger={ledger}/> : <PermissionGate permission="production.export" label="Reports"/>}</div>
+      <div className="mt-tab-panel" style={{display:tab==="users"?"block":"none"}} aria-hidden={tab!=="users"}>{currentUserCan("production.audit_view") ? <UserAuditView profile={userProfile} onSwitchUser={()=>setShowLogin(true)} onLogout={logoutUser}/> : <PermissionGate permission="production.audit_view" label="Users / Audit"/>}</div>
+      <div className="mt-tab-panel" style={{display:tab==="settings"?"block":"none"}} aria-hidden={tab!=="settings"}>{currentUserCan("production.manage_settings") ? <SettingsView onChanged={()=>setSettingsTick(t=>t+1)}/> : <PermissionGate permission="production.manage_settings" label="Settings"/>}</div>
     </div>
     {drawer && <DetailDrawer row={drawer.row} rows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} stageKey={drawer.stage} onClose={()=>setDrawer(null)} onOpenRegister={openRegisterFromWip} onSharedSave={handleSharedSave}/>} 
     {dashboardDrill && <DashboardDrillDrawer drill={dashboardDrill} rows={visibleRows} ledger={ledger} onClose={()=>setDashboardDrill(null)}/>} 
