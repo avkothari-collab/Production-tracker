@@ -26,8 +26,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.23";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.23 order quantity validation and persistence";
+const APP_VERSION = "V7.5.25";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.25 schema-safe Supabase style save";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -1290,15 +1290,19 @@ function orderToSupabase(row){
   stageQty.__order_size_qty = normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row));
   stageQty.__cutting_short_close_qty = cuttingShortCloseQty(row);
   stageQty.__cutting_short_close_reason = row.cutting_short_close_reason || row.short_close_reason || "";
+  // Keep newer planning/style metadata inside existing JSON so old Supabase schemas
+  // do not reject saves with schema-cache errors like missing daily_target/default_line.
+  stageQty.__daily_target = n(row.daily_target || row.plan_qty || 0) || 0;
+  stageQty.__default_line = row.line || "";
   return {
     id:String(row.id).startsWith("demo") ? undefined : row.id,
     order_no:row.order_no, style_no:row.style_no, buyer:row.buyer, brand:row.buyer,
     photo_url:row.photo_url || null,
     photo_thumb_url:row.photo_thumb_url || row.photo_url || null,
     photo_folder_url:row.photo_folder_url || null,
-    difficulty:row.difficulty || null, priority:row.priority || null, daily_target:n(row.daily_target || row.plan_qty || 0) || null,
+    difficulty:row.difficulty || null, priority:row.priority || null,
     colour:row.colour, component:row.component, set_id:row.set_id || null,
-    order_qty:n(row.order_qty), size_set:row.size_set, default_line:row.line || null,
+    order_qty:n(row.order_qty), size_set:row.size_set,
     print_required:!!row.print_required, embroidery_required:!!row.embroidery_required,
     route:routeFor(row),
     stage_qty:stageQty,
@@ -1319,7 +1323,7 @@ function supabaseToOrder(row){
     if (typeof v === "number") return [k, { ...blankStage(), received:v, output:v, issued:v }];
     return [k, { ...blankStage(), ...v, reject:n(row.reject_qty?.[k] ?? v.reject), alter:n(row.alter_qty?.[k] ?? v.alter), missing:n(row.missing_qty?.[k] ?? v.missing), party:row.party_by_stage?.[k] || v.party || "", idle:n(row.idle_by_stage?.[k] ?? v.idle) }];
   }));
-  return { id:row.id, order_no:row.order_no, style_no:row.style_no, buyer:row.buyer || row.brand || "", colour:row.colour || "", component:row.component || "", photo_url:row.photo_url || "", photo_thumb_url:row.photo_thumb_url || row.photo_url || "", photo_folder_url:row.photo_folder_url || "", order_qty:n(row.order_qty), order_size_qty:normalizeSizeQtyMap(row.order_size_qty || raw.__order_size_qty || raw.order_size_qty || row.size_qty || {}, sizeList), size_set:sizeSet, set_id:row.set_id || "", line:row.default_line || "", difficulty:row.difficulty || "Normal", priority:row.priority || "Normal", daily_target:n(row.daily_target), cutting_short_close_qty:n(row.cutting_short_close_qty || raw.__cutting_short_close_qty), cutting_short_close_reason:row.cutting_short_close_reason || raw.__cutting_short_close_reason || "", print_required:!!row.print_required || route.includes("printing"), embroidery_required:!!row.embroidery_required || route.includes("embroidery"), route, stages };
+  return { id:row.id, order_no:row.order_no, style_no:row.style_no, buyer:row.buyer || row.brand || "", colour:row.colour || "", component:row.component || "", photo_url:row.photo_url || "", photo_thumb_url:row.photo_thumb_url || row.photo_url || "", photo_folder_url:row.photo_folder_url || "", order_qty:n(row.order_qty), order_size_qty:normalizeSizeQtyMap(row.order_size_qty || raw.__order_size_qty || raw.order_size_qty || row.size_qty || {}, sizeList), size_set:sizeSet, set_id:row.set_id || "", line:row.default_line || raw.__default_line || "", difficulty:row.difficulty || "Normal", priority:row.priority || "Normal", daily_target:n(row.daily_target ?? raw.__daily_target), cutting_short_close_qty:n(row.cutting_short_close_qty || raw.__cutting_short_close_qty), cutting_short_close_reason:row.cutting_short_close_reason || raw.__cutting_short_close_reason || "", print_required:!!row.print_required || route.includes("printing"), embroidery_required:!!row.embroidery_required || route.includes("embroidery"), route, stages };
 }
 async function exportXlsx(filename, sheets){
   const XLSX = await import("xlsx");
@@ -3159,10 +3163,9 @@ function PhotoManager({ rows, setRows }){
       if (!publicUrl) throw new Error("Upload finished but public URL was not returned.");
       setUrl(row.id, publicUrl);
       setRows(prev=>prev.map(r=>r.id===row.id ? ({ ...r, photo_url:publicUrl, photo_thumb_url:publicUrl }) : r));
-      const payload = orderToSupabase({ ...row, photo_url:publicUrl, photo_thumb_url:publicUrl, photo_folder_url:folderDraft[row.id] || row.photo_folder_url || "" });
-      const { error: saveError } = await supabase.from("production_orders").upsert(payload, { onConflict:"order_no,style_no,colour,component" });
-      if (saveError) throw saveError;
-      setMsg("Photo uploaded. Thumbnail will show in WIP/Planning/Review tables.");
+      const result = await robustUpsertOrdersToSupabase([{ ...row, photo_url:publicUrl, photo_thumb_url:publicUrl, photo_folder_url:folderDraft[row.id] || row.photo_folder_url || "" }]);
+      if (result?.error) throw result.error;
+      setMsg(`Photo uploaded. Thumbnail will show in WIP/Planning/Review tables. ${supabaseSaveLabel(result)}`);
     } catch (e) {
       setMsg(e?.message || "Photo upload failed. Check Supabase Storage bucket/policies.");
     } finally {
@@ -3173,10 +3176,9 @@ function PhotoManager({ rows, setRows }){
     const nextRows = rows.map(r=>({ ...r, photo_url:draft[r.id] || "", photo_thumb_url:draft[r.id] || "", photo_folder_url:folderDraft[r.id] || "" }));
     setRows(prev=>prev.map(r=>Object.prototype.hasOwnProperty.call(draft, r.id) ? ({ ...r, photo_url:draft[r.id] || "", photo_thumb_url:draft[r.id] || "", photo_folder_url:folderDraft[r.id] || "" }) : r));
     setMsg("Photos saved locally. Seed/Pull will sync once Supabase columns exist.");
-    if (isSupabaseConfigured && supabase && hasValidSupabaseEnv()) {
-      const payload = nextRows.map(orderToSupabase);
-      const { error } = await supabase.from("production_orders").upsert(payload, { onConflict:"order_no,style_no,colour,component" });
-      setMsg(error ? error.message : "Photo thumbnail/folder URLs saved to Supabase.");
+    if (hasValidSupabaseEnv()) {
+      const result = await robustUpsertOrdersToSupabase(nextRows);
+      setMsg(result.error ? result.error.message : `Photo thumbnail/folder URLs saved to Supabase. ${supabaseSaveLabel(result)}`);
     }
   }
   return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Style Photos</h3><div className="mt-panel-sub">Upload one style photo or paste a direct thumbnail URL. WIP/Planning/Review tables show tiny lazy-loaded thumbnails; detail drawer shows a larger preview.</div></div>
@@ -3207,14 +3209,7 @@ function safeStagesForEditedRow(prevRow, draftRow){
   return next;
 }
 async function upsertOneStyleToSupabase(row){
-  if (!isSupabaseConfigured || !supabase || !hasValidSupabaseEnv()) return { skipped:true, warning:supabaseConfigWarning() };
-  try {
-    const payload = orderToSupabase(row);
-    const { error } = await supabase.from("production_orders").upsert([payload], { onConflict:"order_no,style_no,colour,component" });
-    return { error };
-  } catch (e) {
-    return { error:{ message:e?.message || String(e) } };
-  }
+  return robustUpsertOrdersToSupabase([row]);
 }
 function styleNaturalKey(row){
   return {
@@ -3240,7 +3235,16 @@ function applyStyleNaturalKeyFilter(query, row){
 }
 function supabaseEnvBaseUrl(){
   const raw = String(import.meta.env?.VITE_SUPABASE_URL || "").trim();
-  return raw.replace(/\/rest\/v1\/?$/i, "").replace(/\/storage\/v1\/?$/i, "").replace(/\/+$/, "");
+  if (!raw) return "";
+  try {
+    // Always normalize to the project origin. This fixes common env mistakes such as
+    // https://project.supabase.co/rest/v1 or /rest/v1/production_orders which make
+    // supabase-js build an invalid request path.
+    const u = new URL(raw);
+    return u.origin.replace(/\/+$/, "");
+  } catch {
+    return raw.replace(/\/rest\/v1.*$/i, "").replace(/\/storage\/v1.*$/i, "").replace(/\/+$/, "");
+  }
 }
 function supabaseEnvAnonKey(){ return String(import.meta.env?.VITE_SUPABASE_ANON_KEY || "").trim(); }
 function hasValidSupabaseEnv(){
@@ -3256,6 +3260,88 @@ function supabaseConfigWarning(){
 }
 function urlEncodedEqQuery(key){
   return Object.entries(key).map(([k,v])=>`${encodeURIComponent(k)}=eq.${encodeURIComponent(String(v || ""))}`).join("&");
+}
+function missingSchemaColumnName(err){
+  const msg = String(err?.message || err || "");
+  return msg.match(/Could not find the '([^']+)' column/i)?.[1] ||
+    msg.match(/column ["']?([a-zA-Z0-9_]+)["']? .*schema cache/i)?.[1] ||
+    "";
+}
+function removeColumnFromPayloadRows(payloadRows, column){
+  const rows = Array.isArray(payloadRows) ? payloadRows : [payloadRows];
+  return rows.map(row=>{ const next = { ...row }; delete next[column]; return next; });
+}
+async function retrySchemaSafeSupabaseUpsert(table, payloadRows, onConflict, maxRetries=8){
+  if (!isSupabaseConfigured || !supabase) return { error:{ message:"Supabase client unavailable" } };
+  let payload = Array.isArray(payloadRows) ? payloadRows : [payloadRows];
+  const removed = [];
+  for (let i=0; i<=maxRetries; i++){
+    const { error } = await supabase.from(table).upsert(payload, { onConflict });
+    if (!error) return { error:null, via:"supabase-js", savedCount:payload.length, removedColumns:removed };
+    const col = missingSchemaColumnName(error);
+    if (!col || removed.includes(col)) return { error, removedColumns:removed };
+    removed.push(col);
+    payload = removeColumnFromPayloadRows(payload, col);
+  }
+  return { error:{ message:`Supabase save failed after removing schema-missing columns: ${removed.join(", ")}` }, removedColumns:removed };
+}
+async function fetchRestUpsertToSupabase(table, payloadRows, onConflict){
+  const base = supabaseEnvBaseUrl();
+  const anon = supabaseEnvAnonKey();
+  if (!base || !anon) return { skipped:true, warning:supabaseConfigWarning() };
+  let rows = Array.isArray(payloadRows) ? payloadRows : [payloadRows];
+  if (!rows.length) return { error:null, via:"rest", savedCount:0 };
+  const removed = [];
+  const url = `${base}/rest/v1/${encodeURIComponent(table)}?on_conflict=${encodeURIComponent(onConflict)}`;
+  for (let attempt=0; attempt<8; attempt++){
+    try {
+      const res = await fetch(url, {
+        method:"POST",
+        headers:{
+          apikey:anon,
+          Authorization:`Bearer ${anon}`,
+          "Content-Type":"application/json",
+          Prefer:"resolution=merge-duplicates,return=minimal"
+        },
+        body:JSON.stringify(rows)
+      });
+      if (res.ok) return { error:null, via:"rest", savedCount:rows.length, removedColumns:removed };
+      const text = await res.text().catch(()=>"");
+      const col = missingSchemaColumnName({ message:text });
+      if (col && !removed.includes(col)) {
+        removed.push(col);
+        rows = removeColumnFromPayloadRows(rows, col);
+        continue;
+      }
+      return { error:{ message:text || `REST upsert HTTP ${res.status}` }, removedColumns:removed };
+    } catch (e) {
+      return { error:{ message:e?.message || String(e) }, removedColumns:removed };
+    }
+  }
+  return { error:{ message:`REST save failed after removing schema-missing columns: ${removed.join(", ")}` }, removedColumns:removed };
+}
+async function robustUpsertOrdersToSupabase(rows){
+  if (!hasValidSupabaseEnv()) return { skipped:true, warning:supabaseConfigWarning() };
+  const payload = (Array.isArray(rows) ? rows : [rows]).map(orderToSupabase);
+  let firstError = null;
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const result = await retrySchemaSafeSupabaseUpsert("production_orders", payload, "order_no,style_no,colour,component");
+      if (!result.error) return result;
+      firstError = result.error;
+    } catch (e) {
+      firstError = { message:e?.message || String(e) };
+    }
+  }
+  const fallback = await fetchRestUpsertToSupabase("production_orders", payload, "order_no,style_no,colour,component");
+  if (!fallback?.error) return { ...fallback, recoveredFrom:firstError?.message || "Supabase client was unavailable" };
+  return { error:{ message:`${firstError?.message || "Supabase client save failed"}; REST fallback also failed: ${fallback.error.message}` } };
+}
+function supabaseSaveLabel(result){
+  const stripped = result?.removedColumns?.length ? ` Schema-safe save: skipped non-table columns ${result.removedColumns.join(", ")}.` : "";
+  if (result?.via === "rest") return `Supabase updated using REST fallback.${stripped}`;
+  if (result?.via === "supabase-js") return `Supabase updated.${stripped}`;
+  return `Supabase updated.${stripped}`;
 }
 async function fetchDeleteByNaturalKey(table, row){
   const base = supabaseEnvBaseUrl();
@@ -3499,13 +3585,13 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger }){
         if (exists) return prev.map(r=>String(r.id)===String(newRow.id) ? newRow : r);
         return [newRow, ...prev];
       });
-      const { error, skipped, warning } = await upsertOneStyleToSupabase(newRow);
+      const { error, skipped, warning, via, recoveredFrom } = await upsertOneStyleToSupabase(newRow);
       if (editing && prevRow && styleCompositeKey(prevRow) !== styleCompositeKey(newRow) && !skipped) {
         await deleteOneStyleFromSupabase(prevRow);
       }
       if (error) setMsg({ tone:"late", text:`Saved in browser, Supabase save failed: ${error.message}` });
       else if (warning) setMsg({ tone:"warn", text:`${editing ? "Updated" : "Added"} ${newRow.style_no} in browser. ${warning}` });
-      else setMsg({ tone:variance.diff ? "warn" : "ok", text:`${editing ? "Updated" : "Added"} ${newRow.style_no}. ${variance.diff ? variance.text + " " : ""}${skipped ? "Browser/demo save only." : "Supabase updated."}` });
+      else setMsg({ tone:variance.diff ? "warn" : "ok", text:`${editing ? "Updated" : "Added"} ${newRow.style_no}. ${variance.diff ? variance.text + " " : ""}${skipped ? "Browser/demo save only." : supabaseSaveLabel({via})}${recoveredFrom ? ` Recovered from: ${recoveredFrom}` : ""}` });
       if (!editing) setForm(emptyForm);
     } finally { setBusy(false); }
   }
@@ -3587,10 +3673,11 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
       }
       setRows(nextRows);
       if (deletes.length) setLedger?.(prev=>(prev||[]).filter(x=>!deletes.some(row=>ledgerRowMatchesStyle(x,row))));
-      if (isSupabaseConfigured && supabase && hasValidSupabaseEnv()) {
+      if (hasValidSupabaseEnv()) {
         if (upserts.length) {
-          const { error } = await supabase.from("production_orders").upsert(upserts.map(orderToSupabase), { onConflict:"order_no,style_no,colour,component" });
-          if (error) errors.push(`Supabase upsert: ${error.message}`);
+          const result = await robustUpsertOrdersToSupabase(upserts);
+          if (result.error) errors.push(`Supabase upsert: ${result.error.message}`);
+          else if (result.recoveredFrom) errors.push(`Supabase upsert saved via REST fallback after client error: ${result.recoveredFrom}`);
         }
         for (const row of deletes) {
           const a = await deleteOneStyleFromSupabase(row); if (a.error) errors.push(`Supabase delete ${row.style_no}: ${a.error.message}`);
@@ -3757,11 +3844,12 @@ export default function App(){
     setNotice({tone:"ok", text:`Pulled ${data?.length || 0} production orders and ${entryData?.length || 0} activity entries.`});
   }
   async function seedSupabase(){
-    if(!isSupabaseConfigured || !supabase || !hasValidSupabaseEnv()){ setNotice({tone:"warn", text:supabaseConfigWarning()}); return; }
+    if(!hasValidSupabaseEnv()){ setNotice({tone:"warn", text:supabaseConfigWarning()}); return; }
     try {
-      const {error} = await supabase.from("production_orders").upsert(rows.map(orderToSupabase), { onConflict:"order_no,style_no,colour,component" });
-      if(error){ setNotice({tone:"late", text:error.message}); return; }
-      setNotice({tone:"ok", text:"Saved current browser rows to Supabase production_orders."});
+      const result = await robustUpsertOrdersToSupabase(rows);
+      if(result.error){ setNotice({tone:"late", text:result.error.message}); return; }
+      if(result.warning){ setNotice({tone:"warn", text:result.warning}); return; }
+      setNotice({tone:result.recoveredFrom ? "warn" : "ok", text:`Saved ${result.savedCount ?? rows.length} browser rows to Supabase production_orders. ${supabaseSaveLabel(result)}${result.recoveredFrom ? ` Client issue was: ${result.recoveredFrom}` : ""}`});
     } catch(e) {
       setNotice({tone:"late", text:e?.message || "Supabase save failed. Check VITE_SUPABASE_URL."});
     }
@@ -3782,7 +3870,7 @@ export default function App(){
   const tabs = [
     ["dashboard","Dashboard",BarChart3], ["planning","Planning",ClipboardList], ["wip","Live WIP",Warehouse], ["entry","DPR Entry",ClipboardList], ["review","Review",ShieldCheck], ["owners","Who to Chase",Users], ["monthly","Monthly",FileSpreadsheet], ["styles","Styles",Shirt], ["routes","Routes",Filter], ["photos","Photos",ImageIcon], ["reports","Reports",FileSpreadsheet], ["settings","Settings",Settings]
   ];
-  return <div className="mt-app" data-theme="paper" data-settings-tick={settingsTick}><style>{FONT + CSS}</style>{showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">This update makes Order Qty the master in Add/Edit/Bulk styles, warns when size breakup is short or excess, keeps stitching line as a planning-time choice, suggests clean Set IDs, fixes Cutting Pending so uncut styles are not shown as 100% closed, adds Cutting short-close action, and saves local browser rows/ledger/plans so style updates survive refresh even when Supabase config is wrong. After Vercel deploy, refresh once if an older cached screen is visible.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}<div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Order Qty master · browser persistence · Cutting Pending/short close · planning-time stitching line · suggested Set IDs · size-short/excess warnings · keep-alive tab drafts · grid-first WIP.</div></div><div className="mt-actions"><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase}><Upload size={14}/>Save all to Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
+  return <div className="mt-app" data-theme="paper" data-settings-tick={settingsTick}><style>{FONT + CSS}</style>{showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">This update makes Order Qty the master in Add/Edit/Bulk styles, warns when size breakup is short or excess, keeps stitching line as a planning-time choice, suggests clean Set IDs, fixes Cutting Pending so uncut styles are not shown as 100% closed, adds Cutting short-close action, and adds schema-safe Supabase style saving. If your production_orders table does not yet have newer app columns such as daily_target/default_line, the app stores those values inside stage_qty JSON and skips unsupported table columns instead of failing the save. After Vercel deploy, refresh once if an older cached screen is visible.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}<div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Order Qty master · schema-safe Supabase style save · browser persistence · Cutting Pending/short close · planning-time stitching line · suggested Set IDs · size-short/excess warnings · keep-alive tab drafts · grid-first WIP.</div></div><div className="mt-actions"><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase}><Upload size={14}/>Save all to Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
       <PageFilters tab={tab} query={query} setQuery={setQuery} buyer={buyer} setBuyer={setBuyer} buyers={buyers} order={order} setOrder={setOrder} orders={orders} visibleRows={visibleRows}/>
