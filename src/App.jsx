@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.74";
+const APP_VERSION = "V7.5.75";
 const APP_COMMIT_MESSAGE = "Production DPR V7.5.71 planning day ops uses max per line";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
@@ -5037,10 +5037,10 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     const style = planStyleKeyValue(planStyleText(candidate));
     const prevStyle = previousStyleBeforeSlot(line, day, slotNo, sourceRows);
     if (!style) return "No style selected";
-    if (candidate?.changeover_override) return candidate?.changeover ? "Manual override: use 70% target for this slot" : "Manual override: use 100% target for this slot";
-    if (!prevStyle) return "First planned style on this line — 100% target";
-    if (prevStyle === style) return "Continue running — 100% target";
-    return `Style changed from ${prevStyle} — 70% target`;
+    if (candidate?.changeover_override) return candidate?.changeover ? "Manual override: apply fixed changeover lost time for this slot" : "Manual override: no changeover lost time for this slot";
+    if (!prevStyle) return "First planned style on this line — no changeover lost time";
+    if (prevStyle === style) return "Continue running — no changeover lost time";
+    return `Style changed from ${prevStyle} — fixed 2h changeover lost before production starts`;
   }
   function cleanPatchForStyle(base, patch){
     const text = patch.style_input !== undefined ? patch.style_input : planStyleText(base);
@@ -5160,11 +5160,14 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
       const hoursCap = Math.max(0, Math.min(8, preferredHours));
       if (!hoursCap) continue;
       const changeoverAuto = (d === day && current?.changeover_override) ? !!current.changeover : autoChangeoverForSlot(line, d, slot, { ...baseWithSlot, style_input:linked.style_no, style_no:linked.style_no }, simulatedRows);
-      const factor = changeoverAuto ? 0.7 : 1;
-      const maxQtyForHours = Math.max(0, Math.round((target / 8) * hoursCap * factor));
+      // Factory rule: changeover is a fixed lost setup time first. Remaining production time runs at full capacity.
+      const lostHours = changeoverAuto ? Math.min(CHANGEOVER_LOST_HOURS, hoursCap) : 0;
+      const productiveHours = Math.max(0, hoursCap - lostHours);
+      const maxQtyForHours = Math.max(0, Math.round((target / 8) * productiveHours));
       if (!maxQtyForHours) continue;
       const qty = Math.min(qtyLeft, maxQtyForHours);
-      const neededHoursRaw = factor ? (qty * 8) / (target * factor) : hoursCap;
+      const neededProductionHours = target ? (qty * 8) / target : 0;
+      const neededHoursRaw = neededProductionHours + lostHours;
       const planHrs = Math.max(0.25, Math.min(hoursCap, Math.ceil(neededHoursRaw * 4) / 4));
       qtyLeft = Math.max(0, qtyLeft - qty);
       const completeHere = qtyLeft <= 0;
@@ -5248,7 +5251,7 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
           row[`${shortDayLabel(day)} Full_Day_Target`] = n(p.eight_hr_target) || "";
           row[`${shortDayLabel(day)} Plan_Hours`] = n(p.remaining_hours) || "";
           row[`${shortDayLabel(day)} Day_Remaining_After`] = p ? dayRemainingAfterSlot(lineDayPlanRows(planRows, activeDept, line, day), p) : "";
-          row[`${shortDayLabel(day)} Changeover_70`] = p.changeover ? (p.changeover_override ? "Yes - manual" : "Yes - style change") : (p.changeover_override ? "No - manual" : "No");
+          row[`${shortDayLabel(day)} Changeover_Lost_Time`] = p.changeover ? (p.changeover_override ? "Yes - manual" : "Yes - style change") : (p.changeover_override ? "No - manual" : "No");
           row[`${shortDayLabel(day)} End Date`] = p.stitching_end_date || "";
           row[`${shortDayLabel(day)} OPS`] = n(p.ops) || "";
           row[`${shortDayLabel(day)} Note`] = p.short_close ? "SHORT CLOSE" : (p.remarks || "");
@@ -5330,7 +5333,7 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
                       <div className="c-brand">{p.buyer || linked?.buyer || ""}</div>
                       <div className="c-metrics"><b>{fmt(n(p.planned_qty))}</b><span>{fmt(n(p.ops))} ops</span></div>
                       <div className="c-note">{cellTinyText(p) || (effChange ? "changeover" : "")}</div>
-                      {effChange && chInfo && <div className="c-changeover">Changeover · <span className="lost">Lost {fmt(chInfo.lost)}h</span> · <span className="free">{fmt(chInfo.after)}h free</span></div>}
+                      {effChange && chInfo && <div className="c-changeover">Changeover · <span className="lost">Lost {fmt(chInfo.lost)}h</span> · <span className="left">{fmt(chInfo.productive)}h production</span> · <span className="free">{fmt(chInfo.after)}h free</span></div>}
                       {showTargets && <div className="c-auto">{effChange ? "CO" : "100%"} · {fmt(planHours(p))}h · auto {fmt(planAutoQtyFromTarget({ ...p, changeover:effChange }))}</div>}
                     </> : <span className="compact-add">+ add</span>}
                   </button>
@@ -5480,14 +5483,14 @@ function PlanningView({ rows, planRows, setPlanRows, ledger, setRows, onPlanUpse
   const projectedRows = projectedFeedRows(planRows, rows, activeDept, weekDays);
   function exportWeekDetail(){
     exportXlsx(`production_${activeDept}_plan_detail_${normalizedWeekStart}.xlsx`, [
-      { name:"Plan Detail", rows:weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Slot:p.slot_no || 1, Style:p.style_no || p.style_input, Buyer:p.buyer, Qty:p.planned_qty, Full_Day_Target:p.eight_hr_target || "", Plan_Hours:p.remaining_hours || "", Changeover_70:p.changeover?"Yes":"No", Qty_Mode:p.qty_auto_mode?"Auto":"Manual", End_Date:p.stitching_end_date, OPS:p.ops, Short_Close:p.short_close?"Yes":"No", Remarks:p.remarks, Status:p.status })) },
+      { name:"Plan Detail", rows:weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Slot:p.slot_no || 1, Style:p.style_no || p.style_input, Buyer:p.buyer, Qty:p.planned_qty, Full_Day_Target:p.eight_hr_target || "", Plan_Hours:p.remaining_hours || "", Changeover_Lost_Time:p.changeover?"Yes":"No", Qty_Mode:p.qty_auto_mode?"Auto":"Manual", End_Date:p.stitching_end_date, OPS:p.ops, Short_Close:p.short_close?"Yes":"No", Remarks:p.remarks, Status:p.status })) },
       { name:"Plan vs Achieved", rows:pva },
       { name:"Plan Impact Review", rows:impactRows },
       { name:"Projected Feed", rows:projectedRows }
     ]);
   }
   return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Planning — Entry Board / Simple View</h3><div className="mt-panel-sub">Use Entry Board for typing plans; switch to Simple View or Achieved Weekly for reading the week, entry-done status, target-vs-actual and balance without the heavy entry UI.</div></div>
-    <div className="mt-section no-print"><div className="mt-filter-row"><button className={`mt-btn ${mode==="stitching"?"primary":"ghost"}`} onClick={()=>setMode("stitching")}>Stitching line board</button><button className={`mt-btn ${mode==="dept"?"primary":"ghost"}`} onClick={()=>setMode("dept")}>Other dept board</button>{mode==="dept" && <select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.filter(s=>!['stitching'].includes(s.key)).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>}<span className="mt-toolbar-label">Week</span><input className="mt-input" type="date" value={weekStart} onChange={e=>setWeekStart(e.target.value)}/><button className="mt-btn ghost" onClick={()=>setWeekStart(lineBoardWeekStart(today()))}>This week</button><button className="mt-btn ghost" onClick={()=>setWeekStart(nextProductionMonday(today()))}>Next week</button><button className={`mt-btn ${fitBoard?"active":"ghost"}`} onClick={()=>setFitBoard(v=>!v)}>Compact board</button><button className={`mt-btn ${showTargets?"active":"ghost"}`} onClick={()=>setShowTargets(v=>!v)}>{showTargets ? "Auto qty calculator: on" : "Auto qty calculator: off"}</button><span className="mt-toolbar-label">Plan View</span>{[["entry","Entry Board"],["simple","Simple View"],["achieved","Achieved Weekly"]].map(([k,l])=><button key={k} className={`mt-btn ${planViewMode===k?"active":"ghost"}`} onClick={()=>setPlanViewMode(k)}>{l}</button>)}<button className="mt-btn primary" onClick={exportWeekDetail}><Download size={14}/>Export plan detail</button>{planSaveState && <span className={`mt-chip ${statusClass(planSaveState.tone)}`}>{planSaveState.text}</span>}</div><div className="mt-plan-cascade-note"><b>P0 plan truth:</b> plan cells autosave to the shared production_plan_rows table, are audited, and carry cascade status by actual plan date. <b>Cascade rule now used:</b> when you are sitting on Thursday and planning Monday, earlier Thu/Fri/Sat running styles on the same line consume balance first. <b>70% auto-applies only when the style changes; continue-running days stay 100%, with manual checkbox override available.</b> The next style is flagged until prior quantity is finished or <b>short close</b> is marked. For Printing/Stitching/Checking/Packing, previous department actual output + upstream planned output ready by the plan date is used as projected feed; projected feed is shown separately from actual-ready feed.</div></div>
+    <div className="mt-section no-print"><div className="mt-filter-row"><button className={`mt-btn ${mode==="stitching"?"primary":"ghost"}`} onClick={()=>setMode("stitching")}>Stitching line board</button><button className={`mt-btn ${mode==="dept"?"primary":"ghost"}`} onClick={()=>setMode("dept")}>Other dept board</button>{mode==="dept" && <select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.filter(s=>!['stitching'].includes(s.key)).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>}<span className="mt-toolbar-label">Week</span><input className="mt-input" type="date" value={weekStart} onChange={e=>setWeekStart(e.target.value)}/><button className="mt-btn ghost" onClick={()=>setWeekStart(lineBoardWeekStart(today()))}>This week</button><button className="mt-btn ghost" onClick={()=>setWeekStart(nextProductionMonday(today()))}>Next week</button><button className={`mt-btn ${fitBoard?"active":"ghost"}`} onClick={()=>setFitBoard(v=>!v)}>Compact board</button><button className={`mt-btn ${showTargets?"active":"ghost"}`} onClick={()=>setShowTargets(v=>!v)}>{showTargets ? "Auto qty calculator: on" : "Auto qty calculator: off"}</button><span className="mt-toolbar-label">Plan View</span>{[["entry","Entry Board"],["simple","Simple View"],["achieved","Achieved Weekly"]].map(([k,l])=><button key={k} className={`mt-btn ${planViewMode===k?"active":"ghost"}`} onClick={()=>setPlanViewMode(k)}>{l}</button>)}<button className="mt-btn primary" onClick={exportWeekDetail}><Download size={14}/>Export plan detail</button>{planSaveState && <span className={`mt-chip ${statusClass(planSaveState.tone)}`}>{planSaveState.text}</span>}</div><div className="mt-plan-cascade-note"><b>P0 plan truth:</b> plan cells autosave to the shared production_plan_rows table, are audited, and carry cascade status by actual plan date. <b>Cascade rule now used:</b> when you are sitting on Thursday and planning Monday, earlier Thu/Fri/Sat running styles on the same line consume balance first. <b>fixed 2h changeover loss auto-applies only when the style changes; continue-running days have no lost setup time, with manual checkbox override available.</b> The next style is flagged until prior quantity is finished or <b>short close</b> is marked. For Printing/Stitching/Checking/Packing, previous department actual output + upstream planned output ready by the plan date is used as projected feed; projected feed is shown separately from actual-ready feed.</div></div>
     <div className="mt-section">{planViewMode === "entry" ? <PlanExcelLineBoard rows={rows} planRows={planRows} setPlanRows={setPlanRows} setRows={setRows} activeDept={activeDept} weekDays={weekDays} showTargets={showTargets} fit={fitBoard} ledger={ledger} onPlanUpsert={onPlanUpsert} onPlanDelete={onPlanDelete}/> : <SimplePlanReadingView rows={rows} planRows={planRows} ledger={ledger} activeDept={activeDept} weekDays={weekDays} mode={planViewMode}/>}</div>
     <div className="mt-section"><StylePlanDrilldown rows={rows} planRows={planRows} ledger={ledger} selectedText={selectedStylePlan} setSelectedText={setSelectedStylePlan}/></div>
     <div className="mt-section"><SimpleTable title="Plan Impact Review — Manager Approval Queue" sub="DPR entry by data operator does not auto-change future plan. This queue shows shortages/excess after actual output so Production Manager can apply cascade, part-cover promise, short close, no-change or manual edit." rows={impactRows} empty="No pending plan impacts for this department." /></div>
