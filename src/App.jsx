@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.78";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.78 manager action center + working plan impact review";
+const APP_VERSION = "V7.5.84";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.83 tail closure not idle based";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -369,6 +369,16 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-col-filter-row th.mt-sticky-col { z-index:11; background:#2b2722 !important; }
 .mt-wip-table-wrap.freeze-active { isolation:isolate; }
 .mt-wip-table-wrap.freeze-active .mt-style-main { min-width:0; }
+/* V7.5.80: freeze must behave like Excel: every row in the frozen columns stays locked,
+   header/filter/body share the same left offsets, and stage cells scroll under the frozen pane. */
+.mt-wip-table-wrap.freeze-active .mt-table { border-collapse:separate; border-spacing:0; }
+.mt-wip-table-wrap.freeze-active .mt-table thead th.mt-sticky-col { z-index:32 !important; }
+.mt-wip-table-wrap.freeze-active .mt-col-filter-row th.mt-sticky-col { z-index:31 !important; }
+.mt-wip-table-wrap.freeze-active .mt-table tbody td.mt-sticky-col { z-index:20 !important; }
+.mt-wip-table-wrap.freeze-active .mt-sticky-col { background-clip:padding-box; outline:1px solid var(--line-2); }
+.mt-wip-table-wrap.freeze-active .mt-table tbody td.mt-sticky-col::after,
+.mt-wip-table-wrap.freeze-active .mt-table thead th.mt-sticky-col::before { content:""; position:absolute; right:-1px; top:0; bottom:0; width:1px; background:var(--line-2); }
+.mt-wip-table-wrap.freeze-active .mt-subrow td { position:relative; z-index:1; }
 
 .mt-wip-resizable { --wip-default-col:132px; --wip-stage-col:150px; --wip-style-col:320px; --wip-status-col:230px; --wip-owner-col:190px; --wip-route-col:170px; --wip-action-col:220px; }
 .mt-wip-compact { --wip-default-col:108px; --wip-stage-col:122px; --wip-style-col:260px; --wip-status-col:190px; --wip-owner-col:150px; --wip-route-col:140px; --wip-action-col:180px; }
@@ -616,6 +626,31 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-manager-metrics span { border:1px solid var(--line-2); background:#fffdf8; border-radius:9px; padding:5px 8px; font-size:10px; }
 .mt-manager-metrics b { font-family:'Archivo',sans-serif; font-size:13px; }
 .mt-manager-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+.mt-manager-dept-grid { display:grid; gap:10px; }
+.mt-manager-dept-card { border:1px solid var(--line-2); border-radius:14px; background:var(--surface); overflow:hidden; }
+.mt-manager-dept-card > summary { cursor:pointer; list-style:none; padding:12px; display:flex; align-items:flex-start; justify-content:space-between; gap:10px; background:#fffaf1; }
+.mt-manager-dept-card > summary::-webkit-details-marker { display:none; }
+.mt-manager-dept-title { font-family:'Archivo',sans-serif; font-weight:800; font-size:15px; }
+.mt-manager-dept-sub { font-size:10px; color:var(--muted-2); margin-top:3px; line-height:1.35; }
+.mt-manager-task-row { display:grid; grid-template-columns:1.4fr repeat(4,minmax(80px,.6fr)) 1.8fr; gap:8px; padding:9px 12px; border-top:1px solid var(--line-3); align-items:start; font-size:10.5px; }
+.mt-manager-task-row:hover { background:#fffaf1; }
+.mt-manager-task-row b { font-family:'Archivo',sans-serif; font-size:13px; }
+.mt-manager-info-note { border:1px dashed var(--line-2); background:#fffdf8; border-radius:12px; padding:10px; color:var(--muted-3); font-size:10.5px; line-height:1.45; margin-top:10px; }
+@media (max-width:900px){ .mt-manager-task-row{grid-template-columns:1fr;} }
+
+
+.mt-bulk-preview-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px; }
+.mt-bulk-preview-card { border:1px solid var(--line-2); border-radius:14px; background:var(--surface); overflow:hidden; }
+.mt-bulk-preview-card.error { border-color:#e7aaa0; background:#fff7f5; }
+.mt-bulk-preview-card.warn { border-color:#dfc16a; background:#fffaf0; }
+.mt-bulk-preview-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; padding:10px; background:#fffaf1; border-bottom:1px solid var(--line-3); }
+.mt-bulk-preview-title { font-family:'Archivo',sans-serif; font-size:14px; font-weight:800; }
+.mt-bulk-change-list { display:grid; gap:6px; padding:10px; }
+.mt-bulk-change { border:1px solid var(--line-3); border-radius:10px; padding:7px 8px; background:white; }
+.mt-bulk-change b { display:block; font-size:9px; text-transform:uppercase; color:var(--muted-2); letter-spacing:.3px; margin-bottom:3px; }
+.mt-bulk-old { color:#9a3412; text-decoration:line-through; margin-right:6px; }
+.mt-bulk-new { color:#166534; font-weight:800; }
+.mt-size-set-badge { display:inline-flex; align-items:center; gap:5px; padding:4px 8px; border-radius:999px; border:1px solid var(--line-2); background:#eef7f2; color:#166534; font-size:9.5px; font-weight:800; }
 
 @media print { .mt-top,.mt-toolbar,.no-print,.mt-tabs { display:none !important; } .mt-page{padding:0;} .mt-card,.mt-table-wrap{border:0; box-shadow:none;} .mt-table th{background:#111 !important; color:#fff !important;} }
 @media (max-width:1180px){ .mt-dash-grid{grid-template-columns:repeat(3,minmax(0,1fr));} .mt-mini-board{grid-template-columns:1fr;} .mt-summary-strip,.mt-month-grid{grid-template-columns:repeat(2,minmax(0,1fr));} }
@@ -626,6 +661,8 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 const DEFAULT_SIZE_SETS = {
   alpha: ["XS", "S", "M", "L", "XL", "XXL"],
   kids: ["2-3Y", "3-4Y", "4-5Y", "5-6Y", "7-8Y", "9-10Y"],
+  infants: ["4-5Y", "5-6Y", "6-7Y", "7-8Y", "8-9Y", "9-10Y"],
+  baby: ["3-6M", "6-9M", "9-12M", "12-18M", "18-24M", "2-4Y", "4-6Y", "6-8Y"],
   waist: ["30", "32", "34", "36", "38"],
 };
 function cleanSizeToken(v){ return String(v || "").trim().toUpperCase(); }
@@ -1466,11 +1503,13 @@ function issueBuckets(row){
     if (key !== "cutting" && workNotCompleted > 0) {
       const feedForStage = stageFeed(row, key);
       const accountedPct = feedForStage > 0 ? ((n(st.output) + stageLoss) / feedForStage) * 100 : 0;
-      const tailDue = accountedPct >= 95;
+      const tailThresholdQty = Math.max(50, Math.round(feedForStage * 0.03));
+      const isSmallTailBalance = workNotCompleted > 0 && workNotCompleted <= tailThresholdQty;
+      const tailDue = accountedPct >= 97 && isSmallTailBalance;
       const atParty = !!st.party;
       buckets.push(tailDue
-        ? { type:"tail_balance", status:`Tail / Close Due in ${stageLabel(key)}`, qty:workNotCompleted, owner:hodAndCoordinator(key), support:"Small closure balance: close, explain, or convert to R/A/M. Not reconcile.", stage:key, tone:"warn", action:`${stageLabel(key)} is ${Math.round(accountedPct)}% accounted. Close/explain the remaining tail balance.`, idle, closePct:accountedPct }
-        : { type:"received_not_processed", status: atParty ? `Pending at ${st.party}` : `With ${stageLabel(key)}`, qty:workNotCompleted, owner: atParty ? `Production Coordinator + ${st.party}` : stageOwner(key), support: atParty ? "Follow up with outsource party; Production Manager escalation if overdue" : "Production Coordinator follow-up for closure; Production Manager escalation if overdue", stage:key, tone:idle >= 7 ? "warn" : "info", action: atParty ? `Follow ${st.party} to return ${stageLabel(key)} balance` : `${stageLabel(key)} to complete/process or explain open balance`, idle, party: atParty ? st.party : "" }
+        ? { type:"tail_balance", status:`Tail Closure Review in ${stageLabel(key)}`, qty:workNotCompleted, owner:hodAndCoordinator(key), support:"Tail-ending balance only: small residual balance after main production is effectively accounted. Not triggered by idle days or normal pending issue.", stage:key, tone:"warn", action:`${stageLabel(key)} small tail balance ${fmt(workNotCompleted)} remains after ${Math.round(accountedPct)}% accounted. Close, explain, R/A/M, or short-close with reason if genuine.`, idle, closePct:accountedPct, tailThresholdQty }
+        : { type:"received_not_processed", status: atParty ? `Pending at ${st.party}` : `With ${stageLabel(key)}`, qty:workNotCompleted, owner: atParty ? `Production Coordinator + ${st.party}` : stageOwner(key), support: atParty ? "Follow up with outsource party if plan/return is at risk" : "Normal WIP aging / department work balance unless it blocks plan or shows discrepancy", stage:key, tone:idle >= 7 ? "warn" : "info", action: atParty ? `Follow ${st.party} to return ${stageLabel(key)} balance if needed` : `${stageLabel(key)} to complete/process balance as normal WIP`, idle, party: atParty ? st.party : "" }
       );
     }
     if (stageLoss > 0) {
@@ -1750,7 +1789,7 @@ function wipMatchesGridColumnFilters(row, filters){
   });
 }
 function bucketTypeLabel(type){
-  return ({ completed_not_issued:"Ready for Next Dept", received_not_processed:"With Department", tail_balance:"Tail / Closure Due", cutting_pending:"Cutting Pending", short_closed:"Short Closed", ram:"Reject / Alter / Missing", approved_reject_dispatch:"Approved Reject Dispatch", reconcile:"Reconcile", extra_cut:"Extra Cut" })[type] || type;
+  return ({ completed_not_issued:"Ready for Next Dept", received_not_processed:"With Department", tail_balance:"Tail Closure Review", cutting_pending:"Cutting Pending", short_closed:"Short Closed", ram:"Reject / Alter / Missing", approved_reject_dispatch:"Approved Reject Dispatch", reconcile:"Reconcile", extra_cut:"Extra Cut" })[type] || type;
 }
 function typeFromStatusFilter(status){
   if (status === "ready") return "completed_not_issued";
@@ -2339,12 +2378,12 @@ function loadInitialPlanRows(){
 function Kpi({ label, value, note, tone }){
   return <div className="mt-kpi"><div className="label">{label}</div><div className="value">{value}</div><div className="note">{note}</div>{tone && <div style={{marginTop:8}}><span className={`mt-chip ${statusClass(tone)}`}>{tone}</span></div>}</div>;
 }
-function StageCell({ row, stageKey, onOpen }){
+function StageCell({ row, stageKey, onOpen, style=null }){
   const c = cellBreakup(row, stageKey);
-  if (c.skipped) return <td><div className="mt-stage-cell"><span className="mt-chip mt-muted">Skip</span><div className="mt-cell-note">Route not active</div></div></td>;
+  if (c.skipped) return <td style={style||undefined}><div className="mt-stage-cell"><span className="mt-chip mt-muted">Skip</span><div className="mt-cell-note">Route not active</div></div></td>;
   const feed = stageKey === "cutting" ? n(row.order_qty) : stageFeed(row, stageKey);
   const pct = feed > 0 ? Math.round((n(c.received) * 1000) / feed) / 10 : 0;
-  return <td className={`mt-clickable-cell dept-focus ${deptClass(stageKey)}`} onClick={() => onOpen?.(row, stageKey)} title="Click for department detail / size-wise WIP entry">
+  return <td style={style||undefined} className={`mt-clickable-cell dept-focus ${deptClass(stageKey)}`} onClick={() => onOpen?.(row, stageKey)} title="Click for department detail / size-wise WIP entry">
     <div className={`mt-stage-cell dept-focus ${deptClass(stageKey)}`}>
       <div className="mt-stage-top"><span className="mt-stage-title dept-focus-title">{STAGE_BY_KEY[stageKey].short}</span><span className="mt-chip mt-muted">{pct}%</span>{c.extra ? <AlertTriangle size={13} color="var(--danger)"/> : null}</div>
       <div className="mt-cell-numbers">
@@ -3344,16 +3383,16 @@ function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
       </div>
       <div className="mt-view-mode-bar mt-wip-sticky-tools"><span className="mt-toolbar-label">Sheet View</span>{[["matrix","Grid View"],["control","Open Control"],["order","Order View"],["department","Department View"],["issue","Issue View"]].map(([k,l])=><button key={k} className={`mt-btn ${viewMode===k?"active":"ghost"}`} onClick={()=>setViewMode(k)}>{l}</button>)}<button className={`mt-btn ${showCutActivity?"active":"ghost"}`} onClick={()=>setShowCutActivity(v=>!v)}>{showCutActivity ? "Hide Route Progress" : "Show Route Progress"}</button><button className={`mt-btn ${fitColumns?"active":"ghost"}`} onClick={()=>setFitColumns(v=>!v)} title="Fit visible columns into screen like the Merch Tracker grid">{fitColumns ? "Fit columns: on" : "Fit columns: off"}</button><span className="mt-toolbar-label">Width</span><select className="mt-select" value={widthMode} onChange={e=>setWidthMode(e.target.value)} title="Readable column width preset"><option value="compact">Compact</option><option value="comfort">Comfort</option><option value="wide">Wide</option></select><span className="mt-toolbar-label">Freeze</span><select className="mt-select" value={freezeCols} onChange={e=>setFreezeCols(Number(e.target.value))} title="Freeze first N visible columns"><option value={0}>No freeze</option><option value={1}>1 column</option><option value={2}>2 columns</option><option value={3}>3 columns</option><option value={4}>4 columns</option><option value={5}>5 columns</option></select><details className="mt-column-menu"><summary>Columns</summary><div>{[["status","Current Status"],["owner","Owner"],["route","Route"],["stages","Stage cells"],["open","Open Qty"],["idle","Idle"],["action","Next Action"]].map(([k,l])=><label key={k} className="mt-column-choice"><input type="checkbox" checked={!!visibleCols[k]} onChange={()=>toggleWipCol(k)} />{l}</label>)}<button className="mt-btn ghost" style={{marginTop:6}} onClick={resetWipCols}>Reset columns</button></div></details>{currentUserCan("production.export") && <button className="mt-btn primary" onClick={exportCurrentWip}><Download size={14}/>Export Current View</button>}{currentUserCan("production.export") && <button className="mt-btn" onClick={exportStageWip}><Download size={14}/>Export Style Stage Detail</button>}<span className="mt-chip mt-info">Excel-like: frozen header + sort + select filters + column chooser + drag thin header edge to resize</span></div>
     </div>
-    {viewMode === "order" || viewMode === "department" || viewMode === "issue" ? <SimpleTable title={viewMode==="order"?"Order-wise WIP summary":viewMode==="department"?"Department open summary":"Issue-wise open summary"} sub="Summary view first. Click Full Matrix or drill dashboards only when style-level detail is needed." rows={modeRows} empty="No rows in this view." /> : viewMode === "control" ? <div className={`mt-table-wrap mt-wip-table-wrap mt-wip-resizable mt-wip-${widthMode} ${fitColumns?"mt-wip-fit-table":""} ${freezeCols>0?"freeze-active":""}`}><table className="mt-table mt-compact-wip-table"><thead><tr><th className={stickyClass(controlSticky,"style")} style={stickyStyle(controlSticky,"style")}>Open Style / Order</th><th className={stickyClass(controlSticky,"status")} style={stickyStyle(controlSticky,"status")}>Current Status / Entry</th><th className={stickyClass(controlSticky,"next")} style={stickyStyle(controlSticky,"next")}>Next Action</th>{showCutActivity && <th className={stickyClass(controlSticky,"routeProgress")} style={stickyStyle(controlSticky,"routeProgress")}>Route Progress / Balance</th>}<th>Open Qty</th><th>R/A/M</th><th>Idle</th><th>Owner</th></tr></thead><tbody>{controlRows.length ? controlRows.map(({row,status})=>{ const stage=status.stage || routeFor(row)[0] || "cutting"; const st=sdata(row,stage); const c=cellBreakup(row,stage); return <React.Fragment key={row.id}><tr className="drillable" onClick={()=>openRowDrill(row,stage)}><td className={stickyClass(controlSticky,"style")} style={stickyStyle(controlSticky,"style")}><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}</div></div></td><td className={stickyClass(controlSticky,"status")} style={stickyStyle(controlSticky,"status")}><PrimaryPendingStage row={row} onOpen={(st)=>openRowDrill(row,st)} onEntry={onEntry}/></td><td className={stickyClass(controlSticky,"next")} style={stickyStyle(controlSticky,"next")}><div className="mt-small">{status.action}</div></td>{showCutActivity && <td className={stickyClass(controlSticky,"routeProgress")} style={stickyStyle(controlSticky,"routeProgress")}><RouteProgressSnapshot row={row} compact={true} onOpen={(st)=>openRowDrill(row,st)}/></td>}<td><div className="mt-open-big">{fmt(status.qty)}</div><div className="mt-small">{c.note}</div></td><td>{fmt(c.ram)}</td><td>{status.idle}d</td><td><b>{status.owner}</b>{status.support ? <div className="mt-small">Support: {status.support}</div> : null}</td></tr>{sizeBreak && <tr className="mt-subrow"><td colSpan={controlColumnCount}><SizeBreakupStrip row={row} stage={selectedDeptForSize || stage}/></td></tr>}</React.Fragment>; }) : <tr><td colSpan={controlColumnCount} style={{padding:18}}>No open/control rows in the current WIP filters.</td></tr>}</tbody></table></div> : <div className={`mt-table-wrap mt-wip-table-wrap mt-wip-resizable mt-wip-${widthMode} ${fitColumns?"mt-wip-fit-table":""} ${freezeCols>0?"freeze-active":""}`}><table className="mt-table"><thead><tr><RSortTh label="Style" sortKey="style" className={stickyClass(matrixSticky,"style")} style={stickyStyle(matrixSticky,"style")}/>{visibleCols.status && <RSortTh label="Current Status / Entry" sortKey="status" className={stickyClass(matrixSticky,"status")} style={stickyStyle(matrixSticky,"status")}/>}  {showCutActivity && <RTh k="routeProgress" className={stickyClass(matrixSticky,"routeProgress")} style={stickyStyle(matrixSticky,"routeProgress")}>Route Progress / Balance</RTh>} {visibleCols.owner && <RSortTh label="Owner" sortKey="owner" className={stickyClass(matrixSticky,"owner")} style={stickyStyle(matrixSticky,"owner")}/>}  {visibleCols.route && <RSortTh label="Route" sortKey="route" className={stickyClass(matrixSticky,"route")} style={stickyStyle(matrixSticky,"route")}/>}  {visibleCols.stages && STAGES.map(stage=><RTh key={stage.key} k={`stage:${stage.key}`}>{stage.short}</RTh>)} {visibleCols.open && <RSortTh label="Open" sortKey="open"/>} {visibleCols.idle && <RSortTh label="Idle" sortKey="idle"/>} {visibleCols.action && <RTh k="action">Next Action</RTh>}</tr><tr className="mt-col-filter-row"><th className={stickyClass(matrixSticky,"style")} style={stickyStyle(matrixSticky,"style")}><input className="mt-col-filter-input" value={columnFilters.style || ""} onChange={e=>setGridColumnFilter("style", e.target.value)} placeholder="order/style/buyer/colour" /></th>{visibleCols.status && <th className={stickyClass(matrixSticky,"status")} style={stickyStyle(matrixSticky,"status")}><ExcelFilter label="All status" value={columnFilters.status || ""} onChange={v=>setGridColumnFilter("status", v)} options={[{value:"with",label:"With dept"},{value:"ready",label:"Ready next"},{value:"issued",label:"Issued"},{value:"reconcile",label:"Reconcile"},{value:"ram",label:"R/A/M"},{value:"closed",label:"Closed"}]} /></th>} {showCutActivity && <th className={stickyClass(matrixSticky,"routeProgress")} style={stickyStyle(matrixSticky,"routeProgress")}><input className="mt-col-filter-input" value={columnFilters.other || ""} onChange={e=>setGridColumnFilter("other", e.target.value)} placeholder="route progress" /></th>} {visibleCols.owner && <th className={stickyClass(matrixSticky,"owner")} style={stickyStyle(matrixSticky,"owner")}><input className="mt-col-filter-input" value={columnFilters.owner || ""} onChange={e=>setGridColumnFilter("owner", e.target.value)} placeholder="owner" /></th>} {visibleCols.route && <th className={stickyClass(matrixSticky,"route")} style={stickyStyle(matrixSticky,"route")}><input className="mt-col-filter-input" value={columnFilters.route || ""} onChange={e=>setGridColumnFilter("route", e.target.value)} placeholder="route" /></th>} {visibleCols.stages && STAGES.map(stage=><th key={`filter-${stage.key}`}><ExcelFilter label="All" value={columnFilters[`stage:${stage.key}`] || ""} onChange={v=>setGridColumnFilter(`stage:${stage.key}`, v)} options={[{value:"open",label:"Open"},{value:"ram",label:"R/A/M"},{value:"skip",label:"Skip"},{value:"over",label:"Over"},{value:"feed",label:"Feed"},{value:"good",label:"Good"}]} /></th>)} {visibleCols.open && <th><input className="mt-col-filter-input" value={columnFilters.open || ""} onChange={e=>setGridColumnFilter("open", e.target.value)} placeholder="qty" /></th>} {visibleCols.idle && <th><input className="mt-col-filter-input" value={columnFilters.idle || ""} onChange={e=>setGridColumnFilter("idle", e.target.value)} placeholder="idle" /></th>} {visibleCols.action && <th><div style={{display:"flex",gap:4}}><input className="mt-col-filter-input" value={columnFilters.action || ""} onChange={e=>setGridColumnFilter("action", e.target.value)} placeholder="action" /><button className="mt-btn ghost mt-col-filter-clear" onClick={()=>setColumnFilters({})} title="Clear only grid column filters">Clear</button></div></th>}</tr></thead><tbody>
+    {viewMode === "order" || viewMode === "department" || viewMode === "issue" ? <SimpleTable title={viewMode==="order"?"Order-wise WIP summary":viewMode==="department"?"Department open summary":"Issue-wise open summary"} sub="Summary view first. Click Full Matrix or drill dashboards only when style-level detail is needed." rows={modeRows} empty="No rows in this view." /> : viewMode === "control" ? <div className={`mt-table-wrap mt-wip-table-wrap mt-wip-resizable mt-wip-${widthMode} ${fitColumns?"mt-wip-fit-table":""} ${freezeCols>0?"freeze-active":""}`}><table className="mt-table mt-compact-wip-table"><thead><tr><th className={stickyClass(controlSticky,"style")} style={stickyStyle(controlSticky,"style")}>Open Style / Order</th><th className={stickyClass(controlSticky,"status")} style={stickyStyle(controlSticky,"status")}>Current Status / Entry</th><th className={stickyClass(controlSticky,"next")} style={stickyStyle(controlSticky,"next")}>Next Action</th>{showCutActivity && <th className={stickyClass(controlSticky,"routeProgress")} style={stickyStyle(controlSticky,"routeProgress")}>Route Progress / Balance</th>}<th>Open Qty</th><th>R/A/M</th><th>Idle</th><th>Owner</th></tr></thead><tbody>{controlRows.length ? controlRows.map(({row,status})=>{ const stage=status.stage || routeFor(row)[0] || "cutting"; const st=sdata(row,stage); const c=cellBreakup(row,stage); return <React.Fragment key={row.id}><tr className="drillable" onClick={()=>openRowDrill(row,stage)}><td className={stickyClass(controlSticky,"style")} style={stickyStyle(controlSticky,"style")}><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}</div></div></td><td className={stickyClass(controlSticky,"status")} style={stickyStyle(controlSticky,"status")}><PrimaryPendingStage row={row} onOpen={(st)=>openRowDrill(row,st)} onEntry={onEntry}/></td><td className={stickyClass(controlSticky,"next")} style={stickyStyle(controlSticky,"next")}><div className="mt-small">{status.action}</div></td>{showCutActivity && <td className={stickyClass(controlSticky,"routeProgress")} style={stickyStyle(controlSticky,"routeProgress")}><RouteProgressSnapshot row={row} compact={true} onOpen={(st)=>openRowDrill(row,st)}/></td>}<td><div className="mt-open-big">{fmt(status.qty)}</div><div className="mt-small">{c.note}</div></td><td>{fmt(c.ram)}</td><td>{status.idle}d</td><td><b>{status.owner}</b>{status.support ? <div className="mt-small">Support: {status.support}</div> : null}</td></tr>{sizeBreak && <tr className="mt-subrow"><td colSpan={controlColumnCount}><SizeBreakupStrip row={row} stage={selectedDeptForSize || stage}/></td></tr>}</React.Fragment>; }) : <tr><td colSpan={controlColumnCount} style={{padding:18}}>No open/control rows in the current WIP filters.</td></tr>}</tbody></table></div> : <div className={`mt-table-wrap mt-wip-table-wrap mt-wip-resizable mt-wip-${widthMode} ${fitColumns?"mt-wip-fit-table":""} ${freezeCols>0?"freeze-active":""}`}><table className="mt-table"><thead><tr><RSortTh label="Style" sortKey="style" className={stickyClass(matrixSticky,"style")} style={stickyStyle(matrixSticky,"style")}/>{visibleCols.status && <RSortTh label="Current Status / Entry" sortKey="status" className={stickyClass(matrixSticky,"status")} style={stickyStyle(matrixSticky,"status")}/>}  {showCutActivity && <RTh k="routeProgress" className={stickyClass(matrixSticky,"routeProgress")} style={stickyStyle(matrixSticky,"routeProgress")}>Route Progress / Balance</RTh>} {visibleCols.owner && <RSortTh label="Owner" sortKey="owner" className={stickyClass(matrixSticky,"owner")} style={stickyStyle(matrixSticky,"owner")}/>}  {visibleCols.route && <RSortTh label="Route" sortKey="route" className={stickyClass(matrixSticky,"route")} style={stickyStyle(matrixSticky,"route")}/>}  {visibleCols.stages && STAGES.map(stage=><RTh key={stage.key} k={`stage:${stage.key}`}>{stage.short}</RTh>)} {visibleCols.open && <RSortTh label="Open" sortKey="open"/>} {visibleCols.idle && <RSortTh label="Idle" sortKey="idle"/>} {visibleCols.action && <RTh k="action">Next Action</RTh>}</tr><tr className="mt-col-filter-row"><th className={stickyClass(matrixSticky,"style")} style={stickyStyle(matrixSticky,"style")}><input className="mt-col-filter-input" value={columnFilters.style || ""} onChange={e=>setGridColumnFilter("style", e.target.value)} placeholder="order/style/buyer/colour" /></th>{visibleCols.status && <th className={stickyClass(matrixSticky,"status")} style={stickyStyle(matrixSticky,"status")}><ExcelFilter label="All status" value={columnFilters.status || ""} onChange={v=>setGridColumnFilter("status", v)} options={[{value:"with",label:"With dept"},{value:"ready",label:"Ready next"},{value:"issued",label:"Issued"},{value:"reconcile",label:"Reconcile"},{value:"ram",label:"R/A/M"},{value:"closed",label:"Closed"}]} /></th>} {showCutActivity && <th className={stickyClass(matrixSticky,"routeProgress")} style={stickyStyle(matrixSticky,"routeProgress")}><input className="mt-col-filter-input" value={columnFilters.other || ""} onChange={e=>setGridColumnFilter("other", e.target.value)} placeholder="route progress" /></th>} {visibleCols.owner && <th className={stickyClass(matrixSticky,"owner")} style={stickyStyle(matrixSticky,"owner")}><input className="mt-col-filter-input" value={columnFilters.owner || ""} onChange={e=>setGridColumnFilter("owner", e.target.value)} placeholder="owner" /></th>} {visibleCols.route && <th className={stickyClass(matrixSticky,"route")} style={stickyStyle(matrixSticky,"route")}><input className="mt-col-filter-input" value={columnFilters.route || ""} onChange={e=>setGridColumnFilter("route", e.target.value)} placeholder="route" /></th>} {visibleCols.stages && STAGES.map(stage=><th key={`filter-${stage.key}`} style={colStyle(`stage:${stage.key}`)}><ExcelFilter label="All" value={columnFilters[`stage:${stage.key}`] || ""} onChange={v=>setGridColumnFilter(`stage:${stage.key}`, v)} options={[{value:"open",label:"Open"},{value:"ram",label:"R/A/M"},{value:"skip",label:"Skip"},{value:"over",label:"Over"},{value:"feed",label:"Feed"},{value:"good",label:"Good"}]} /></th>)} {visibleCols.open && <th style={colStyle("open")}><input className="mt-col-filter-input" value={columnFilters.open || ""} onChange={e=>setGridColumnFilter("open", e.target.value)} placeholder="qty" /></th>} {visibleCols.idle && <th style={colStyle("idle")}><input className="mt-col-filter-input" value={columnFilters.idle || ""} onChange={e=>setGridColumnFilter("idle", e.target.value)} placeholder="idle" /></th>} {visibleCols.action && <th style={colStyle("action")}><div style={{display:"flex",gap:4}}><input className="mt-col-filter-input" value={columnFilters.action || ""} onChange={e=>setGridColumnFilter("action", e.target.value)} placeholder="action" /><button className="mt-btn ghost mt-col-filter-clear" onClick={()=>setColumnFilters({})} title="Clear only grid column filters">Clear</button></div></th>}</tr></thead><tbody>
       {filtered.map(row => { const rs = rowStatus(row); const sizeStage = selectedDeptForSize || rs.stage; const openDrill = () => openRowDrill(row, rs.stage || routeFor(row)[0] || "cutting"); return <React.Fragment key={row.id}>
         <tr>
-          <td className={stickyClass(matrixSticky,"style","mt-clickable-cell")} style={stickyStyle(matrixSticky,"style")} onClick={openDrill} title="Click to open selected/current department"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}<div className="mt-drill-hint">Open detail</div></div></div></td>
-          {visibleCols.status && <td className={stickyClass(matrixSticky,"status","mt-clickable-cell")} style={stickyStyle(matrixSticky,"status")} onClick={openDrill}><PrimaryPendingStage row={row} onOpen={(stage)=>onOpen?.(row, stage)} onEntry={onEntry}/><div className="mt-small">Idle {rs.idle}d</div></td>}
-          {showCutActivity && <td className={stickyClass(matrixSticky,"routeProgress")} style={stickyStyle(matrixSticky,"routeProgress")}><RouteProgressSnapshot row={row} compact={true} onOpen={(stage)=>onOpen?.(row, stage)}/></td>}
-          {visibleCols.owner && <td className={stickyClass(matrixSticky,"owner","mt-clickable-cell")} style={stickyStyle(matrixSticky,"owner")} onClick={openDrill}><b>{rs.owner}</b>{rs.support ? <div className="mt-small">Support: {rs.support}</div> : null}</td>}
-          {visibleCols.route && <td className={stickyClass(matrixSticky,"route","mt-clickable-cell")} style={stickyStyle(matrixSticky,"route")} onClick={openDrill}><span className="mt-chip mt-info">{routeType(row)}</span><div style={{marginTop:4}}>{routeFor(row).map(k=><span key={k} className="mt-chip mt-muted" style={{margin:"0 3px 3px 0"}}>{STAGE_BY_KEY[k].short}</span>)}</div></td>}
-          {visibleCols.stages && STAGES.map(s=><StageCell key={s.key} row={row} stageKey={s.key} onOpen={onOpen}/>) }
-          {visibleCols.open && <td className="mt-clickable-cell" onClick={openDrill}><b>{fmt(rs.qty)}</b></td>}{visibleCols.idle && <td className="mt-clickable-cell" onClick={openDrill}>{rs.idle}d</td>}{visibleCols.action && <td className="mt-clickable-cell" onClick={openDrill}>{rs.action}</td>}
+          <td className={stickyClass(matrixSticky,"style","mt-clickable-cell")} style={{...colStyle("style"), ...(stickyStyle(matrixSticky,"style")||{})}} onClick={openDrill} title="Click to open selected/current department"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}<div className="mt-drill-hint">Open detail</div></div></div></td>
+          {visibleCols.status && <td className={stickyClass(matrixSticky,"status","mt-clickable-cell")} style={{...colStyle("status"), ...(stickyStyle(matrixSticky,"status")||{})}} onClick={openDrill}><PrimaryPendingStage row={row} onOpen={(stage)=>onOpen?.(row, stage)} onEntry={onEntry}/><div className="mt-small">Idle {rs.idle}d</div></td>}
+          {showCutActivity && <td className={stickyClass(matrixSticky,"routeProgress")} style={{...colStyle("routeProgress"), ...(stickyStyle(matrixSticky,"routeProgress")||{})}}><RouteProgressSnapshot row={row} compact={true} onOpen={(stage)=>onOpen?.(row, stage)}/></td>}
+          {visibleCols.owner && <td className={stickyClass(matrixSticky,"owner","mt-clickable-cell")} style={{...colStyle("owner"), ...(stickyStyle(matrixSticky,"owner")||{})}} onClick={openDrill}><b>{rs.owner}</b>{rs.support ? <div className="mt-small">Support: {rs.support}</div> : null}</td>}
+          {visibleCols.route && <td className={stickyClass(matrixSticky,"route","mt-clickable-cell")} style={{...colStyle("route"), ...(stickyStyle(matrixSticky,"route")||{})}} onClick={openDrill}><span className="mt-chip mt-info">{routeType(row)}</span><div style={{marginTop:4}}>{routeFor(row).map(k=><span key={k} className="mt-chip mt-muted" style={{margin:"0 3px 3px 0"}}>{STAGE_BY_KEY[k].short}</span>)}</div></td>}
+          {visibleCols.stages && STAGES.map(s=><StageCell key={s.key} row={row} stageKey={s.key} onOpen={onOpen} style={colStyle(`stage:${s.key}`)}/>) }
+          {visibleCols.open && <td className="mt-clickable-cell" style={colStyle("open")} onClick={openDrill}><b>{fmt(rs.qty)}</b></td>}{visibleCols.idle && <td className="mt-clickable-cell" style={colStyle("idle")} onClick={openDrill}>{rs.idle}d</td>}{visibleCols.action && <td className="mt-clickable-cell" style={colStyle("action")} onClick={openDrill}>{rs.action}</td>}
         </tr>
         {sizeBreak && <tr className="mt-subrow"><td colSpan={matrixColumnCount}><SizeBreakupStrip row={row} stage={sizeStage}/></td></tr>}
       </React.Fragment>;})}
@@ -4918,6 +4957,25 @@ function planLoadReadyInfo(plan, rows, planRows, activeDept, line, day, ledger=[
     const days = dateDiff(assumed, planDay);
     return { tone:"ok", label:days>0?`${days}d early`:"Ready now", detail:`Actual ${stageLabel(prevStage)} ready stock covers this slot. Exact ready date not in ledger, treated as available now.`, readyDate:assumed, daysBefore:days, depends:false, short:0 };
   }
+  // If this individual slot qty is available from old/actual stock, do not scare the user with plain "Load short".
+  // The shortage is only after earlier planned slots have consumed the same stock, so show it as a balance warning.
+  if (n(feedInfo.actualPrev) >= n(b.qtyNeeded)) {
+    const shortAfterEarlierPlan = Math.max(0, requiredCum - n(feedInfo.actualPrev));
+    const assumed = today() <= planDay ? today() : planDay;
+    const days = dateDiff(assumed, planDay);
+    const timing = days > 0 ? `${days}d early` : days === 0 ? "Ready now" : `${Math.abs(days)}d late`;
+    return {
+      tone:"ok",
+      label:`Ready · ${timing}`,
+      detail:`This slot qty ${fmt(b.qtyNeeded)} is available to load from actual ${stageLabel(prevStage)} stock. Earlier planned/done qty is ${fmt(b.consumedBeforeSlot)}; cumulative balance warning, if any, is ${fmt(shortAfterEarlierPlan)} and is shown in detail only, not as a scary cell shortage.`,
+      readyDate:assumed,
+      daysBefore:days,
+      depends:false,
+      short:0,
+      balanceWarning:shortAfterEarlierPlan>0,
+      balanceShort:shortAfterEarlierPlan
+    };
+  }
   let projectedCum = n(feedInfo.actualPrev);
   const key = styleKeyOf(b.linked);
   const projected = (planRows||[])
@@ -5015,6 +5073,53 @@ function planImpactReviewRows(planRows=[], rows=[], ledger=[]){
     .filter(r=>r.Review_Status !== "Matched" && r.Review_Status !== "Manager reviewed")
     .sort((a,b)=>String(b.Date).localeCompare(String(a.Date)) || Math.abs(n(b.Variance))-Math.abs(n(a.Variance)));
 }
+
+function repeatedStyleDelayRows(planRows=[], rows=[], ledger=[]){
+  const todayIso = today();
+  const pastPlans = (planRows||[])
+    .filter(p=>planStyleText(p) && String(p.plan_date||"").slice(0,10) <= todayIso && planRowEffectiveQty(p)>0)
+    .map(p=>{
+      const planned = planRowEffectiveQty(p);
+      const actual = achievedForPlan(p, rows, ledger);
+      const short = Math.max(0, planned - actual);
+      const excess = Math.max(0, actual - planned);
+      const style = planStyleText(p).toUpperCase();
+      const key = [String(p.dept||""), style].join("|");
+      return { p, key, style, planned, actual, short, excess, miss: short>0, excessFlag: excess>0 };
+    });
+  const grouped = new Map();
+  pastPlans.forEach(x=>{
+    if (!grouped.has(x.key)) grouped.set(x.key, []);
+    grouped.get(x.key).push(x);
+  });
+  return Array.from(grouped.entries()).map(([key,items])=>{
+    const first = items[0]?.p || {};
+    const missItems = items.filter(x=>x.miss);
+    const excessItems = items.filter(x=>x.excessFlag);
+    const future = (planRows||[]).filter(f=>planStyleText(f).toUpperCase()===String(first.style_no || first.style_input || planStyleText(first)).toUpperCase() && String(f.dept||"")===String(first.dept||"") && String(f.plan_date||"").slice(0,10) > todayIso);
+    const reviewedHints = items.filter(x=>String(x.p.manager_review_status||"").toLowerCase()==="reviewed" || String(x.p.status||"").toLowerCase().includes("manager reviewed") || String(x.p.cover_qty||"")).length;
+    const datesMissed = missItems.map(x=>String(x.p.plan_date||"").slice(0,10)).filter(Boolean);
+    const totalPlanned = items.reduce((a,x)=>a+n(x.planned),0);
+    const totalActual = items.reduce((a,x)=>a+n(x.actual),0);
+    const totalShort = items.reduce((a,x)=>a+n(x.short),0);
+    const repeated = missItems.length >= 2 || (missItems.length>=1 && future.length>=2) || reviewedHints>=2;
+    if (!repeated) return null;
+    const linked = resolvePlanStyle(rows, planStyleText(first)) || rows.find(r=>r.id===first.row_id) || {};
+    const signals = [];
+    if (missItems.length>=2) signals.push(`${missItems.length} plan misses`);
+    if (future.length) signals.push(`${future.length} future slots still planned`);
+    if (reviewedHints) signals.push(`${reviewedHints} manager review/cover notes`);
+    if (excessItems.length) signals.push(`${excessItems.length} excess/recovery days`);
+    return {
+      Dept:stageLabel(first.dept), Stage:first.dept, Style:planStyleText(first), Order:first.order_no || linked.order_no || "", Buyer:first.buyer || linked.buyer || "",
+      Miss_Count:missItems.length, Miss_Dates:datesMissed.join(", "), Planned_Qty:totalPlanned, Actual_Qty:totalActual, Total_Short:totalShort,
+      Future_Slots:future.length, Future_Qty:future.reduce((a,f)=>a+planRowEffectiveQty(f),0), Manager_Reviews:reviewedHints,
+      Signal:signals.join(" · "), Suggested_Action:"Repeated delay pattern: reset plan/target, confirm feed, review line allocation, approve cover/short-close if needed.",
+      Task:"Repeated Style Delay"
+    };
+  }).filter(Boolean).sort((a,b)=>n(b.Miss_Count)-n(a.Miss_Count) || n(b.Total_Short)-n(a.Total_Short));
+}
+
 function projectedFeedRows(planRows=[], rows=[], activeDept="stitching", weekDays=[]){
   return (planRows||[]).filter(p=>String(p.dept)===String(activeDept) && weekDays.includes(String(p.plan_date||"").slice(0,10)) && planStyleText(p)).map(p=>{
     const linked = resolvePlanStyle(rows, planStyleText(p)) || rows.find(r=>r.id===p.row_id);
@@ -5631,6 +5736,60 @@ function SimplePlanReadingView({ rows, planRows, ledger, activeDept, weekDays, m
 }
 
 
+
+function isManagerExceptionBucket(row, bucket){
+  if (!bucket) return false;
+  if (["reconcile","dispatch_hold","ram"].includes(bucket.type)) return true;
+  if (bucket.type === "tail_balance") return true;
+  if (bucket.type === "received_not_processed") return n(bucket.idle) >= 7;
+  if (bucket.type === "cutting_pending") return n(bucket.idle) >= 3 && n(bucket.qty) <= Math.max(50, n(row.order_qty) * 0.08);
+  if (bucket.type === "extra_cut") return n(bucket.qty) > (n(row.order_qty) * cuttingToleranceFrac());
+  return false;
+}
+function managerTaskLabel(bucket){
+  if (!bucket) return "Follow-up";
+  if (bucket.type === "tail_balance") return "Tail closure review";
+  if (bucket.type === "received_not_processed") return "Late production activity";
+  if (bucket.type === "reconcile") return "Feed discrepancy / reconcile";
+  if (bucket.type === "ram") return "R/A/M abnormal";
+  if (bucket.type === "dispatch_hold") return "Dispatch hold";
+  if (bucket.type === "cutting_pending") return "Tail cutting balance";
+  if (bucket.type === "extra_cut") return "Extra cut over tolerance";
+  return bucket.status || bucket.type;
+}
+function managerWipTaskRows(rows){
+  return (rows||[]).flatMap(row=> issueBuckets(row).filter(b=>isManagerExceptionBucket(row,b)).map(b=>({
+    Dept:stageLabel(b.stage), Stage:b.stage, Task:managerTaskLabel(b), Status:b.status, Style:row.style_no, Order:row.order_no, Buyer:row.buyer, Colour:row.colour, Component:row.component,
+    Qty:n(b.qty), Idle_Days:n(b.idle), Owner:b.owner || stageOwner(b.stage), Action:b.action, Support:b.support, Tone:b.tone || "info"
+  }))).sort((a,b)=>{
+    const pri=x=> x.Task.includes("Feed discrepancy") ? 6 : x.Task.includes("Tail closure") ? 5 : x.Task.includes("R/A/M") ? 4 : x.Task.includes("Late") ? 3 : 1;
+    return pri(b)-pri(a) || n(b.Idle_Days)-n(a.Idle_Days) || n(b.Qty)-n(a.Qty);
+  });
+}
+function managerWipInfoRows(rows){
+  return (rows||[]).flatMap(row=> issueBuckets(row)
+    .filter(b=>["completed_not_issued","received_not_processed"].includes(b.type) && !isManagerExceptionBucket(row,b))
+    .map(b=>({ Dept:stageLabel(b.stage), Stage:b.stage, Info:b.type === "completed_not_issued" ? "Ready / pending issue — WIP aging info" : "Normal WIP aging", Style:row.style_no, Order:row.order_no, Buyer:row.buyer, Qty:n(b.qty), Idle_Days:n(b.idle), Reading:b.status, Action:"Monitor only; not a manager task unless it blocks plan, crosses aging threshold, or shows discrepancy." })));
+}
+function managerDeptSummary(taskRows, infoRows=[]){
+  return STAGES.map(st=>{
+    const tasks = (taskRows||[]).filter(r=>r.Stage===st.key || r.Dept===st.label);
+    const infos = (infoRows||[]).filter(r=>r.Stage===st.key || r.Dept===st.label);
+    return { dept:st.key, Dept:st.label, tasks, infos, Styles:uniqueList(tasks.map(r=>r.Style)).length, Task_Qty:tasks.reduce((a,r)=>a+n(r.Qty),0), Action_Count:tasks.length, Info_Qty:infos.reduce((a,r)=>a+n(r.Qty),0), Info_Count:infos.length, Tail_Closure:tasks.filter(r=>String(r.Task).includes("Tail closure")).length, Feed_Discrepancy:tasks.filter(r=>String(r.Task).includes("Feed discrepancy")).length, Late_Activity:tasks.filter(r=>String(r.Task).includes("Late")).length };
+  }).filter(x=>x.Action_Count || x.Info_Count || x.Task_Qty || x.Info_Qty);
+}
+function ManagerDeptCards({ taskRows, infoRows, query="" }){
+  const q = String(query||"").trim().toLowerCase();
+  const taskFiltered = (taskRows||[]).filter(r=>!q || Object.values(r).join(" ").toLowerCase().includes(q));
+  const infoFiltered = (infoRows||[]).filter(r=>!q || Object.values(r).join(" ").toLowerCase().includes(q));
+  const depts = managerDeptSummary(taskFiltered, infoFiltered);
+  if (!depts.length) return <div className="mt-speed-note">No manager WIP exceptions. Normal pending issue stays as WIP aging info, not highlighted.</div>;
+  return <div className="mt-manager-dept-grid">{depts.map(d=><details key={d.Dept} className="mt-manager-dept-card" open={d.Action_Count>0}><summary><div><div className="mt-manager-dept-title">{d.Dept}</div><div className="mt-manager-dept-sub">{d.Action_Count ? `${fmt(d.Action_Count)} action item${d.Action_Count===1?"":"s"} · ${fmt(d.Task_Qty)} pcs` : "No action item"} {d.Info_Count ? ` · ${fmt(d.Info_Qty)} pcs WIP aging info` : ""}</div></div><div style={{display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}><span className={`mt-chip ${d.Action_Count?"mt-late":"mt-ok"}`}>{d.Action_Count ? "Action" : "OK"}</span>{d.Tail_Closure ? <span className="mt-chip mt-warn">Tail closure {fmt(d.Tail_Closure)}</span> : null}{d.Feed_Discrepancy ? <span className="mt-chip mt-late">Feed discrepancy {fmt(d.Feed_Discrepancy)}</span> : null}{d.Late_Activity ? <span className="mt-chip mt-warn">Late {fmt(d.Late_Activity)}</span> : null}</div></summary>
+    {d.tasks.length ? d.tasks.map((r,idx)=><div key={`${r.Style}-${r.Task}-${idx}`} className="mt-manager-task-row"><div><b>{r.Style}</b><div className="mt-small">{r.Order} · {r.Buyer} · {r.Colour} {r.Component}</div></div><div><span className={`mt-chip ${statusClass(r.Tone)}`}>{r.Task}</span></div><div>Qty<br/><b>{fmt(r.Qty)}</b></div><div>Idle<br/><b>{fmt(r.Idle_Days)}d</b></div><div>Owner<br/><b>{r.Owner}</b></div><div>{r.Action}<div className="mt-small">{r.Support}</div></div></div>) : <div className="mt-manager-info-note">No exception tasks in {d.Dept}. Normal pending issue / ready-to-move quantities are WIP aging information only.</div>}
+    {d.infos.length ? <details className="mt-plan-collapse" style={{margin:"10px 12px 12px"}}><summary><span>Open WIP aging info — not highlighted</span><span className="mt-chip mt-muted">{fmt(d.infos.length)} rows</span></summary><div className="mt-plan-collapse-body"><SimpleTable title={`${d.Dept} WIP aging info`} sub="Pending issue / normal WIP movement. This is monitor-only unless it crosses aging/risk thresholds." rows={d.infos} empty="No info rows." /></div></details> : null}
+  </details>)}</div>;
+}
+
 function ManagerActionCenter({ rows, planRows, setPlanRows, ledger, onPlanUpsert }){
   const [section,setSection] = useState("impact");
   const [q,setQ] = useState("");
@@ -5640,12 +5799,13 @@ function ManagerActionCenter({ rows, planRows, setPlanRows, ledger, onPlanUpsert
   const dprPendingRows = impactRows.filter(r=>n(r.Planned)>0 && n(r.Actual)===0 && String(r.Date||"").slice(0,10)<=today());
   const shortRows = impactRows.filter(r=>n(r.Short_Qty)>0);
   const excessRows = impactRows.filter(r=>n(r.Excess_Qty)>0);
+  const repeatedRows = repeatedStyleDelayRows(planRows, rows, ledger);
   const feedRows = STAGES.flatMap(st=>projectedFeedRows(planRows, rows, st.key, weekDays))
     .filter(r=>!/Actual ready \/ OK/i.test(String(r.Feed_Status || "")));
-  const wipRows = wipControlRows(rows).slice(0,80).map(x=>({
-    Style:x.row.style_no, Order:x.row.order_no, Buyer:x.row.buyer, Current_Status:x.status.status, Stage:stageLabel(x.status.stage), Qty:x.status.qty, Idle_Days:x.status.idle, Next_Action:x.status.action, Owner:x.status.owner
-  }));
-  const allRows = section === "impact" ? impactRows : section === "dpr" ? dprPendingRows : section === "feed" ? feedRows : section === "wip" ? wipRows : [];
+  const wipTaskRows = managerWipTaskRows(rows);
+  const wipInfoRows = managerWipInfoRows(rows);
+  const wipRows = wipTaskRows;
+  const allRows = section === "impact" ? impactRows : section === "repeated" ? repeatedRows : section === "dpr" ? dprPendingRows : section === "feed" ? feedRows : section === "wip" ? wipTaskRows : section === "aging" ? wipInfoRows : [];
   const filtered = allRows.filter(r=>!q.trim() || Object.values(r).join(" ").toLowerCase().includes(q.trim().toLowerCase()));
   function updatePlanDecision(impact, decision){
     const plan = (planRows||[]).find(p=>String(p.id)===String(impact.Plan_ID));
@@ -5682,22 +5842,27 @@ function ManagerActionCenter({ rows, planRows, setPlanRows, ledger, onPlanUpsert
   function exportManager(){
     exportXlsx(`production_manager_action_center_${today()}.xlsx`, [
       { name:"Plan Impact", rows:impactRows },
+      { name:"Repeated Style Delay", rows:repeatedRows },
       { name:"DPR Pending", rows:dprPendingRows },
       { name:"Feed Risks", rows:feedRows },
-      { name:"WIP Followups", rows:wipRows }
+      { name:"WIP Action Tasks", rows:wipTaskRows },
+      { name:"WIP Aging Info", rows:wipInfoRows }
     ]);
   }
   const cards = [
     ["impact","Plan Impact",impactRows.length,"DPR vs plan variance requiring manager decision"],
+    ["repeated","Repeated Delay",repeatedRows.length,"Styles missing plan repeatedly; reset target/line/feed plan"],
     ["dpr","DPR Pending",dprPendingRows.length,"Planned rows where actual entry is still missing"],
     ["feed","Feed Risk",feedRows.length,"Plans depending on upstream plan or over projected feed"],
-    ["wip","WIP Follow-up",wipRows.length,"Open WIP actions by style and owner"],
+    ["wip","WIP Follow-up",wipTaskRows.length,"Exception tasks only: tail closure, feed discrepancy, late activity, R/A/M"],
+    ["aging","WIP Aging Info",wipInfoRows.length,"Normal pending issue / ready-to-move info, not an idle-day task"],
   ];
   return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Manager Action Center</h3><div className="mt-panel-sub">Important data only: plan impact after DPR, follow-up activities, feed risks and WIP actions. Data operator entries do not change future plan; manager decisions are saved on the plan row and audit stamped.</div></div>
     <div className="mt-section no-print"><div className="mt-summary-strip">{cards.map(([k,l,v,note])=><button key={k} className={`mt-summary-tile ${section===k?"active":""}`} onClick={()=>setSection(k)}><div className="label">{l}</div><div className="value">{fmt(v)}</div><div className="mt-small">{note}</div></button>)}</div><div className="mt-toolbar"><input className="mt-input" value={q} onChange={e=>setQ(e.target.value)} placeholder="Search style / line / owner / action"/><button className="mt-btn primary" onClick={exportManager}><Download size={14}/>Export Manager Pack</button><span className={`mt-chip ${canApprove?"mt-ok":"mt-warn"}`}>{canApprove ? "Manager actions enabled" : "Read-only for this role"}</span></div></div>
     <div className="mt-section">
       {section === "impact" ? <div className="mt-manager-impact-list">{filtered.length ? filtered.map((r,idx)=><div key={`${r.Plan_ID}-${idx}`} className={`mt-manager-card ${n(r.Short_Qty)>0?"late":n(r.Excess_Qty)>0?"warn":"ok"}`}><div className="mt-manager-card-head"><div><b>{r.Style}</b><div className="mt-small">{r.Date} · {r.Dept} · {r.Line} · Slot {r.Slot}</div></div><span className={`mt-chip ${n(r.Short_Qty)>0?"mt-late":n(r.Excess_Qty)>0?"mt-warn":"mt-ok"}`}>{r.Review_Status}</span></div><div className="mt-manager-metrics"><span>Plan <b>{fmt(r.Planned)}</b></span><span>Actual <b>{fmt(r.Actual)}</b></span><span>Short <b>{fmt(r.Short_Qty)}</b></span><span>Excess <b>{fmt(r.Excess_Qty)}</b></span><span>Future <b>{fmt(r.Future_Qty)}</b></span></div><div className="mt-small">{r.Suggested_Action}</div><div className="mt-manager-actions no-print"><button className="mt-btn" disabled={!canApprove} onClick={()=>updatePlanDecision(r,"apply_cascade")}>Apply cascade instruction</button><button className="mt-btn" disabled={!canApprove || !n(r.Short_Qty)} onClick={()=>updatePlanDecision(r,"part_cover")}>Part qty cover</button><button className="mt-btn" disabled={!canApprove || !n(r.Short_Qty)} onClick={()=>updatePlanDecision(r,"short_close")}>Short close</button><button className="mt-btn ghost" disabled={!canApprove} onClick={()=>updatePlanDecision(r,"no_change")}>No plan change</button><button className="mt-btn ghost" disabled={!canApprove} onClick={()=>updatePlanDecision(r,"manual_edit")}>Manual edit note</button></div></div>) : <div className="mt-speed-note">No pending manager plan impacts.</div>}</div> :
-      <SimpleTable title={cards.find(c=>c[0]===section)?.[1] || "Manager Detail"} sub="Action-first summary. Use export for meeting pack." rows={filtered} empty="No rows for this section." />}
+      section === "wip" ? <ManagerDeptCards taskRows={wipTaskRows} infoRows={wipInfoRows} query={q}/> :
+      <SimpleTable title={cards.find(c=>c[0]===section)?.[1] || "Manager Detail"} sub={section === "aging" ? "Monitor-only WIP aging information. Pending issue / ready-to-move stock is not highlighted just because it is idle." : section === "repeated" ? "Pattern-based manager exception. A style appears here only when repeated plan misses/reviews show the style itself needs reset, line review, feed confirmation or cover/short-close decision." : "Action-first summary. Use export for meeting pack."} rows={filtered} empty="No rows for this section." />}
     </div>
   </div>;
 }
@@ -6479,7 +6644,9 @@ function normalizeSizeSetName(v){
   const sets = getSizeSets();
   const s = normalizeSizeGroupKey(v || "alpha");
   if (sets[s]) return s;
-  if (s.includes("kid")) return "kids";
+  if (s.includes("infant") || s.includes("junior") || s.includes("older_kid")) return sets.infants ? "infants" : "kids";
+  if (s.includes("baby") || s.includes("month") || s.includes("months")) return sets.baby ? "baby" : "kids";
+  if (s.includes("kid") || s.includes("child")) return "kids";
   if (s.includes("waist") || s.includes("pant") || s.includes("trouser")) return "waist";
   return "alpha";
 }
@@ -6488,14 +6655,41 @@ function excelHasSizeColumn(raw, size){
   const keys = Object.keys(raw || {}).map(k=>normalizedLooseKey(k));
   return aliases.some(alias=>keys.includes(normalizedLooseKey(alias)));
 }
-function inferSizeSetFromExcel(raw, fallback="alpha"){
+function excelSizeNumericValue(raw, size){
+  const val = excelSizeValue(raw, size);
+  if (val === "" || val === undefined || val === null) return 0;
+  return Math.max(0, n(val));
+}
+function sizeSetSignalFromExcel(raw, sizes){
+  return (sizes || []).reduce((acc,size)=>{
+    const qty = excelSizeNumericValue(raw, size);
+    if (qty > 0) { acc.count += 1; acc.total += qty; acc.parts.push(`${size} ${fmt(qty)}`); }
+    return acc;
+  }, { count:0, total:0, parts:[] });
+}
+function inferSizeSetFromExcel(raw, fallback="alpha", orderQty=0){
+  // IMPORTANT: infer from filled size values, not from template headers.
+  // Templates contain Size XS/S/M... plus kids/infant columns; header presence alone was causing alpha to be updated by mistake.
   const sets = getSizeSets();
-  let best = { key:normalizeSizeSetName(fallback), score:0 };
+  const fb = normalizeSizeSetName(fallback);
+  let best = { key:fb, count:0, total:0, score:0, parts:[] };
   Object.entries(sets).forEach(([key,sizes])=>{
-    const score = (sizes || []).reduce((a,size)=>a+(excelHasSizeColumn(raw,size)?1:0),0);
-    if (score > best.score) best = { key, score };
+    const sig = sizeSetSignalFromExcel(raw, sizes);
+    if (!sig.count) return;
+    const oq = n(orderQty);
+    const exactBonus = oq && Math.abs(sig.total - oq) <= Math.max(1, oq * 0.015) ? 100 : 0;
+    const nearBonus = oq && Math.abs(sig.total - oq) <= Math.max(3, oq * 0.05) ? 25 : 0;
+    const fallbackBonus = key === fb ? 6 : 0;
+    const alphaPenalty = key === "alpha" ? 4 : 0;
+    const score = exactBonus + nearBonus + sig.count * 10 + fallbackBonus - alphaPenalty;
+    if (score > best.score) best = { key, count:sig.count, total:sig.total, score, parts:sig.parts };
   });
-  return best.score > 0 ? best.key : best.key;
+  return best.score > 0 ? best.key : fb;
+}
+function sizeSetInferenceLabel(raw, sizeSet, orderQty){
+  const sizes = getSizeSets()[sizeSet] || [];
+  const sig = sizeSetSignalFromExcel(raw, sizes);
+  return `${sizeSet} · ${sig.count} sizes · total ${fmt(sig.total)} / order ${fmt(orderQty)}`;
 }
 function styleFromExcelRow(raw, existing){
   const order_no = String(excelValue(raw,["Order No","Order","PO","SO","Order Number"]) || existing?.order_no || "").trim().toUpperCase();
@@ -6504,11 +6698,12 @@ function styleFromExcelRow(raw, existing){
   const colour = String(excelValue(raw,["Colour","Color"]) || existing?.colour || "").trim().toUpperCase();
   const component = String(excelValue(raw,["Component","Garment","Part"]) || existing?.component || "").trim().toUpperCase();
   const oq = excelValue(raw,["Order Qty","Qty","Quantity","Order Quantity"]);
+  const oqNum = oq === "" ? n(existing?.order_qty) : n(oq);
   const sizeSet = excelValue(raw,["Size Set","SizeSet","Sizes"]);
-  const sizeSetNorm = sizeSet === "" ? inferSizeSetFromExcel(raw, existing?.size_set || "alpha") : normalizeSizeSetName(sizeSet);
+  const sizeSetNorm = sizeSet === "" ? inferSizeSetFromExcel(raw, existing?.size_set || "alpha", oqNum) : normalizeSizeSetName(sizeSet);
   const ratioVal = String(excelValue(raw,["Size Ratio","Ratio","Size Ratio Pattern","Order Ratio"]) || existing?.size_ratio || "").trim().toUpperCase();
   let orderSizeQty = extractOrderSizeQtyFromExcel(raw, sizeSetNorm, existing);
-  const ratioApply = ratioVal ? distributeByRatio(oq === "" ? n(existing?.order_qty) : n(oq), getSizeSets()[sizeSetNorm] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha, ratioVal) : null;
+  const ratioApply = ratioVal ? distributeByRatio(oqNum, getSizeSets()[sizeSetNorm] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha, ratioVal) : null;
   if (ratioApply && !ratioApply.error) orderSizeQty = normalizeSizeQtyMap(ratioApply.qty, getSizeSets()[sizeSetNorm] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha);
   const orderSizeTotal = qtyMapTotal(orderSizeQty);
   const line = excelValue(raw,["Planning Line Override","Default Line","Line","Stitching Line"]);
@@ -6520,7 +6715,7 @@ function styleFromExcelRow(raw, existing){
   return {
     ...(existing || {}),
     order_no, style_no, buyer, colour, component,
-    order_qty: oq === "" ? n(existing?.order_qty) : n(oq),
+    order_qty: oqNum,
     order_size_qty: orderSizeQty,
     size_set: sizeSetNorm,
     size_ratio: ratioVal,
@@ -6539,6 +6734,55 @@ function styleFromExcelRow(raw, existing){
 function styleExcelAction(raw){
   return String(excelValue(raw,["Action","Mode","Operation"]) || "ADD_UPDATE").trim().toUpperCase().replace(/\s+/g,"_");
 }
+
+function sizeBreakupSummary(row, sizeSetOverride){
+  const sizeSet = sizeSetOverride || row?.size_set || "alpha";
+  const sizes = getSizeSets()[sizeSet] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha;
+  const map = normalizeSizeQtyMap(row?.order_size_qty || {}, sizes);
+  const parts = sizes.map(sz=>`${sz} ${fmt(map[sz]||0)}`);
+  return parts.join(" · ");
+}
+function bulkValueText(v){
+  if (v === undefined || v === null || v === "") return "blank";
+  if (typeof v === "boolean") return v ? "Yes" : "No";
+  return String(v);
+}
+function boolDiffLabel(v){ return v ? "Yes" : "No"; }
+function bulkStyleDiffItems(existing, clean){
+  if (!existing) return [
+    { label:"New style", old:"—", next:naturalKeyLabel(clean) },
+    { label:"Size set", old:"—", next:`${clean.size_set} (${sizeBreakupSummary(clean)})` },
+    { label:"Order Qty", old:"—", next:fmt(clean.order_qty) },
+  ];
+  const out = [];
+  const checks = [
+    ["Buyer", existing.buyer, clean.buyer],
+    ["Order Qty", fmt(existing.order_qty), fmt(clean.order_qty)],
+    ["Size set", existing.size_set || "alpha", clean.size_set || "alpha"],
+    ["Size ratio", existing.size_ratio || "", clean.size_ratio || ""],
+    ["Print required", boolDiffLabel(!!existing.print_required), boolDiffLabel(!!clean.print_required)],
+    ["Embroidery required", boolDiffLabel(!!existing.embroidery_required), boolDiffLabel(!!clean.embroidery_required)],
+    ["Priority", existing.priority || "Normal", clean.priority || "Normal"],
+    ["Photo URL", existing.photo_url || existing.photo_thumb_url || "", clean.photo_url || clean.photo_thumb_url || ""],
+  ];
+  checks.forEach(([label,oldv,nextv])=>{ if (String(oldv||"") !== String(nextv||"")) out.push({ label, old:bulkValueText(oldv), next:bulkValueText(nextv) }); });
+  const oldSizes = sizeBreakupSummary(existing, existing.size_set || clean.size_set);
+  const newSizes = sizeBreakupSummary(clean, clean.size_set);
+  if (oldSizes !== newSizes) out.push({ label:"Size breakup", old:oldSizes, next:newSizes });
+  return out.length ? out : [{ label:"No visible change", old:"same", next:"same" }];
+}
+function bulkPreviewTone(record){
+  if (record.errors?.length) return "late";
+  if (record.warnings?.length) return "warn";
+  if (record.action === "DELETE") return "late";
+  if (record.kind === "ADD") return "ok";
+  return "info";
+}
+function bulkPreviewClass(record){
+  const tone = bulkPreviewTone(record);
+  return tone === "late" ? "error" : tone === "warn" ? "warn" : "";
+}
+
 function styleTemplateRows(){
   const allSizes = Array.from(new Set(Object.values(getSizeSets()).flat())).slice(0,40);
   const blankSizeCols = Object.fromEntries(allSizes.map(size=>[`Size ${size}`, ""]));
@@ -6559,6 +6803,7 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0, 
   const [msg,setMsg] = useState(null);
   const [busy,setBusy] = useState(false);
   const [bulkMsg,setBulkMsg] = useState(null);
+  const [bulkReview,setBulkReview] = useState(null);
   const [allowHardDelete,setAllowHardDelete] = useState(true);
   useEffect(()=>{ if (!clearTick) return; setQ(""); }, [clearTick]);
   const editing = !!form.id;
@@ -6764,45 +7009,89 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
     const permission = requireCurrentPermission("production.edit_styles", "bulk update production styles");
     if (permission) { setBulkMsg({ tone:"late", text:permission.error.message }); return; }
     if (!file) return;
-    setBusy(true); setBulkMsg({ tone:"info", text:"Reading Excel bulk update..." });
+    setBusy(true); setBulkReview(null); setBulkMsg({ tone:"info", text:"Reading Excel bulk update and building visual preview..." });
     try {
       const XLSX = await import("xlsx");
       const wb = XLSX.read(await file.arrayBuffer(), { type:"array" });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rawRows = XLSX.utils.sheet_to_json(ws, { defval:"" });
       if (!rawRows.length) { setBulkMsg({ tone:"late", text:"No rows found in first sheet." }); return; }
-      let added=0, updated=0, deleted=0, skipped=0;
-      const errors=[];
-      const upserts=[];
-      const deletes=[];
-      let nextRows=[...(allRows||[])];
+      const records=[];
+      let addCount=0, updateCount=0, deleteCount=0, errorCount=0, warnCount=0, skipped=0;
+      const previewRows=[...(allRows||[])];
       for (const [idx,raw] of rawRows.entries()) {
         const rowNo = idx + 2;
-        const action = styleExcelAction(raw);
+        const actionRaw = styleExcelAction(raw);
+        const action = ["DELETE","HARD_DELETE","REMOVE"].includes(actionRaw) ? "DELETE" : "UPSERT";
         const keyProbe = styleFromExcelRow(raw, {});
-        if (!keyProbe.order_no || !keyProbe.style_no || !keyProbe.colour || !keyProbe.component) { skipped++; errors.push(`Row ${rowNo}: missing Order No / Style No / Colour / Component.`); continue; }
-        const existing = nextRows.find(r=>styleCompositeKey(r)===styleCompositeKey(keyProbe));
-        if (["DELETE","HARD_DELETE","REMOVE"].includes(action)) {
-          if (!existing) { skipped++; errors.push(`Row ${rowNo}: delete target not found.`); continue; }
-          nextRows = nextRows.filter(r=>styleCompositeKey(r)!==styleCompositeKey(existing));
-          deletes.push(existing); rememberDeletedStyle(existing);
-          deleted++; continue;
+        const rec = { rowNo, action, raw, errors:[], warnings:[], changes:[], kind:"SKIP", existing:null, clean:null, merged:null };
+        if (!keyProbe.order_no || !keyProbe.style_no || !keyProbe.colour || !keyProbe.component) {
+          rec.errors.push("Missing Order No / Style No / Colour / Component."); skipped++; errorCount++; records.push(rec); continue;
+        }
+        const existing = previewRows.find(r=>styleCompositeKey(r)===styleCompositeKey(keyProbe));
+        rec.existing = existing || null;
+        if (action === "DELETE") {
+          if (!existing) { rec.errors.push("Delete target not found."); skipped++; errorCount++; records.push(rec); continue; }
+          rec.kind = "DELETE"; rec.clean = existing; rec.merged = existing;
+          rec.changes = [{ label:"Delete row", old:naturalKeyLabel(existing), next:"Will remove style row" }];
+          deleteCount++; records.push(rec); continue;
         }
         const clean = styleFromExcelRow(raw, existing);
+        rec.clean = clean;
         const rawSizeSet = excelValue(raw,["Size Set","SizeSet","Sizes"]);
-        if (!rawSizeSet && clean.size_set !== (existing?.size_set || "alpha")) errors.push(`Row ${rowNo} ${clean.order_no}/${clean.style_no}: inferred size set ${clean.size_set} from Excel size columns.`);
-        if (!clean.buyer || !clean.order_qty) { skipped++; errors.push(`Row ${rowNo}: Buyer and Order Qty are mandatory for add/update.`); continue; }
+        if (!rawSizeSet) rec.warnings.push(`Size Set blank: app selected ${sizeSetInferenceLabel(raw, clean.size_set, clean.order_qty)}. This uses filled size values, not template headers.`);
+        if (!clean.buyer || !clean.order_qty) rec.errors.push("Buyer and Order Qty are mandatory for add/update.");
         const variance = sizeVarianceInfo(clean.order_qty, normalizeSizeQtyMap(clean.order_size_qty || {}, getSizeSets()[clean.size_set] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha));
-        if (variance.diff !== 0) errors.push(`Row ${rowNo} ${clean.order_no}/${clean.style_no}: ${variance.text}`);
+        if (variance.diff !== 0) rec.warnings.push(variance.text);
         const merged = {
           ...(existing || {}), ...clean, id:existing?.id || uid("demo_bulk_style"),
           stages: existing ? safeStagesForEditedRow(existing, clean) : blankStagesForRoute(clean),
           route:routeFor(clean),
         };
-        if (existing) { nextRows = nextRows.map(r=>styleCompositeKey(r)===styleCompositeKey(existing) ? merged : r); updated++; }
-        else { nextRows.unshift(merged); added++; }
-        upserts.push(merged);
+        rec.merged = merged;
+        rec.kind = existing ? "UPDATE" : "ADD";
+        rec.changes = bulkStyleDiffItems(existing, clean);
+        if (rec.errors.length) { errorCount++; skipped++; }
+        else {
+          if (rec.warnings.length) warnCount++;
+          if (existing) updateCount++; else addCount++;
+        }
+        records.push(rec);
       }
+      setBulkReview({ fileName:file.name || "uploaded Excel", records, addCount, updateCount, deleteCount, skipped, errorCount, warnCount });
+      setBulkMsg({ tone:errorCount ? "late" : warnCount ? "warn" : "ok", text:`Preview ready: ${addCount} add, ${updateCount} update, ${deleteCount} delete, ${skipped} blocked. Review differences below, then Apply.` });
+    } catch(e) {
+      setBulkMsg({ tone:"late", text:e?.message || "Bulk Excel preview failed." });
+    } finally { setBusy(false); }
+  }
+  async function applyBulkReview(){
+    const permission = requireCurrentPermission("production.edit_styles", "apply bulk style changes");
+    if (permission) { setBulkMsg({ tone:"late", text:permission.error.message }); return; }
+    const records = bulkReview?.records || [];
+    if (!records.length) { setBulkMsg({ tone:"late", text:"No preview to apply." }); return; }
+    const blocked = records.filter(r=>r.errors?.length).length;
+    if (blocked && !window.confirm(`${blocked} rows are blocked and will be skipped. Apply valid rows only?`)) return;
+    const valid = records.filter(r=>!r.errors?.length);
+    if (!valid.length) { setBulkMsg({ tone:"late", text:"No valid rows to apply." }); return; }
+    if (!window.confirm(`Apply ${valid.length} valid bulk change rows? This will update style master and Supabase where configured.`)) return;
+    setBusy(true); setBulkMsg({ tone:"info", text:"Applying bulk preview..." });
+    try {
+      let nextRows=[...(allRows||[])];
+      const upserts=[], deletes=[], errors=[];
+      let added=0, updated=0, deleted=0;
+      valid.forEach(rec=>{
+        if (rec.kind === "DELETE") {
+          const row = rec.merged;
+          nextRows = nextRows.filter(r=>styleCompositeKey(r)!==styleCompositeKey(row));
+          deletes.push(row); rememberDeletedStyle(row); deleted++;
+        } else {
+          const row = rec.merged;
+          forgetDeletedStyle(row);
+          const existing = nextRows.find(r=>String(r.id)===String(row.id) || styleCompositeKey(r)===styleCompositeKey(row));
+          nextRows = existing ? nextRows.map(r=>(String(r.id)===String(row.id) || styleCompositeKey(r)===styleCompositeKey(row)) ? row : r) : [row, ...nextRows];
+          upserts.push(row); if (rec.kind === "ADD") added++; else updated++;
+        }
+      });
       setRows(nextRows);
       if (deletes.length) setLedger?.(prev=>(prev||[]).filter(x=>!deletes.some(row=>ledgerRowMatchesStyle(x,row))));
       if (hasValidSupabaseEnv()) {
@@ -6816,10 +7105,11 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
           const b = await deleteStyleLedgerFromSupabase(row); if (b.error) errors.push(`Supabase ledger delete ${row.style_no}: ${b.error.message}`);
         }
       }
-      setBulkMsg({ tone:errors.length ? "warn" : "ok", text:`Bulk update done. Added ${added}, updated ${updated}, hard deleted ${deleted}, skipped ${skipped}.${errors.length ? " Issues: "+errors.slice(0,4).join(" | ")+(errors.length>4?` | +${errors.length-4} more`:"") : ""}` });
-      recordProductionAudit("style_bulk_update", { table_name:"production_orders", qty:upserts.length, source:"Styles bulk upload", metadata:{ added, updated, deleted, skipped, error_count:errors.length } });
+      setBulkMsg({ tone:errors.length ? "warn" : "ok", text:`Bulk changes applied. Added ${added}, updated ${updated}, deleted ${deleted}, skipped ${blocked}.${errors.length ? " Issues: "+errors.slice(0,4).join(" | ")+(errors.length>4?` | +${errors.length-4} more`:"") : ""}` });
+      recordProductionAudit("style_bulk_update", { table_name:"production_orders", qty:upserts.length, source:"Styles bulk preview/apply", metadata:{ added, updated, deleted, skipped:blocked, error_count:errors.length } });
+      setBulkReview(null);
     } catch(e) {
-      setBulkMsg({ tone:"late", text:e?.message || "Bulk Excel update failed." });
+      setBulkMsg({ tone:"late", text:e?.message || "Bulk Excel apply failed." });
     } finally { setBusy(false); }
   }
   const formRoute = routeFor(form);
@@ -6848,6 +7138,7 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
         {bulkMsg && <span className={`mt-chip ${statusClass(bulkMsg.tone)}`}>{bulkMsg.text}</span>}
         <div className="mt-toolbar"><button className="mt-btn" disabled={busy} onClick={downloadTemplate}><Download size={14}/>Download Template</button><label className="mt-btn primary" style={{cursor:busy?"not-allowed":"pointer"}}><Upload size={14}/>Upload Excel<input type="file" accept=".xlsx,.xls,.csv" style={{display:"none"}} disabled={busy} onChange={e=>{ const f=e.target.files?.[0]; if(f) bulkUploadExcel(f); e.target.value=""; }}/></label><span className="mt-chip mt-warn"><AlertTriangle size={12}/>Hard delete allowed for demo cleanup</span></div>
         <div className="mt-speed-note"><b>Required key:</b> Order No + Style No + Colour + Component. <b>Action:</b> ADD_UPDATE or HARD_DELETE. Bulk update preserves existing WIP where possible; hard delete removes the style row and matching ledger entries from this demo dataset.</div>
+        {bulkReview && <div className="mt-order-size-card"><div style={{display:"flex", justifyContent:"space-between", gap:8, alignItems:"center", flexWrap:"wrap"}}><div><b>Bulk Preview — review before entry</b><div className="mt-small">{bulkReview.fileName} · {bulkReview.addCount} add · {bulkReview.updateCount} update · {bulkReview.deleteCount} delete · {bulkReview.errorCount} blocked · {bulkReview.warnCount} warnings</div></div><div style={{display:"flex", gap:6, flexWrap:"wrap"}}><button className="mt-btn primary" disabled={busy || !bulkReview.records?.some(r=>!r.errors?.length)} onClick={applyBulkReview}><CheckCircle2 size={14}/>Apply Valid Changes</button><button className="mt-btn ghost" disabled={busy} onClick={()=>setBulkReview(null)}>Cancel Preview</button></div></div><div className="mt-bulk-preview-grid" style={{marginTop:10}}>{(bulkReview.records||[]).slice(0,60).map(rec=><div key={rec.rowNo} className={`mt-bulk-preview-card ${bulkPreviewClass(rec)}`}><div className="mt-bulk-preview-head"><div><div className="mt-bulk-preview-title">Row {rec.rowNo} · {rec.kind}</div><div className="mt-small">{rec.clean ? naturalKeyLabel(rec.clean) : rec.existing ? naturalKeyLabel(rec.existing) : "Missing key"}</div></div><span className={`mt-chip ${statusClass(bulkPreviewTone(rec))}`}>{rec.errors?.length ? "Blocked" : rec.warnings?.length ? "Review" : "OK"}</span></div><div className="mt-bulk-change-list">{rec.clean?.size_set && <span className="mt-size-set-badge">Size set: {rec.clean.size_set}</span>}{rec.errors?.map((e,i)=><div className="mt-bulk-change" key={`e${i}`}><b>Blocked</b><span className="mt-bulk-old">{e}</span></div>)}{rec.warnings?.map((w,i)=><div className="mt-bulk-change" key={`w${i}`}><b>Warning</b><span>{w}</span></div>)}{(rec.changes||[]).slice(0,8).map((ch,i)=><div className="mt-bulk-change" key={i}><b>{ch.label}</b><span className="mt-bulk-old">{ch.old}</span><span className="mt-bulk-new">→ {ch.next}</span></div>)}</div></div>)}{(bulkReview.records||[]).length > 60 && <div className="mt-small">Showing first 60 preview rows. Apply will process all valid rows.</div>}</div></div>}
       </div>
     </div>
     <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Style List / Edit / Hard Delete</h3><div className="mt-panel-sub">Search, edit, delete unused rows, or hard delete demo rows with activity. For live production, hard delete should be replaced by archive/approval governance.</div></div>
@@ -7375,7 +7666,7 @@ export default function App(){
   return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
     <style>{FONT + CSS}</style>
     <LoginDialog open={showLogin} force={!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
-    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Manager tab added: plan impact review, DPR pending, feed risks and WIP follow-up action center.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
+    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Style bulk upload now shows visual old/new differences before apply; size-set inference uses filled size values so infant/kids columns do not update alpha by mistake.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
     <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Review · Reports. Supabase-first autosave · email login · audit/cell history · Excel-like exports.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className="mt-chip mt-info">{presenceSummaryText(presenceRows)}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${navCollapsed?"active":"ghost"}`} onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand left navigation"><Layers size={14}/>{navCollapsed?"Expand tabs":"Collapse tabs"}</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div></div><PresenceStrip peers={presenceRows}/></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
