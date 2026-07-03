@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.48";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.48 build export hotfix, email login, P0 date reconcile override";
+const APP_VERSION = "V7.5.49";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.49 proper login approval workflow";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -449,6 +449,7 @@ const PRODUCTION_PERMISSIONS = [
 ];
 const ALL_PRODUCTION_PERMISSION_KEYS = PRODUCTION_PERMISSIONS.map(p=>p[0]);
 const ROLE_PERMISSIONS = {
+  "Super Admin": ALL_PRODUCTION_PERMISSION_KEYS,
   Admin: ALL_PRODUCTION_PERMISSION_KEYS,
   "Production Manager": ALL_PRODUCTION_PERMISSION_KEYS,
   "Production Coordinator": ["production.view","production.entry_dpr","production.correct_entry","production.edit_styles","production.delete_styles","production.export","production.manage_photos","production.manage_routes","production.audit_view"],
@@ -468,7 +469,7 @@ function normalizeUserEmail(email){ return String(email || "").trim().toLowerCas
 function emailLooksValid(email){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeUserEmail(email)); }
 function displayNameFromEmail(email){ return normalizeUserEmail(email).split("@")[0].replace(/[._-]+/g," ").replace(/\b\w/g,m=>m.toUpperCase()); }
 function defaultUserProfile(){
-  return { name:"", email:"", role:"Data Operator", department:"Production", permissions:[] };
+  return { name:"", email:"", role:"Data Operator", department:"Production", permissions:[], access_status:"approved", password_hash:"", requested_role:"Data Operator", requested_department:"Production" };
 }
 function currentUserProfile(){
   try {
@@ -509,11 +510,13 @@ function currentUserName(){
   return p.name || "Not logged in";
 }
 function currentUserRole(){ return currentUserProfile().role || "Data Operator"; }
+function isFullAccessRole(role){ return ["Super Admin","Admin","Production Manager"].includes(role); }
 function rolePermissions(role){ return new Set([...(ROLE_PERMISSIONS[role] || []), ...((currentUserProfile().permissions || []))]); }
 function currentUserCan(permission){
   const p = currentUserProfile();
   if (!p.name) return false;
-  if (["Admin","Production Manager"].includes(p.role)) return true;
+  if (p.access_status && p.access_status !== "approved") return false;
+  if (isFullAccessRole(p.role)) return true;
   return rolePermissions(p.role).has(permission);
 }
 function requireCurrentPermission(permission, actionLabel="this action"){
@@ -537,7 +540,15 @@ function userAuditBase(extra={}){
 async function upsertProductionAppUser(profile=currentUserProfile()){
   if (!profile?.name || !hasValidSupabaseEnv()) return { skipped:true };
   const row = {
-    display_name:profile.name || displayNameFromEmail(profile.email), email:normalizeUserEmail(profile.email) || null, role:profile.role || "Data Operator", department:profile.department || "Production", is_active:true,
+    display_name:profile.name || displayNameFromEmail(profile.email),
+    email:normalizeUserEmail(profile.email) || null,
+    role:profile.role || "Data Operator",
+    department:profile.department || "Production",
+    access_status:profile.access_status || "approved",
+    requested_role:profile.requested_role || profile.role || "Data Operator",
+    requested_department:profile.requested_department || profile.department || "Production",
+    password_hash:profile.password_hash || undefined,
+    is_active:true,
     browser_id:productionBrowserId(), last_seen_at:new Date().toISOString(), app_version:APP_VERSION
   };
   return fetchRestUpsertToSupabase("production_app_users", [row], row.email ? "email" : "display_name");
@@ -559,6 +570,52 @@ async function fetchProductionAudit(limit=250){
 }
 async function fetchProductionUsers(){
   return fetchRestSelectFromSupabase("production_app_users", "select=*&order=last_seen_at.desc&limit=500");
+}
+async function hashLoginPassword(email, password){
+  const cleanEmail = normalizeUserEmail(email);
+  const cleanPass = String(password || "");
+  const text = `production-dpr-login::${cleanEmail}::${cleanPass}`;
+  try {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+  } catch {
+    let h = 0;
+    for (let i=0; i<text.length; i++) h = Math.imul(31, h) + text.charCodeAt(i) | 0;
+    return `fallback_${Math.abs(h)}`;
+  }
+}
+async function fetchProductionUserByEmail(email){
+  const clean = normalizeUserEmail(email);
+  if (!clean || !hasValidSupabaseEnv()) return { data:null, skipped:true };
+  const q = `select=*&email=eq.${encodeURIComponent(clean)}&limit=1`;
+  const res = await fetchRestSelectFromSupabase("production_app_users", q);
+  return { ...res, data:Array.isArray(res.data) ? res.data[0] || null : null };
+}
+async function requestProductionAccess(form){
+  const email = normalizeUserEmail(form.email);
+  const passwordHash = await hashLoginPassword(email, form.password || "");
+  const row = {
+    display_name:String(form.name || displayNameFromEmail(email)).trim(),
+    email,
+    role:"Pending Approval",
+    department:form.department || form.requested_department || "Production",
+    requested_role:form.requested_role || "Data Operator",
+    requested_department:form.department || form.requested_department || "Production",
+    password_hash:passwordHash,
+    access_status:"pending",
+    is_active:false,
+    browser_id:productionBrowserId(),
+    last_seen_at:new Date().toISOString(),
+    app_version:APP_VERSION
+  };
+  return fetchRestUpsertToSupabase("production_app_users", [row], "email");
+}
+async function updateProductionUserAccess(email, patch){
+  const clean = normalizeUserEmail(email);
+  if (!clean || !hasValidSupabaseEnv()) return { error:{ message:"Missing email or Supabase config" } };
+  const existing = await fetchProductionUserByEmail(clean);
+  const row = { ...(existing.data || {}), email:clean, ...patch, last_seen_at:new Date().toISOString(), app_version:APP_VERSION };
+  return fetchRestUpsertToSupabase("production_app_users", [row], "email");
 }
 function defaultEntryDate(ledger=[]){
   // Factory reality: production is normally entered next day. Use latest activity date if present,
@@ -5199,17 +5256,80 @@ function PermissionGate({ permission, children, label }){
   return <div className="mt-card"><div className="mt-section"><span className="mt-chip mt-late"><Lock size={12}/>Permission blocked</span><div className="mt-panel-sub" style={{marginTop:8}}>{currentUserName()} ({currentUserRole()}) cannot open {label || "this screen"}. Required permission: <b>{permission}</b>.</div></div></div>;
 }
 function LoginDialog({ open, profile, onSave, onClose, force=false }){
-  const [form,setForm] = useState(()=>({ ...defaultUserProfile(), ...profile, email:normalizeUserEmail(profile?.email || "") }));
-  useEffect(()=>setForm({ ...defaultUserProfile(), ...profile, email:normalizeUserEmail(profile?.email || "") }), [profile?.name, profile?.email, profile?.role, profile?.department]);
+  const [mode,setMode] = useState("login");
+  const [form,setForm] = useState(()=>({ ...defaultUserProfile(), ...profile, email:normalizeUserEmail(profile?.email || ""), password:"", requested_role:profile?.requested_role || "Data Operator", requested_department:profile?.requested_department || profile?.department || "Production" }));
+  const [msg,setMsg] = useState(null);
+  const [busy,setBusy] = useState(false);
+  useEffect(()=>setForm({ ...defaultUserProfile(), ...profile, email:normalizeUserEmail(profile?.email || ""), password:"", requested_role:profile?.requested_role || "Data Operator", requested_department:profile?.requested_department || profile?.department || "Production" }), [profile?.name, profile?.email, profile?.role, profile?.department]);
   if (!open) return null;
-  async function save(){
+  const departments = ["Production","Cutting","Printing","Embroidery","Stitching","Checking","Packing","Dispatch","Management","Merchandising","Admin"];
+  const requestedRole = form.requested_role || "Data Operator";
+  async function doLogin(){
     const email = normalizeUserEmail(form.email);
-    if (!emailLooksValid(email)) { alert("Valid email login is mandatory for multi-user audit."); return; }
-    const clean = saveCurrentUserProfile({ ...form, email, name:String(form.name || displayNameFromEmail(email)).trim() });
-    await recordUserSession("login", clean, { force, note:"Production DPR email-wise user login" });
-    onSave?.(clean);
+    if (!emailLooksValid(email)) { setMsg({tone:"warn", text:"Enter a valid work email."}); return; }
+    if (!String(form.password || "").trim()) { setMsg({tone:"warn", text:"Password is required."}); return; }
+    if (!hasValidSupabaseEnv()) { setMsg({tone:"warn", text:"Supabase is required for multi-user login. Check Vercel env and redeploy."}); return; }
+    setBusy(true); setMsg({tone:"info", text:"Checking user access..."});
+    try {
+      const found = await fetchProductionUserByEmail(email);
+      if (found.error) { setMsg({tone:"warn", text:`Could not read user registry: ${found.error.message}`}); return; }
+      const user = found.data;
+      if (!user) { setMsg({tone:"warn", text:"No approved user found for this email. Use Request Access; Admin/Production Manager must approve role before login."}); setMode("request"); return; }
+      const status = String(user.access_status || (user.is_active === false ? "pending" : "approved")).toLowerCase();
+      if (status !== "approved") { setMsg({tone:"warn", text:`Access is ${status}. Wait for Admin/Production Manager approval or ask them to approve in Users/Audit.`}); return; }
+      const hash = await hashLoginPassword(email, form.password || "");
+      if (user.password_hash && user.password_hash !== hash) { setMsg({tone:"warn", text:"Incorrect password for this email."}); return; }
+      if (!user.password_hash) await updateProductionUserAccess(email, { password_hash:hash });
+      const clean = saveCurrentUserProfile({
+        name:user.display_name || user.user_name || displayNameFromEmail(email), email,
+        role:user.role || "Data Operator", department:user.department || user.requested_department || "Production",
+        requested_role:user.requested_role || user.role || "Data Operator", requested_department:user.requested_department || user.department || "Production",
+        access_status:"approved", password_hash:hash, permissions:user.permissions || []
+      });
+      await recordUserSession("login", clean, { force, note:"Production DPR proper email/password login" });
+      onSave?.(clean);
+    } finally { setBusy(false); }
   }
-  return <div className="mt-update-backdrop no-print"><div className="mt-update-popup" style={{maxWidth:720}}><div className="head"><span>{force ? "Production login required" : "Switch production user"}</span><span className="mt-chip mt-info">Email-wise access</span></div><div className="body"><div><b>Login with the person’s work email.</b></div><div className="mt-small">This is the internal factory login screen for Production DPR. Every entry, correction, style change and session is stamped by email, role, department and browser. Password/Supabase Auth can be added later; email is mandatory now so two users do not mix history.</div><label className="mt-small">Work email *</label><input className="mt-input mandatory" value={form.email || ""} onChange={e=>setForm(f=>({ ...f, email:normalizeUserEmail(e.target.value), name:f.name || displayNameFromEmail(e.target.value) }))} placeholder="name@company.com" autoFocus/><label className="mt-small">Display name</label><input className="mt-input" value={form.name || ""} onChange={e=>setForm(f=>({ ...f, name:e.target.value }))} placeholder="Auto from email if blank"/><div className="mt-two"><div><label className="mt-small">Role</label><select className="mt-select" value={form.role || "Data Operator"} onChange={e=>setForm(f=>({ ...f, role:e.target.value }))}>{PRODUCTION_ROLES.map(r=><option key={r} value={r}>{r}</option>)}</select></div><div><label className="mt-small">Department</label><select className="mt-select" value={form.department || "Production"} onChange={e=>setForm(f=>({ ...f, department:e.target.value }))}>{["Production","Cutting","Printing","Embroidery","Stitching","Checking","Packing","Dispatch","Management","Merchandising","Admin"].map(d=><option key={d} value={d}>{d}</option>)}</select></div></div><div className="mt-card"><div className="mt-section"><b>Permission preview</b><div className="mt-small">Admin and Production Manager have full access. Data Operator can enter/correct daily production but cannot manage settings/users/delete.</div><div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>{PRODUCTION_PERMISSIONS.map(([key,label])=><span key={key} className={`mt-chip ${(ROLE_PERMISSIONS[form.role]||[]).includes(key) || ["Admin","Production Manager"].includes(form.role) ? "mt-ok" : "mt-muted"}`}>{label}</span>)}</div></div></div></div><div className="actions">{!force && <button className="mt-btn ghost" onClick={onClose}>Cancel</button>}<button className="mt-btn primary" onClick={save}><UserCheck size={14}/>Login / continue</button></div></div></div>;
+  async function requestAccess(){
+    const email = normalizeUserEmail(form.email);
+    if (!emailLooksValid(email)) { setMsg({tone:"warn", text:"Enter a valid work email."}); return; }
+    if (!String(form.password || "").trim()) { setMsg({tone:"warn", text:"Create a password for this Production login request."}); return; }
+    if (!String(form.name || "").trim()) { setMsg({tone:"warn", text:"Enter display name so Admin can identify the user."}); return; }
+    setBusy(true); setMsg({tone:"info", text:"Saving access request..."});
+    try {
+      const existing = await fetchProductionUserByEmail(email);
+      if (existing.data && String(existing.data.access_status || "approved").toLowerCase() === "approved") { setMsg({tone:"warn", text:"This email already has approved access. Use Login."}); setMode("login"); return; }
+      const res = await requestProductionAccess({ ...form, email, requested_role:requestedRole, requested_department:form.requested_department || form.department || "Production" });
+      if (res.error) { setMsg({tone:"warn", text:`Access request failed: ${res.error.message}`}); return; }
+      setMsg({tone:"ok", text:"Access request saved. Wait for Super Admin/Admin/Production Manager to approve role in Users/Audit."});
+    } finally { setBusy(false); }
+  }
+  const shellStyle = force ? {position:"fixed", inset:0, zIndex:9999, background:"var(--paper)", display:"flex", alignItems:"center", justifyContent:"center", padding:24} : {};
+  const content = <div className="mt-update-popup" style={{maxWidth:860, width:"min(860px, 96vw)"}}>
+    <div className="head"><span>{mode === "login" ? "Production DPR Login" : "Request Production Access"}</span><span className="mt-chip mt-info">Email + password</span></div>
+    <div className="body">
+      <div style={{display:"flex", gap:8, flexWrap:"wrap", marginBottom:8}}>
+        <button className={`mt-btn ${mode==="login"?"active":"ghost"}`} onClick={()=>setMode("login")}>Login</button>
+        <button className={`mt-btn ${mode==="request"?"active":"ghost"}`} onClick={()=>setMode("request")}>Request access</button>
+      </div>
+      <div><b>{mode === "login" ? "Use the same work email as Merch Tracker." : "New users request access first; Admin assigns role later."}</b></div>
+      <div className="mt-small">Production is quantity-critical. Every entry, correction, approval, reject/short-close and session is stamped by email. Users should not choose their own final role; Admin/Production Manager approves it in Users/Audit.</div>
+      <label className="mt-small">Work email *</label>
+      <input className="mt-input mandatory" value={form.email || ""} onChange={e=>setForm(f=>({ ...f, email:normalizeUserEmail(e.target.value), name:f.name || displayNameFromEmail(e.target.value) }))} placeholder="name@company.com" autoFocus/>
+      <label className="mt-small">Password *</label>
+      <input className="mt-input mandatory" type="password" value={form.password || ""} onChange={e=>setForm(f=>({ ...f, password:e.target.value }))} placeholder="Production login password"/>
+      {mode === "request" && <>
+        <label className="mt-small">Display name *</label>
+        <input className="mt-input mandatory" value={form.name || ""} onChange={e=>setForm(f=>({ ...f, name:e.target.value }))} placeholder="User name shown in history"/>
+        <div className="mt-two"><div><label className="mt-small">Requested role</label><select className="mt-select" value={requestedRole} onChange={e=>setForm(f=>({ ...f, requested_role:e.target.value }))}>{PRODUCTION_ROLES.filter(r=>r!=="Super Admin").map(r=><option key={r} value={r}>{r}</option>)}</select></div><div><label className="mt-small">Department</label><select className="mt-select" value={form.requested_department || form.department || "Production"} onChange={e=>setForm(f=>({ ...f, requested_department:e.target.value, department:e.target.value }))}>{departments.map(d=><option key={d} value={d}>{d}</option>)}</select></div></div>
+      </>}
+      <div className="mt-card"><div className="mt-section"><b>Access logic</b><div className="mt-small">Super Admin, Admin and Production Manager have full access. Data Operator can enter/correct daily production but cannot manage users/settings/delete. Pending users cannot open production screens until approved.</div><div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>{PRODUCTION_PERMISSIONS.map(([key,label])=><span key={key} className={`mt-chip ${(ROLE_PERMISSIONS[requestedRole]||[]).includes(key) || isFullAccessRole(requestedRole) ? "mt-ok" : "mt-muted"}`}>{label}</span>)}</div></div></div>
+      {msg && <div className={`mt-speed-note ${statusClass(msg.tone)}`} style={{marginTop:10}}>{msg.text}</div>}
+    </div>
+    <div className="actions">{!force && <button className="mt-btn ghost" onClick={onClose}>Cancel</button>}<button className="mt-btn primary" disabled={busy} onClick={mode==="login" ? doLogin : requestAccess}><UserCheck size={14}/>{busy ? "Please wait..." : mode==="login" ? "Login" : "Submit request"}</button></div>
+  </div>;
+  if (force) return <div className="no-print" style={shellStyle}>{content}</div>;
+  return <div className="mt-update-backdrop no-print">{content}</div>;
 }
 function UserAuditView({ profile, onSwitchUser, onLogout }){
   const [audit,setAudit] = useState([]);
@@ -5229,7 +5349,25 @@ function UserAuditView({ profile, onSwitchUser, onLogout }){
   useEffect(()=>{ refresh(); }, []);
   const perms = ROLE_PERMISSIONS[profile.role] || [];
   const localHistory = safeJsonLoad(uiStorageKey("tab_history"), []);
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Users / Permissions / History</h3><div className="mt-panel-sub">User-wise accountability for multi-user Production DPR. Login/session, email user registry and audit tables require the V7.5.48 SQL patch.</div></div><div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-chip mt-info"><UserCheck size={12}/>{profile.name || "Not logged in"}</span><span className="mt-chip mt-muted">{profile.role}</span><span className="mt-chip mt-muted">{profile.department || "—"}</span><button className="mt-btn" onClick={refresh} disabled={loading}><RefreshCw size={14}/>Refresh History</button><button className="mt-btn ghost" onClick={onSwitchUser}><Users size={14}/>Switch User</button><button className="mt-btn ghost" onClick={onLogout}><LogOut size={14}/>Logout</button>{msg && <span className={`mt-chip ${statusClass(msg.tone)}`}>{msg.text}</span>}</div></div><div className="mt-section"><h3 className="mt-panel-title">Current Role Permissions</h3><div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>{PRODUCTION_PERMISSIONS.map(([key,label])=><span key={key} className={`mt-chip ${["Admin","Production Manager"].includes(profile.role) || perms.includes(key) ? "mt-ok" : "mt-muted"}`}>{label}</span>)}</div><div className="mt-small" style={{marginTop:8}}>Last local tab history: {localHistory.length ? localHistory.join(" → ") : "No tab history yet"}</div></div><SimpleTable title="Active / recent users" sub="From production_app_users. Shows who has opened or logged in from browsers." rows={(users||[]).map(u=>({ User:u.display_name || u.user_name, Role:u.role, Department:u.department, Email:u.email, Last_Seen:u.last_seen_at || u.created_at, Browser:u.browser_id, Active:u.is_active ? "Yes" : "No" }))} empty="No user rows yet. Login once after running SQL patch."/><div style={{height:12}}/><SimpleTable title="Audit history" sub="Latest saves/corrections/sessions. Keep this horizontal and management-readable; raw JSON stays in metadata only." rows={(audit||[]).map(a=>({ Time:a.created_at, User:a.user_name, Role:a.user_role, Action:a.action || a.event_type, Table:a.table_name, Order:a.order_no, Style:a.style_no, Colour:a.colour, Component:a.component, Dept:stageLabel(a.stage || ""), Activity:a.entry_type, Date:a.entry_date, Qty:a.qty, Source:a.source }))} empty="No audit rows yet or SQL patch not run."/></div>;
+  const canManage = isFullAccessRole(profile.role) || currentUserCan("production.manage_users");
+  const pendingUsers = (users || []).filter(u=>String(u.access_status || (u.is_active === false ? "pending" : "approved")).toLowerCase() !== "approved");
+  async function approveUser(u, role){
+    if (!canManage) { setMsg({tone:"warn", text:"Only Super Admin/Admin/Production Manager can approve users."}); return; }
+    const res = await updateProductionUserAccess(u.email, { role, department:u.requested_department || u.department || "Production", access_status:"approved", is_active:true, approved_by:profile.email || profile.name, approved_at:new Date().toISOString() });
+    setMsg(res.error ? {tone:"warn", text:`Approve failed: ${res.error.message}`} : {tone:"ok", text:`Approved ${u.email} as ${role}.`});
+    await recordProductionAudit("approve_user", { table_name:"production_app_users", source:"Users/Audit", metadata:{ email:u.email, role } });
+    refresh();
+  }
+  async function rejectUser(u){
+    if (!canManage) { setMsg({tone:"warn", text:"Only Super Admin/Admin/Production Manager can reject users."}); return; }
+    const res = await updateProductionUserAccess(u.email, { access_status:"rejected", is_active:false, approved_by:profile.email || profile.name, rejected_at:new Date().toISOString() });
+    setMsg(res.error ? {tone:"warn", text:`Reject failed: ${res.error.message}`} : {tone:"ok", text:`Rejected ${u.email}.`});
+    await recordProductionAudit("reject_user", { table_name:"production_app_users", source:"Users/Audit", metadata:{ email:u.email } });
+    refresh();
+  }
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Users / Login Requests / Permissions / History</h3><div className="mt-panel-sub">Proper production login flow: users request access with email/password, then Super Admin/Admin/Production Manager assigns role. SQL patch V7.5.49 adds password/status columns.</div></div><div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-chip mt-info"><UserCheck size={12}/>{profile.name || "Not logged in"}</span><span className="mt-chip mt-muted">{profile.role}</span><span className="mt-chip mt-muted">{profile.department || "—"}</span><button className="mt-btn" onClick={refresh} disabled={loading}><RefreshCw size={14}/>Refresh History</button><button className="mt-btn ghost" onClick={onSwitchUser}><Users size={14}/>Switch User</button><button className="mt-btn ghost" onClick={onLogout}><LogOut size={14}/>Logout</button>{msg && <span className={`mt-chip ${statusClass(msg.tone)}`}>{msg.text}</span>}</div></div><div className="mt-section"><h3 className="mt-panel-title">Current Role Permissions</h3><div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>{PRODUCTION_PERMISSIONS.map(([key,label])=><span key={key} className={`mt-chip ${isFullAccessRole(profile.role) || perms.includes(key) ? "mt-ok" : "mt-muted"}`}>{label}</span>)}</div><div className="mt-small" style={{marginTop:8}}>Last local tab history: {localHistory.length ? localHistory.join(" → ") : "No tab history yet"}</div></div>
+    <div className="mt-section"><h3 className="mt-panel-title">Pending login requests</h3><div className="mt-panel-sub">Approve user role here. Pending users cannot open production screens.</div><div className="mt-table-wrap"><table className="mt-table"><thead><tr><th>User</th><th>Email</th><th>Requested Role</th><th>Department</th><th>Status</th><th>Approve As</th><th>Action</th></tr></thead><tbody>{pendingUsers.length ? pendingUsers.map(u=>{ const role=u.requested_role || "Data Operator"; return <tr key={u.email}><td>{u.display_name || u.user_name || displayNameFromEmail(u.email)}</td><td>{u.email}</td><td>{role}</td><td>{u.requested_department || u.department}</td><td><span className="mt-chip mt-warn">{u.access_status || "pending"}</span></td><td><select className="mt-select" defaultValue={role} onChange={e=>u.__approveRole=e.target.value}>{PRODUCTION_ROLES.filter(r=>r!=="Super Admin").map(r=><option key={r} value={r}>{r}</option>)}</select></td><td><button className="mt-btn" disabled={!canManage} onClick={()=>approveUser(u, u.__approveRole || role)}>Approve</button><button className="mt-btn ghost" disabled={!canManage} onClick={()=>rejectUser(u)}>Reject</button></td></tr>; }) : <tr><td colSpan="7">No pending requests.</td></tr>}</tbody></table></div></div>
+    <SimpleTable title="Active / recent users" sub="From production_app_users. Shows approved users, requested users and recent browser access." rows={(users||[]).map(u=>({ User:u.display_name || u.user_name, Role:u.role, Requested_Role:u.requested_role, Department:u.department || u.requested_department, Email:u.email, Status:u.access_status || (u.is_active ? "approved" : "pending"), Last_Seen:u.last_seen_at || u.created_at, Browser:u.browser_id }))} empty="No user rows yet. Run SQL patch and submit/approve one user."/><div style={{height:12}}/><SimpleTable title="Audit history" sub="Latest saves/corrections/sessions. Keep this horizontal and management-readable; raw JSON stays in metadata only." rows={(audit||[]).map(a=>({ Time:a.created_at, User:a.user_name, Role:a.user_role, Action:a.action || a.event_type, Table:a.table_name, Order:a.order_no, Style:a.style_no, Colour:a.colour, Component:a.component, Dept:stageLabel(a.stage || ""), Activity:a.entry_type, Date:a.entry_date, Qty:a.qty, Source:a.source }))} empty="No audit rows yet or SQL patch not run."/></div>;
 }
 
 export default function App(){
@@ -5253,9 +5391,9 @@ export default function App(){
     try { return localStorage.getItem("production_app_seen_version") !== APP_VERSION; } catch { return true; }
   });
   const [userProfile,setUserProfile] = useState(()=>currentUserProfile());
-  const [showLogin,setShowLogin] = useState(()=>!currentUserProfile().name || !emailLooksValid(currentUserProfile().email));
+  const [showLogin,setShowLogin] = useState(()=>{ const p=currentUserProfile(); return !p.name || !emailLooksValid(p.email) || (p.access_status && p.access_status !== "approved"); });
   useEffect(()=>{ safeJsonSave(LOCAL_ROWS_KEY, rows); }, [rows]);
-  useEffect(()=>{ if (userProfile?.name && emailLooksValid(userProfile.email)) { saveCurrentUserProfile(userProfile); upsertProductionAppUser(userProfile); recordUserSession("app_open", userProfile, { tab }); } }, [userProfile?.name, userProfile?.role, userProfile?.department]);
+  useEffect(()=>{ if (userProfile?.name && emailLooksValid(userProfile.email) && (!userProfile.access_status || userProfile.access_status === "approved")) { saveCurrentUserProfile(userProfile); upsertProductionAppUser(userProfile); recordUserSession("app_open", userProfile, { tab }); } }, [userProfile?.name, userProfile?.role, userProfile?.department, userProfile?.access_status]);
   useEffect(()=>{ safeJsonSave(LOCAL_LEDGER_KEY, ledger); }, [ledger]);
   useEffect(()=>{ safeJsonSave(LOCAL_PLAN_KEY, planRows); }, [planRows]);
   useEffect(()=>safeJsonSave(uiStorageKey("global_query"), query), [query]);
@@ -5455,9 +5593,9 @@ export default function App(){
   ];
   return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
     <style>{FONT + CSS}</style>
-    <LoginDialog open={showLogin} force={!userProfile?.name || !emailLooksValid(userProfile?.email)} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
-    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Email-wise login is now mandatory; Admin and Production Manager have full access, Data Operator is available; P0 date-sequence overrides require confirmation/reason and appear in Reconcile Review.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
-    <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Reports. Supabase-first autosave · email-wise login · permissions · audit history.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=>{ const allowed = canOpenTab(k); return <button key={k} className={tab===k?"active":""} disabled={!allowed} title={allowed ? label : `Blocked: ${tabPermission(k)}`} onClick={()=>allowed && setTab(k)}><Icon size={14}/> {label}{!allowed ? " 🔒" : ""}</button>; })}</div></div></div>
+    <LoginDialog open={showLogin} force={!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
+    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Proper login screen added: work email + password, access request, pending approval, and Admin/Production Manager role assignment flow. P0 quantity truth remains strict.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
+    <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Reports. Supabase-first autosave · proper email/password login · admin role assignment · audit history.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=>{ const allowed = canOpenTab(k); return <button key={k} className={tab===k?"active":""} disabled={!allowed} title={allowed ? label : `Blocked: ${tabPermission(k)}`} onClick={()=>allowed && setTab(k)}><Icon size={14}/> {label}{!allowed ? " 🔒" : ""}</button>; })}</div></div></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
       <PageFilters tab={tab} query={query} setQuery={setQuery} buyer={buyer} setBuyer={setBuyer} buyers={buyers} order={order} setOrder={setOrder} orders={orders} visibleRows={visibleRows}/>
