@@ -26,8 +26,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.37";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.37 inline register correction and clear filters";
+const APP_VERSION = "V7.5.39";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.39 UUID save fix and set component entry";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -161,6 +161,11 @@ table.mt-table { width:100%; border-collapse:separate; border-spacing:0; min-wid
 .mt-filter-row { display:flex; align-items:center; gap:7px; flex-wrap:wrap; background:var(--toolbar-bg); border:1px solid var(--toolbar-line); border-radius:10px; padding:8px; margin-bottom:10px; }
 .mt-filter-group { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding-right:8px; border-right:1px solid var(--line-2); }
 .mt-filter-group:last-child { border-right:0; }
+.mt-col-filter-row th { top:34px; z-index:3; background:#2b2722 !important; padding:5px 6px !important; border-bottom:1px solid var(--on-dark-line); }
+.mt-col-filter-input, .mt-col-filter-select { width:100%; min-width:74px; border:1px solid var(--on-dark-line); background:var(--surface); color:var(--ink); padding:5px 6px; min-height:28px; font-size:9.5px; font-weight:700; }
+.mt-col-filter-input.stage { min-width:86px; }
+.mt-col-filter-clear { font-size:9px; white-space:nowrap; }
+.mt-grid-filter-active { outline:2px solid rgba(201,111,22,.22); background:#fff7ea; }
 .mt-quick-chip { border:1px solid var(--line-2); background:var(--surface); color:var(--muted-4); border-radius:999px; padding:6px 10px; font-size:10px; font-weight:800; cursor:pointer; min-height:30px; }
 .mt-quick-chip.active { background:var(--ink); color:var(--bg); border-color:var(--ink); }
 .mt-sort-th { cursor:pointer; user-select:none; }
@@ -387,11 +392,33 @@ function stableHash(text){
   for (let i=0; i<s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
   return (h >>> 0).toString(36);
 }
+function isUuid(v){
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(v || "").trim());
+}
+function hash32Hex(text, seed=0){
+  let h = (2166136261 ^ seed) >>> 0;
+  const s = String(text || "");
+  for (let i=0; i<s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(16).padStart(8,"0");
+}
+function stableUuidFromText(text){
+  const base = String(text || "production-order");
+  let hex = hash32Hex(base,1) + hash32Hex(base,2) + hash32Hex(base,3) + hash32Hex(base,4);
+  hex = hex.slice(0,12) + "4" + hex.slice(13);
+  const variant = (8 + (parseInt(hex[16] || "0", 16) % 4)).toString(16);
+  hex = hex.slice(0,16) + variant + hex.slice(17);
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20,32)}`;
+}
 function stableProductionOrderId(row){
   const existing = String(row?.id || "").trim();
-  if (existing && !existing.startsWith("demo") && !existing.startsWith("supabase_connection_test")) return existing;
+  // Supabase production_orders.id is UUID. Old browser/demo ids like prod_xxx/demo_xxx
+  // must never be sent to Supabase or Postgres rejects them as invalid uuid syntax.
+  if (isUuid(existing)) return existing;
   const key = [row?.order_no, row?.style_no, row?.colour, row?.component].map(x=>String(x||"").trim().toUpperCase()).join("|");
-  return `prod_${stableHash(key)}`;
+  return stableUuidFromText(key);
+}
+function parseComponentList(text){
+  return Array.from(new Set(String(text || "").split(/[,/|+]+/).map(x=>String(x||"").trim().toUpperCase()).filter(Boolean)));
 }
 function today(){ return new Date().toISOString().slice(0,10); }
 function dateDiff(a,b){
@@ -980,6 +1007,48 @@ function uniqueList(values){ return Array.from(new Set(values.filter(Boolean))).
 function ownerNamesFromBucket(bucket){ return String(bucket?.owner || "").split("+").map(x=>x.trim()).filter(Boolean); }
 function rowOwnerNames(row){ return uniqueList(issueBuckets(row).flatMap(ownerNamesFromBucket)); }
 function routeType(row){ const p=!!row.print_required, e=!!row.embroidery_required; return p && e ? "Print + Emb" : p ? "Print" : e ? "Embroidery" : "Plain"; }
+function tokenSearchMatch(haystack, query){
+  const text = String(haystack || "").toLowerCase();
+  return String(query || "").toLowerCase().split(/\s+/).filter(Boolean).every(token => text.includes(token));
+}
+function wipStageFilterText(row, stageKey){
+  const c = cellBreakup(row, stageKey);
+  if (c.skipped) return `${stageLabel(stageKey)} ${STAGE_BY_KEY[stageKey]?.short || ""} skip inactive route not active`;
+  const st = sdata(row, stageKey);
+  const feed = stageKey === "cutting" ? n(row.order_qty) : stageFeed(row, stageKey);
+  const pct = feed > 0 ? Math.round((n(c.received) * 1000) / feed) / 10 : 0;
+  return [
+    stageLabel(stageKey), STAGE_BY_KEY[stageKey]?.short, c.note, `${pct}%`,
+    `good ${fmt(c.received)}`, `done ${fmt(c.received)}`, `output ${fmt(c.received)}`,
+    `open ${fmt(c.open)}`, `ram ${fmt(c.ram)}`, `${fmt(c.ram)}r`,
+    c.extra ? `extra ${fmt(c.extra)}` : "",
+    st.party ? `party ${st.party}` : "",
+    `received ${fmt(st.received)}`, `issued ${fmt(st.issued)}`, `reject ${fmt(st.reject)}`,
+    `missing ${fmt(st.missing)}`, `alter ${fmt(st.alter)}`, `clear ${fmt(st.alter_clear)}`
+  ].filter(Boolean).join(" ");
+}
+function wipMatrixColumnText(row, key){
+  if (String(key || "").startsWith("stage:")) return wipStageFilterText(row, String(key).slice(6));
+  const rs = rowStatus(row);
+  if (key === "style") return [row.order_no,row.style_no,row.buyer,row.colour,row.component,row.set_id,routeType(row)].join(" ");
+  if (key === "status") return [statusText(row), stageLabel(rs.stage), rs.status, rs.qty, rs.idle, rs.action].join(" ");
+  if (key === "other") return statusDistributionByCut(row).slice(1).map(b=>[stageLabel(b.stage), STAGE_BY_KEY[b.stage]?.short, b.status, bucketTypeLabel(b.type), b.qty, `${b.pctCut}%`].join(" ")).join(" | ");
+  if (key === "owner") return [rs.owner, rs.support, ...rowOwnerNames(row)].join(" ");
+  if (key === "route") return [routeType(row), ...routeFor(row).map(k=>`${stageLabel(k)} ${STAGE_BY_KEY[k]?.short || ""}`)].join(" ");
+  if (key === "open") return `${fmt(rs.qty)} ${rs.qty}`;
+  if (key === "idle") return `${rs.idle}d ${rs.idle}`;
+  if (key === "action") return rs.action;
+  return "";
+}
+function hasWipColumnFilters(filters){
+  return Object.values(filters || {}).some(v => String(v || "").trim());
+}
+function wipMatchesGridColumnFilters(row, filters){
+  return Object.entries(filters || {}).every(([key,value]) => {
+    const q = String(value || "").trim();
+    return !q || tokenSearchMatch(wipMatrixColumnText(row, key), q);
+  });
+}
 function bucketTypeLabel(type){
   return ({ completed_not_issued:"Ready for Next Dept", received_not_processed:"With Department", tail_balance:"Tail / Closure Due", cutting_pending:"Cutting Pending", short_closed:"Short Closed", ram:"Reject / Alter / Missing", approved_reject_dispatch:"Approved Reject Dispatch", reconcile:"Reconcile", extra_cut:"Extra Cut" })[type] || type;
 }
@@ -2241,13 +2310,15 @@ function WipStatus({ rows, onOpen, clearTick=0 }){
   const [owner,setOwner] = useState(()=>safeJsonLoad(uiStorageKey("wip_owner"), "all"));
   const [route,setRoute] = useState(()=>safeJsonLoad(uiStorageKey("wip_route"), "all"));
   const [viewMode,setViewMode] = useState(()=>safeJsonLoad(uiStorageKey("wip_view_mode"), "matrix"));
+  const [columnFilters,setColumnFilters] = useState(()=>safeJsonLoad(uiStorageKey("wip_column_filters"), {}));
   useEffect(()=>safeJsonSave(uiStorageKey("wip_search"), localSearch), [localSearch]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_dept"), dept), [dept]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_issue"), issue), [issue]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_owner"), owner), [owner]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_route"), route), [route]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_view_mode"), viewMode), [viewMode]);
-  useEffect(()=>{ if (!clearTick) return; setLocalSearch(""); setDept("all"); setIssue("all"); setOwner("all"); setRoute("all"); setViewMode("matrix"); setSort({key:"open",dir:"desc"}); }, [clearTick]);
+  useEffect(()=>safeJsonSave(uiStorageKey("wip_column_filters"), columnFilters), [columnFilters]);
+  useEffect(()=>{ if (!clearTick) return; setLocalSearch(""); setDept("all"); setIssue("all"); setOwner("all"); setRoute("all"); setViewMode("matrix"); setColumnFilters({}); setSort({key:"open",dir:"desc"}); }, [clearTick]);
   const [showCutActivity,setShowCutActivity] = useState(false);
   const [sizeBreak,setSizeBreak] = useState(false);
   const [sort,setSort] = useState({ key:"open", dir:"desc" });
@@ -2260,7 +2331,8 @@ function WipStatus({ rows, onOpen, clearTick=0 }){
     const ownerOk = owner === "all" || rowOwnerNames(row).includes(owner);
     const text = [row.order_no,row.style_no,row.buyer,row.colour,row.component,statusText(row),rowStatus(row).owner,routeType(row)].join(" ").toLowerCase();
     const searchOk = !searchText || text.includes(searchText);
-    return routeOk && deptOk && issueOk && ownerOk && searchOk;
+    const columnOk = viewMode !== "matrix" || wipMatchesGridColumnFilters(row, columnFilters);
+    return routeOk && deptOk && issueOk && ownerOk && searchOk && columnOk;
   }).sort((a,b)=>{
     const av = compareValue(a, sort.key), bv = compareValue(b, sort.key);
     const res = typeof av === "number" || typeof bv === "number" ? n(av)-n(bv) : String(av).localeCompare(String(bv));
@@ -2274,6 +2346,9 @@ function WipStatus({ rows, onOpen, clearTick=0 }){
     { key:"reconcile", label:"Reconcile", value:allBuckets.filter(x=>x.bucket.type==="reconcile").reduce((a,x)=>a+n(x.bucket.qty),0), note:"total jump / mismatch" },
   ];
   const selectedDeptForSize = dept === "all" ? null : dept;
+  const hasGridColumnFilters = hasWipColumnFilters(columnFilters);
+  const setGridColumnFilter = (key, value) => setColumnFilters(prev => ({ ...(prev || {}), [key]:value }));
+  const clearWipFilters = () => { setLocalSearch(""); setDept("all"); setIssue("all"); setOwner("all"); setRoute("all"); setColumnFilters({}); setSort({key:"open",dir:"desc"}); };
   const controlRows = wipControlRows(filtered);
   const openRowDrill = (row, stage) => onOpen?.(row, stage || rowStatus(row).stage || routeFor(row)[0] || "cutting");
   const modeRows = viewMode === "order" ? wipOrderViewRows(filtered) : viewMode === "department" ? departmentCurrentRows(filtered).map(({stage,...r})=>r) : viewMode === "issue" ? departmentIssueRows(filtered).map(({stage,type,...r})=>r) : [];
@@ -2288,12 +2363,12 @@ function WipStatus({ rows, onOpen, clearTick=0 }){
         <div className="mt-filter-group"><span className="mt-toolbar-label">Owner</span><select className="mt-select" value={owner} onChange={e=>setOwner(e.target.value)}>{owners.map(o=><option key={o} value={o}>{o === "all" ? "All owners" : o}</option>)}</select></div>
         <div className="mt-filter-group"><span className="mt-toolbar-label">Route</span><select className="mt-select" value={route} onChange={e=>setRoute(e.target.value)}><option value="all">All routes</option><option>Plain</option><option>Print</option><option>Embroidery</option><option>Print + Emb</option></select></div>
         <button className={`mt-btn ${sizeBreak?"primary":"ghost"}`} onClick={()=>setSizeBreak(v=>!v)}><Layers size={14}/>Size breakup</button>
-        <button className="mt-btn ghost" onClick={()=>{setLocalSearch("");setDept("all");setIssue("all");setOwner("all");setRoute("all");setSort({key:"open",dir:"desc"});}}>Reset</button>
+        <button className={`mt-btn ${hasGridColumnFilters ? "primary" : "ghost"}`} onClick={clearWipFilters}>Clear WIP Filters</button>
         <span className="mt-page-filter-note">{filtered.length} rows · {controlRows.length} open/control rows</span>
       </div>
       <div className="mt-view-mode-bar"><span className="mt-toolbar-label">Sheet View</span>{[["matrix","Grid View"],["control","Open Control"],["order","Order View"],["department","Department View"],["issue","Issue View"]].map(([k,l])=><button key={k} className={`mt-btn ${viewMode===k?"active":"ghost"}`} onClick={()=>setViewMode(k)}>{l}</button>)}<button className={`mt-btn ${showCutActivity?"active":"ghost"}`} onClick={()=>setShowCutActivity(v=>!v)}>{showCutActivity ? "Hide Other Open Split" : "Show Other Open Split"}</button></div>
     </div>
-    {viewMode === "order" || viewMode === "department" || viewMode === "issue" ? <SimpleTable title={viewMode==="order"?"Order-wise WIP summary":viewMode==="department"?"Department open summary":"Issue-wise open summary"} sub="Summary view first. Click Full Matrix or drill dashboards only when style-level detail is needed." rows={modeRows} empty="No rows in this view." /> : viewMode === "control" ? <div className="mt-table-wrap"><table className="mt-table mt-compact-wip-table"><thead><tr><th className="mt-sticky">Open Style / Order</th><th>Pending Stage</th><th>Next Action</th>{showCutActivity && <th>Other Open Split</th>}<th>Open Qty</th><th>R/A/M</th><th>Idle</th><th>Owner</th></tr></thead><tbody>{controlRows.length ? controlRows.map(({row,status})=>{ const stage=status.stage || routeFor(row)[0] || "cutting"; const st=sdata(row,stage); const c=cellBreakup(row,stage); return <React.Fragment key={row.id}><tr className="drillable" onClick={()=>openRowDrill(row,stage)}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}</div></div></td><td><PrimaryPendingStage row={row} onOpen={(st)=>openRowDrill(row,st)}/></td><td><div className="mt-small">{status.action}</div></td>{showCutActivity && <td><StatusByCutQty row={row} compact={true} excludePrimary={true} onOpen={(st)=>openRowDrill(row,st)}/></td>}<td><div className="mt-open-big">{fmt(status.qty)}</div><div className="mt-small">{c.note}</div></td><td>{fmt(c.ram)}</td><td>{status.idle}d</td><td><b>{status.owner}</b>{status.support ? <div className="mt-small">Support: {status.support}</div> : null}</td></tr>{sizeBreak && <tr className="mt-subrow"><td colSpan={showCutActivity ? 8 : 7}><SizeBreakupStrip row={row} stage={selectedDeptForSize || stage}/></td></tr>}</React.Fragment>; }) : <tr><td colSpan={showCutActivity ? 8 : 7} style={{padding:18}}>No open/control rows in the current WIP filters.</td></tr>}</tbody></table></div> : <div className="mt-table-wrap"><table className="mt-table"><thead><tr><SortTh sticky label="Style" sortKey="style" sort={sort} setSort={setSort}/><SortTh label="Pending Stage" sortKey="status" sort={sort} setSort={setSort}/>{showCutActivity && <th>Other Open Split</th>}<SortTh label="Owner" sortKey="owner" sort={sort} setSort={setSort}/><SortTh label="Route" sortKey="route" sort={sort} setSort={setSort}/>{STAGES.map(s=><th key={s.key}>{s.short}</th>)}<SortTh label="Open" sortKey="open" sort={sort} setSort={setSort}/><SortTh label="Idle" sortKey="idle" sort={sort} setSort={setSort}/><th>Next Action</th></tr></thead><tbody>
+    {viewMode === "order" || viewMode === "department" || viewMode === "issue" ? <SimpleTable title={viewMode==="order"?"Order-wise WIP summary":viewMode==="department"?"Department open summary":"Issue-wise open summary"} sub="Summary view first. Click Full Matrix or drill dashboards only when style-level detail is needed." rows={modeRows} empty="No rows in this view." /> : viewMode === "control" ? <div className="mt-table-wrap"><table className="mt-table mt-compact-wip-table"><thead><tr><th className="mt-sticky">Open Style / Order</th><th>Pending Stage</th><th>Next Action</th>{showCutActivity && <th>Other Open Split</th>}<th>Open Qty</th><th>R/A/M</th><th>Idle</th><th>Owner</th></tr></thead><tbody>{controlRows.length ? controlRows.map(({row,status})=>{ const stage=status.stage || routeFor(row)[0] || "cutting"; const st=sdata(row,stage); const c=cellBreakup(row,stage); return <React.Fragment key={row.id}><tr className="drillable" onClick={()=>openRowDrill(row,stage)}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}</div></div></td><td><PrimaryPendingStage row={row} onOpen={(st)=>openRowDrill(row,st)}/></td><td><div className="mt-small">{status.action}</div></td>{showCutActivity && <td><StatusByCutQty row={row} compact={true} excludePrimary={true} onOpen={(st)=>openRowDrill(row,st)}/></td>}<td><div className="mt-open-big">{fmt(status.qty)}</div><div className="mt-small">{c.note}</div></td><td>{fmt(c.ram)}</td><td>{status.idle}d</td><td><b>{status.owner}</b>{status.support ? <div className="mt-small">Support: {status.support}</div> : null}</td></tr>{sizeBreak && <tr className="mt-subrow"><td colSpan={showCutActivity ? 8 : 7}><SizeBreakupStrip row={row} stage={selectedDeptForSize || stage}/></td></tr>}</React.Fragment>; }) : <tr><td colSpan={showCutActivity ? 8 : 7} style={{padding:18}}>No open/control rows in the current WIP filters.</td></tr>}</tbody></table></div> : <div className="mt-table-wrap"><table className="mt-table"><thead><tr><SortTh sticky label="Style" sortKey="style" sort={sort} setSort={setSort}/><SortTh label="Pending Stage" sortKey="status" sort={sort} setSort={setSort}/>{showCutActivity && <th>Other Open Split</th>}<SortTh label="Owner" sortKey="owner" sort={sort} setSort={setSort}/><SortTh label="Route" sortKey="route" sort={sort} setSort={setSort}/>{STAGES.map(stage=><th key={stage.key}>{stage.short}</th>)}<SortTh label="Open" sortKey="open" sort={sort} setSort={setSort}/><SortTh label="Idle" sortKey="idle" sort={sort} setSort={setSort}/><th>Next Action</th></tr><tr className="mt-col-filter-row"><th className="mt-sticky"><input className="mt-col-filter-input" value={columnFilters.style || ""} onChange={e=>setGridColumnFilter("style", e.target.value)} placeholder="order/style/buyer/colour" /></th><th><input className="mt-col-filter-input" value={columnFilters.status || ""} onChange={e=>setGridColumnFilter("status", e.target.value)} placeholder="pending/status" /></th>{showCutActivity && <th><input className="mt-col-filter-input" value={columnFilters.other || ""} onChange={e=>setGridColumnFilter("other", e.target.value)} placeholder="other split" /></th>}<th><input className="mt-col-filter-input" value={columnFilters.owner || ""} onChange={e=>setGridColumnFilter("owner", e.target.value)} placeholder="owner" /></th><th><input className="mt-col-filter-input" value={columnFilters.route || ""} onChange={e=>setGridColumnFilter("route", e.target.value)} placeholder="route" /></th>{STAGES.map(stage=><th key={`filter-${stage.key}`}><input className="mt-col-filter-input stage" value={columnFilters[`stage:${stage.key}`] || ""} onChange={e=>setGridColumnFilter(`stage:${stage.key}`, e.target.value)} placeholder={`${stage.short} status`} title={`Filter ${stage.label} cell. Try: open, skip, over, 0R, feed, good qty`} /></th>)}<th><input className="mt-col-filter-input" value={columnFilters.open || ""} onChange={e=>setGridColumnFilter("open", e.target.value)} placeholder="qty" /></th><th><input className="mt-col-filter-input" value={columnFilters.idle || ""} onChange={e=>setGridColumnFilter("idle", e.target.value)} placeholder="idle" /></th><th><div style={{display:"flex",gap:4}}><input className="mt-col-filter-input" value={columnFilters.action || ""} onChange={e=>setGridColumnFilter("action", e.target.value)} placeholder="action" /><button className="mt-btn ghost mt-col-filter-clear" onClick={()=>setColumnFilters({})} title="Clear only grid column filters">Clear</button></div></th></tr></thead><tbody>
       {filtered.map(row => { const rs = rowStatus(row); const sizeStage = selectedDeptForSize || rs.stage; const openDrill = () => openRowDrill(row, rs.stage || routeFor(row)[0] || "cutting"); return <React.Fragment key={row.id}>
         <tr>
           <td className="mt-sticky mt-clickable-cell" onClick={openDrill} title="Click to open selected/current department"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}<div className="mt-drill-hint">Open detail</div></div></div></td>
@@ -4156,7 +4231,7 @@ function styleTemplateRows(){
 
 function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0 }){
   const emptyForm = {
-    id:"", order_no:"", style_no:"", buyer:"", colour:"", component:"", order_qty:"", order_size_qty:{}, size_set:"alpha", set_id:"", line:"",
+    id:"", order_no:"", style_no:"", buyer:"", colour:"", component:"", set_components:"", order_qty:"", order_size_qty:{}, size_set:"alpha", set_id:"", line:"",
     print_required:false, embroidery_required:false, priority:"Normal", difficulty:"Normal", photo_url:"", photo_folder_url:""
   };
   const [form,setForm] = useState(emptyForm);
@@ -4200,7 +4275,8 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0 }
       order_size_qty:normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row)),
       size_set:row.size_set || "alpha", set_id:row.set_id || "", line:row.line || "",
       print_required:!!row.print_required, embroidery_required:!!row.embroidery_required, priority:row.priority || "Normal", difficulty:row.difficulty || "Normal",
-      photo_url:row.photo_url || row.photo_thumb_url || "", photo_folder_url:row.photo_folder_url || ""
+      photo_url:row.photo_url || row.photo_thumb_url || "", photo_folder_url:row.photo_folder_url || "",
+      set_components: row.set_id ? (allRows||[]).filter(r=>String(r.set_id||"").toUpperCase()===String(row.set_id||"").toUpperCase() && String(r.order_no||"").toUpperCase()===String(row.order_no||"").toUpperCase() && String(r.style_no||"").toUpperCase()===String(row.style_no||"").toUpperCase() && String(r.colour||"").toUpperCase()===String(row.colour||"").toUpperCase()).map(r=>r.component).filter(Boolean).join(", ") : ""
     });
     setMsg({ tone:"info", text:`Editing ${row.style_no} · ${row.colour} · ${row.component}` });
     window.scrollTo({ top:0, behavior:"smooth" });
@@ -4232,9 +4308,19 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0 }
       const ok = window.confirm(`Set ID ${clean.set_id} is already used by another order/style (${naturalKeyLabel(duplicateSetId)}).\n\nUse same Set ID only for real TOP/BOTTOM/set components. Continue?`);
       if (!ok) return;
     }
+    let componentList = [clean.component];
+    if (clean.set_id && !editing) {
+      componentList = parseComponentList(form.set_components || clean.component);
+      if (!componentList.includes(clean.component)) componentList.unshift(clean.component);
+      componentList = Array.from(new Set(componentList));
+      if (componentList.length < 2) {
+        setMsg({ tone:"late", text:"Set entry requires all components in one go. Enter components like TOP, BOTTOM in Set components." });
+        return;
+      }
+    }
     const prevRow = editing ? (allRows||[]).find(r=>String(r.id)===String(form.id)) : null;
-    const duplicate = (allRows||[]).find(r=>styleCompositeKey(r)===styleCompositeKey(clean) && String(r.id)!==String(form.id));
-    if (duplicate) { setMsg({ tone:"late", text:"Duplicate Order No + Style No + Colour + Component already exists. Edit that row instead of adding another." }); return; }
+    const duplicate = (allRows||[]).find(r=>componentList.some(comp=>styleCompositeKey(r)===styleCompositeKey({ ...clean, component:comp })) && String(r.id)!==String(form.id));
+    if (duplicate) { setMsg({ tone:"late", text:`Duplicate row already exists for ${naturalKeyLabel(duplicate)}. Edit that row instead of adding another.` }); return; }
     if (editing && prevRow) {
       const oldKey = styleCompositeKey(prevRow);
       const newKey = styleCompositeKey(clean);
@@ -4249,27 +4335,40 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0 }
         if (!ok) return;
       }
     }
-    const newRow = {
+    const rowsToSave = editing ? [{
       ...(prevRow || {}),
       ...clean,
-      id:editing ? form.id : uid("demo_manual_style"),
-      stages: editing ? safeStagesForEditedRow(prevRow, clean) : blankStagesForRoute(clean),
+      id:form.id,
+      stages:safeStagesForEditedRow(prevRow, clean),
       route:routeFor(clean),
-    };
+    }] : componentList.map(comp=>({
+      ...clean,
+      component:comp,
+      id:uid("demo_manual_style"),
+      stages:blankStagesForRoute({ ...clean, component:comp }),
+      route:routeFor({ ...clean, component:comp }),
+    }));
+    const mainRow = rowsToSave[0];
     setBusy(true);
     try {
       setRows(prev=>{
-        const exists = prev.some(r=>String(r.id)===String(newRow.id));
-        if (exists) return prev.map(r=>String(r.id)===String(newRow.id) ? newRow : r);
-        return [newRow, ...prev];
+        let next = [...prev];
+        rowsToSave.forEach(rowToSave=>{
+          const exists = next.some(r=>String(r.id)===String(rowToSave.id));
+          next = exists ? next.map(r=>String(r.id)===String(rowToSave.id) ? rowToSave : r) : [rowToSave, ...next];
+        });
+        return next;
       });
-      const { error, skipped, warning, via, recoveredFrom } = await upsertOneStyleToSupabase(newRow);
-      if (editing && prevRow && styleCompositeKey(prevRow) !== styleCompositeKey(newRow) && !skipped) {
+      const { error, skipped, warning, via, recoveredFrom } = rowsToSave.length > 1
+        ? await robustUpsertOrdersToSupabase(rowsToSave)
+        : await upsertOneStyleToSupabase(mainRow);
+      if (editing && prevRow && styleCompositeKey(prevRow) !== styleCompositeKey(mainRow) && !skipped) {
         await deleteOneStyleFromSupabase(prevRow);
       }
-      if (error) setMsg({ tone:"late", text:`Saved in browser, Supabase save failed: ${error.message}` });
-      else if (warning) setMsg({ tone:"warn", text:`${editing ? "Updated" : "Added"} ${newRow.style_no} in browser. ${warning}` });
-      else setMsg({ tone:variance.diff ? "warn" : "ok", text:`${editing ? "Updated" : "Added"} ${newRow.style_no}. ${variance.diff ? variance.text + " " : ""}${skipped ? "Browser/demo save only." : supabaseSaveLabel({via})}${shortRecoveredSupabaseNote(recoveredFrom)}` });
+      const saveLabel = rowsToSave.length > 1 ? `Added ${rowsToSave.length} set components (${componentList.join(", ")})` : `${editing ? "Updated" : "Added"} ${mainRow.style_no}`;
+      if (error) setMsg({ tone:"late", text:`${saveLabel} in browser, Supabase save failed: ${error.message}` });
+      else if (warning) setMsg({ tone:"warn", text:`${saveLabel} in browser. ${warning}` });
+      else setMsg({ tone:variance.diff ? "warn" : "ok", text:`${saveLabel}. ${variance.diff ? variance.text + " " : ""}${skipped ? "Browser/demo save only." : supabaseSaveLabel({via})}${shortRecoveredSupabaseNote(recoveredFrom)}` });
       if (!editing) setForm(emptyForm);
     } finally { setBusy(false); }
   }
@@ -4376,6 +4475,7 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
         <div className="mt-two"><div><label className="mt-small">Buyer / Brand *</label><input className="mt-input" value={form.buyer} onChange={e=>setField("buyer",e.target.value.toUpperCase())}/></div><div><label className="mt-small">Order Qty *</label><input className="mt-input" value={form.order_qty} onChange={e=>setField("order_qty",e.target.value.replace(/[^0-9]/g,""))}/></div></div>
         <div className="mt-two"><div><label className="mt-small">Colour *</label><input className="mt-input" value={form.colour} onChange={e=>setField("colour",e.target.value.toUpperCase())}/></div><div><label className="mt-small">Component *</label><input className="mt-input" value={form.component} onChange={e=>setField("component",e.target.value.toUpperCase())}/></div></div>
         <div className="mt-two"><div><label className="mt-small">Size Set</label><select className="mt-select" value={form.size_set} onChange={e=>setField("size_set",e.target.value)}>{Object.entries(getSizeSets()).map(([k,arr])=><option key={k} value={k}>{k} · {arr.join(" / ")}</option>)}</select></div><div><label className="mt-small">Set ID</label><div style={{display:"flex", gap:6}}><input className="mt-input" style={{flex:1}} value={form.set_id} onChange={e=>setField("set_id",e.target.value.toUpperCase())} placeholder="Optional, TOP/BOTTOM set matching"/><button className="mt-btn ghost" type="button" onClick={()=>setField("set_id", suggestSetIdFor(form, allRows))}>Suggest</button></div>{duplicateSetId ? <div className="mt-small" style={{color:"var(--fg-warn)", fontWeight:800}}>Same Set ID exists on {naturalKeyLabel(duplicateSetId)}. Use same ID only for real set components.</div> : <div className="mt-small">System can suggest a clean Set ID so unrelated duplicates are avoided.</div>}</div></div>
+        {!editing && String(form.set_id||"").trim() ? <div className="mt-order-size-card"><b>Set components — create together</b><div className="mt-small">Because this is a set, enter all components in one go so TOP/BOTTOM pieces do not get missed. Example: TOP, BOTTOM.</div><input className="mt-input" style={{width:"100%", marginTop:6}} value={form.set_components || ""} onChange={e=>setField("set_components", e.target.value.toUpperCase())} placeholder="TOP, BOTTOM"/><div className="mt-small">Add Style will create/update one row per component using the same Order Qty, size breakup, route and Set ID.</div></div> : null}
         <div className="mt-order-size-card"><div style={{display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center"}}><div><b>Order Size Breakup</b><div className="mt-small">Order Qty is master. Size entries subtract from it; missing balance is shown instead of changing Order Qty.</div></div><div style={{display:"flex", gap:6, flexWrap:"wrap"}}><span className={`mt-chip ${statusClass(formSizeVariance.tone)}`}>{formSizeVariance.text}</span><span className="mt-chip mt-muted">Size total {fmt(formSizeTotal)} / Order {fmt(form.order_qty)}</span><button className="mt-btn ghost" type="button" onClick={distributeFormOrderQty}>Distribute Order Qty</button><button className="mt-btn ghost" type="button" onClick={clearFormOrderSizes}>Clear Sizes</button></div></div><div className="mt-order-size-row">{formSizes.map(size=><div className="mt-order-size-cell" key={size}><label>{size}</label><input className="mt-cell-input" style={{width:"100%"}} value={formOrderSizeQty[size] || ""} onChange={e=>setOrderSizeQty(size,e.target.value)} placeholder="0" /></div>)}</div><div className="mt-small">Bulk Excel uses the same size columns. Order Qty is mandatory; upload summary warns if size breakup is short/excess.</div></div>
         <div className="mt-two"><div><label className="mt-small">Planning line override</label><select className="mt-select" value={form.line} onChange={e=>setField("line",e.target.value)}><option value="">Not fixed — decide in Planning</option>{productionLineNames().map(l=><option key={l} value={l}>{l}</option>)}</select><div className="mt-small">Stitching line is normally decided later in Planning, not locked in Style Master.</div></div><div><label className="mt-small">Priority</label><select className="mt-select" value={form.priority} onChange={e=>setField("priority",e.target.value)}>{["Low","Normal","High","Urgent"].map(x=><option key={x}>{x}</option>)}</select></div></div>
         <div className="mt-two"><label className="mt-small"><input type="checkbox" checked={!!form.print_required} onChange={e=>setField("print_required",e.target.checked)}/> Print required</label><label className="mt-small"><input type="checkbox" checked={!!form.embroidery_required} onChange={e=>setField("embroidery_required",e.target.checked)}/> Embroidery required</label></div>
@@ -4572,7 +4672,7 @@ export default function App(){
     setDashboardDrill(null);
     const keys = [
       "global_query","global_buyer","global_order",
-      "wip_search","wip_dept","wip_issue","wip_owner","wip_route","wip_view_mode",
+      "wip_search","wip_dept","wip_issue","wip_owner","wip_route","wip_view_mode","wip_column_filters",
       "register_from","register_to","register_dept","register_activity","register_query",
       "monthly_buyer","monthly_focus","monthly_route",
       "chase_q","chase_issue","chase_dept"
