@@ -19,12 +19,15 @@ import {
   ShieldCheck,
   Shirt,
   Truck,
-  Upload,
+  Upload, 
   Users,
   Warehouse,
   X,
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
+
+const APP_VERSION = "V7.5.17";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.17 size groups and WIP view toggles";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -251,6 +254,12 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-plan-row-label { min-width:260px; }
 .mt-status-cell-wrap { display:grid; gap:4px; min-width:130px; }
 .mt-status-cell-wrap.compact-wrap { display:flex; flex-wrap:wrap; align-items:center; gap:3px; min-width:0; }
+.mt-status-split-note { width:100%; border:1px dashed var(--line-2); border-radius:9px; background:#fffaf1; padding:6px 8px; color:var(--muted-3); font-size:9.5px; line-height:1.35; }
+.mt-update-backdrop { position:fixed; inset:0; z-index:80; background:rgba(20,18,15,0.45); display:flex; align-items:center; justify-content:center; padding:20px; }
+.mt-update-popup { width:min(520px,96vw); background:var(--surface); border:1px solid var(--line-2); border-radius:18px; box-shadow:0 18px 50px rgba(0,0,0,.24); overflow:hidden; }
+.mt-update-popup .head { background:var(--ink); color:var(--bg); padding:14px 16px; font-family:'Archivo',sans-serif; font-weight:800; font-size:17px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.mt-update-popup .body { padding:16px; display:grid; gap:10px; }
+.mt-update-popup .actions { display:flex; justify-content:flex-end; gap:8px; padding:0 16px 16px; flex-wrap:wrap; }
 
 @media (max-width:1180px){ .mt-entry-metrics{grid-template-columns:repeat(2,minmax(0,1fr));} .mt-context-grid{grid-template-columns:1fr 1fr;} .mt-compact-hero{grid-template-columns:1fr 1fr;} }
 @media (max-width:720px){ .mt-context-grid,.mt-compact-hero{grid-template-columns:1fr;} .mt-bar-row{grid-template-columns:84px 1fr 54px;} }
@@ -274,11 +283,54 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 @media (max-width:620px){ .mt-entry-metrics{grid-template-columns:1fr;} .mt-grid{grid-template-columns:1fr;} .mt-dash-grid,.mt-summary-strip,.mt-month-grid{grid-template-columns:1fr;} .mt-page{padding:14px 12px 28px;} .mt-header{padding:15px 12px 10px;} .mt-tabs{padding-left:12px; padding-right:12px;} }
 `;
 
-const SIZE_SETS = {
+const DEFAULT_SIZE_SETS = {
   alpha: ["XS", "S", "M", "L", "XL", "XXL"],
   kids: ["2-3Y", "3-4Y", "4-5Y", "5-6Y", "7-8Y", "9-10Y"],
   waist: ["30", "32", "34", "36", "38"],
 };
+function cleanSizeToken(v){ return String(v || "").trim().toUpperCase(); }
+function normalizeSizeGroupKey(v){
+  return String(v || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g,"_").replace(/^_+|_+$/g,"") || "custom";
+}
+function getCustomSizeSets(){
+  try {
+    const parsed = JSON.parse(localStorage.getItem("production_size_sets") || "{}");
+    if (!parsed || typeof parsed !== "object") return {};
+    const out = {};
+    Object.entries(parsed).forEach(([k,arr])=>{
+      const key = normalizeSizeGroupKey(k);
+      const sizes = Array.isArray(arr) ? arr.map(cleanSizeToken).filter(Boolean) : [];
+      if (key && sizes.length) out[key] = Array.from(new Set(sizes));
+    });
+    return out;
+  } catch { return {}; }
+}
+function getSizeSets(){ return { ...DEFAULT_SIZE_SETS, ...getCustomSizeSets() }; }
+function sizeSetsToText(sets=getSizeSets()){
+  return Object.entries(sets).map(([k,v])=>`${k} = ${(v||[]).join(", ")}`).join("\n");
+}
+function parseSizeSetsText(text){
+  const out = {};
+  String(text || "").split(/\r?\n/).forEach(line=>{
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const parts = trimmed.split(/[:=]/);
+    if (parts.length < 2) return;
+    const key = normalizeSizeGroupKey(parts.shift());
+    const sizes = parts.join("=").split(/[,/|]+/).map(cleanSizeToken).filter(Boolean);
+    if (key && sizes.length) out[key] = Array.from(new Set(sizes));
+  });
+  return out;
+}
+function saveCustomSizeSets(allSets){
+  const clean = {};
+  Object.entries(allSets || {}).forEach(([k,arr])=>{
+    const key = normalizeSizeGroupKey(k);
+    const sizes = Array.isArray(arr) ? arr.map(cleanSizeToken).filter(Boolean) : [];
+    if (key && sizes.length) clean[key] = Array.from(new Set(sizes));
+  });
+  try { localStorage.setItem("production_size_sets", JSON.stringify(clean)); } catch {}
+}
 
 const STAGES = [
   { key: "cutting", label: "Cutting", short: "Cut", owner: "Cutting HOD" },
@@ -488,7 +540,7 @@ function wipOrderViewRows(rows){
 function stageLabel(k){ return STAGE_BY_KEY[k]?.label || k; }
 function stageOwner(k){ return STAGE_BY_KEY[k]?.owner || "Production Owner"; }
 function hodAndCoordinator(k){ return `${stageOwner(k)} + Production Coordinator`; }
-function sizesFor(row){ return SIZE_SETS[row.size_set] || SIZE_SETS.alpha; }
+function sizesFor(row){ const sets = getSizeSets(); return sets[row?.size_set] || sets.alpha || DEFAULT_SIZE_SETS.alpha; }
 function buildRouteFromToggles(row){
   const route = ["cutting"];
   if (!!row.print_required) route.push("printing");
@@ -766,13 +818,14 @@ function StatusDeptLinks({ row, onOpen, compact=false }){
     <span style={{textAlign:"right"}}><span className="dept-qty">{fmt(b.qty)}</span><br/><span className="dept-pct">{b.pct}%</span></span>
   </button>)}{parts.length>1 && <div className="mt-current-split-note">Split across {parts.length} departments · click dept to open</div>}</div>;
 }
-function StatusByCutQty({ row, onOpen, compact=false }){
+function StatusByCutQty({ row, onOpen, compact=false, excludePrimary=false }){
   const base = statusCutBaseQty(row);
-  const allParts = statusDistributionByCut(row);
+  const rawParts = statusDistributionByCut(row);
+  const allParts = excludePrimary ? rawParts.slice(1) : rawParts;
   const parts = allParts.slice(0, compact ? 4 : 8);
-  if (!parts.length) return <div className="mt-cut-breakup-mini"><span className="mt-chip mt-ok">100% closed</span><div className="mt-small">Base: {fmt(base)} cut/order</div></div>;
+  if (!parts.length) return <div className="mt-cut-breakup-mini"><span className="mt-chip mt-ok">No other open split</span><div className="mt-small">Base: {fmt(base)} cut/order</div></div>;
   return <div className="mt-status-cell-wrap compact-wrap mt-cut-status-wrap mt-cut-breakup-mini">
-    <div className="mt-current-split-note" style={{width:"100%"}}>All activity vs cut/order: {fmt(base)}</div>
+    <div className="mt-current-split-note" style={{width:"100%"}}>{excludePrimary ? "Other open split" : "All open split"} vs cut/order: {fmt(base)}</div>
     {parts.map((b,idx)=><button key={`cut-${b.type}-${b.stage}-${idx}`} className={`mt-status-link compact ${deptClass(b.stage)}`} onClick={(e)=>{e.stopPropagation(); onOpen?.(b.stage,b);}} title={`Open ${stageLabel(b.stage)} detail · ${fmt(b.qty)} = ${b.pctCut}% of cut/order`}>
       <span><span className="dept-name">{STAGE_BY_KEY[b.stage]?.short || stageLabel(b.stage)}</span><br/><span className="mt-small">{bucketTypeLabel(b.type)}</span></span>
       <span style={{textAlign:"right"}}><span className="dept-qty">{fmt(b.qty)}</span><br/><span className="dept-pct">{b.pctCut}%</span></span>
@@ -1839,6 +1892,7 @@ function WipStatus({ rows, onOpen }){
   const [owner,setOwner] = useState("all");
   const [route,setRoute] = useState("all");
   const [viewMode,setViewMode] = useState("matrix");
+  const [showCutActivity,setShowCutActivity] = useState(false);
   const [sizeBreak,setSizeBreak] = useState(false);
   const [sort,setSort] = useState({ key:"open", dir:"desc" });
   const owners = ["all", ...uniqueList(rows.flatMap(rowOwnerNames))];
@@ -1868,7 +1922,7 @@ function WipStatus({ rows, onOpen }){
   const openRowDrill = (row, stage) => onOpen?.(row, stage || rowStatus(row).stage || routeFor(row)[0] || "cutting");
   const modeRows = viewMode === "order" ? wipOrderViewRows(filtered) : viewMode === "department" ? departmentCurrentRows(filtered).map(({stage,...r})=>r) : viewMode === "issue" ? departmentIssueRows(filtered).map(({stage,type,...r})=>r) : [];
   return <div className="mt-card">
-    <div className="mt-section"><h3 className="mt-panel-title">Live WIP Status — Open Control Sheet</h3><div className="mt-panel-sub">Default view shows what is open, blocked, ready, or actionable. Use Full Matrix only when you need every department column.</div></div>
+    <div className="mt-section"><h3 className="mt-panel-title">Live WIP Status — Grid / Open Control</h3><div className="mt-panel-sub">Pending Stage = one main action. Optional Other Open Split shows smaller leftover/tail/R-A-M buckets by cut/order %, so it can be hidden when the sheet feels busy.</div></div>
     <div className="mt-section no-print">
       <div className="mt-summary-strip">{summary.map(s=><button key={s.key} className={`mt-summary-tile ${issue===s.key || (s.key==="all"&&issue==="all") ? "active" : ""}`} onClick={()=>setIssue(s.key)}><div className="label">{s.label}</div><div className="value">{typeof s.value === "number" && s.key!=="all" ? fmt(s.value) : s.value}</div><div className="mt-small">{s.note}</div></button>)}</div>
       <div className="mt-filter-row">
@@ -1881,24 +1935,24 @@ function WipStatus({ rows, onOpen }){
         <button className="mt-btn ghost" onClick={()=>{setLocalSearch("");setDept("all");setIssue("all");setOwner("all");setRoute("all");setSort({key:"open",dir:"desc"});}}>Reset</button>
         <span className="mt-page-filter-note">{filtered.length} rows · {controlRows.length} open/control rows</span>
       </div>
-      <div className="mt-view-mode-bar"><span className="mt-toolbar-label">Sheet View</span>{[["matrix","Grid View"],["control","Open Control"],["order","Order View"],["department","Department View"],["issue","Issue View"]].map(([k,l])=><button key={k} className={`mt-btn ${viewMode===k?"active":"ghost"}`} onClick={()=>setViewMode(k)}>{l}</button>)}</div>
+      <div className="mt-view-mode-bar"><span className="mt-toolbar-label">Sheet View</span>{[["matrix","Grid View"],["control","Open Control"],["order","Order View"],["department","Department View"],["issue","Issue View"]].map(([k,l])=><button key={k} className={`mt-btn ${viewMode===k?"active":"ghost"}`} onClick={()=>setViewMode(k)}>{l}</button>)}<button className={`mt-btn ${showCutActivity?"active":"ghost"}`} onClick={()=>setShowCutActivity(v=>!v)}>{showCutActivity ? "Hide Other Open Split" : "Show Other Open Split"}</button></div>
     </div>
-    {viewMode === "order" || viewMode === "department" || viewMode === "issue" ? <SimpleTable title={viewMode==="order"?"Order-wise WIP summary":viewMode==="department"?"Department open summary":"Issue-wise open summary"} sub="Summary view first. Click Full Matrix or drill dashboards only when style-level detail is needed." rows={modeRows} empty="No rows in this view." /> : viewMode === "control" ? <div className="mt-table-wrap"><table className="mt-table mt-compact-wip-table"><thead><tr><th className="mt-sticky">Open Style / Order</th><th>Pending Stage</th><th>Next Action</th><th>All Activity by Cut %</th><th>Open Qty</th><th>R/A/M</th><th>Idle</th><th>Owner</th></tr></thead><tbody>{controlRows.length ? controlRows.map(({row,status})=>{ const stage=status.stage || routeFor(row)[0] || "cutting"; const st=sdata(row,stage); const c=cellBreakup(row,stage); return <React.Fragment key={row.id}><tr className="drillable" onClick={()=>openRowDrill(row,stage)}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}</div></div></td><td><PrimaryPendingStage row={row} onOpen={(st)=>openRowDrill(row,st)}/></td><td><div className="mt-small">{status.action}</div></td><td><StatusByCutQty row={row} compact={true} onOpen={(st)=>openRowDrill(row,st)}/></td><td><div className="mt-open-big">{fmt(status.qty)}</div><div className="mt-small">{c.note}</div></td><td>{fmt(c.ram)}</td><td>{status.idle}d</td><td><b>{status.owner}</b>{status.support ? <div className="mt-small">Support: {status.support}</div> : null}</td></tr>{sizeBreak && <tr className="mt-subrow"><td colSpan={8}><SizeBreakupStrip row={row} stage={selectedDeptForSize || stage}/></td></tr>}</React.Fragment>; }) : <tr><td colSpan={8} style={{padding:18}}>No open/control rows in the current WIP filters.</td></tr>}</tbody></table></div> : <div className="mt-table-wrap"><table className="mt-table"><thead><tr><SortTh sticky label="Style" sortKey="style" sort={sort} setSort={setSort}/><SortTh label="Pending Stage" sortKey="status" sort={sort} setSort={setSort}/><th>All Activity by Cut %</th><SortTh label="Owner" sortKey="owner" sort={sort} setSort={setSort}/><SortTh label="Route" sortKey="route" sort={sort} setSort={setSort}/>{STAGES.map(s=><th key={s.key}>{s.short}</th>)}<SortTh label="Open" sortKey="open" sort={sort} setSort={setSort}/><SortTh label="Idle" sortKey="idle" sort={sort} setSort={setSort}/><th>Next Action</th></tr></thead><tbody>
+    {viewMode === "order" || viewMode === "department" || viewMode === "issue" ? <SimpleTable title={viewMode==="order"?"Order-wise WIP summary":viewMode==="department"?"Department open summary":"Issue-wise open summary"} sub="Summary view first. Click Full Matrix or drill dashboards only when style-level detail is needed." rows={modeRows} empty="No rows in this view." /> : viewMode === "control" ? <div className="mt-table-wrap"><table className="mt-table mt-compact-wip-table"><thead><tr><th className="mt-sticky">Open Style / Order</th><th>Pending Stage</th><th>Next Action</th>{showCutActivity && <th>Other Open Split</th>}<th>Open Qty</th><th>R/A/M</th><th>Idle</th><th>Owner</th></tr></thead><tbody>{controlRows.length ? controlRows.map(({row,status})=>{ const stage=status.stage || routeFor(row)[0] || "cutting"; const st=sdata(row,stage); const c=cellBreakup(row,stage); return <React.Fragment key={row.id}><tr className="drillable" onClick={()=>openRowDrill(row,stage)}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}</div></div></td><td><PrimaryPendingStage row={row} onOpen={(st)=>openRowDrill(row,st)}/></td><td><div className="mt-small">{status.action}</div></td>{showCutActivity && <td><StatusByCutQty row={row} compact={true} excludePrimary={true} onOpen={(st)=>openRowDrill(row,st)}/></td>}<td><div className="mt-open-big">{fmt(status.qty)}</div><div className="mt-small">{c.note}</div></td><td>{fmt(c.ram)}</td><td>{status.idle}d</td><td><b>{status.owner}</b>{status.support ? <div className="mt-small">Support: {status.support}</div> : null}</td></tr>{sizeBreak && <tr className="mt-subrow"><td colSpan={showCutActivity ? 8 : 7}><SizeBreakupStrip row={row} stage={selectedDeptForSize || stage}/></td></tr>}</React.Fragment>; }) : <tr><td colSpan={showCutActivity ? 8 : 7} style={{padding:18}}>No open/control rows in the current WIP filters.</td></tr>}</tbody></table></div> : <div className="mt-table-wrap"><table className="mt-table"><thead><tr><SortTh sticky label="Style" sortKey="style" sort={sort} setSort={setSort}/><SortTh label="Pending Stage" sortKey="status" sort={sort} setSort={setSort}/>{showCutActivity && <th>Other Open Split</th>}<SortTh label="Owner" sortKey="owner" sort={sort} setSort={setSort}/><SortTh label="Route" sortKey="route" sort={sort} setSort={setSort}/>{STAGES.map(s=><th key={s.key}>{s.short}</th>)}<SortTh label="Open" sortKey="open" sort={sort} setSort={setSort}/><SortTh label="Idle" sortKey="idle" sort={sort} setSort={setSort}/><th>Next Action</th></tr></thead><tbody>
       {filtered.map(row => { const rs = rowStatus(row); const sizeStage = selectedDeptForSize || rs.stage; const openDrill = () => openRowDrill(row, rs.stage || routeFor(row)[0] || "cutting"); return <React.Fragment key={row.id}>
         <tr>
           <td className="mt-sticky mt-clickable-cell" onClick={openDrill} title="Click to open selected/current department"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}<div className="mt-drill-hint">Open detail</div></div></div></td>
           <td className="mt-clickable-cell" onClick={openDrill}><PrimaryPendingStage row={row} onOpen={(stage)=>onOpen?.(row, stage)}/><div className="mt-small">Idle {rs.idle}d</div></td>
-          <td><StatusByCutQty row={row} compact={true} onOpen={(stage)=>onOpen?.(row, stage)}/></td>
+          {showCutActivity && <td><StatusByCutQty row={row} compact={true} excludePrimary={true} onOpen={(stage)=>onOpen?.(row, stage)}/></td>}
           <td className="mt-clickable-cell" onClick={openDrill}><b>{rs.owner}</b>{rs.support ? <div className="mt-small">Support: {rs.support}</div> : null}</td>
           <td className="mt-clickable-cell" onClick={openDrill}><span className="mt-chip mt-info">{routeType(row)}</span><div style={{marginTop:4}}>{routeFor(row).map(k=><span key={k} className="mt-chip mt-muted" style={{margin:"0 3px 3px 0"}}>{STAGE_BY_KEY[k].short}</span>)}</div></td>
           {STAGES.map(s=><StageCell key={s.key} row={row} stageKey={s.key} onOpen={onOpen}/>) }
           <td className="mt-clickable-cell" onClick={openDrill}><b>{fmt(rs.qty)}</b></td><td className="mt-clickable-cell" onClick={openDrill}>{rs.idle}d</td><td className="mt-clickable-cell" onClick={openDrill}>{rs.action}</td>
         </tr>
-        {sizeBreak && <tr className="mt-subrow"><td colSpan={STAGES.length + 9}><SizeBreakupStrip row={row} stage={sizeStage}/></td></tr>}
+        {sizeBreak && <tr className="mt-subrow"><td colSpan={STAGES.length + (showCutActivity ? 9 : 8)}><SizeBreakupStrip row={row} stage={sizeStage}/></td></tr>}
       </React.Fragment>;})}
-      {!filtered.length && <tr><td colSpan={STAGES.length + 9} style={{padding:18}}>No rows match current WIP filters.</td></tr>}
+      {!filtered.length && <tr><td colSpan={STAGES.length + (showCutActivity ? 9 : 8)} style={{padding:18}}>No rows match current WIP filters.</td></tr>}
     </tbody></table></div>}
-    <div className="mt-section"><span className="mt-chip mt-ok">Open Control = default</span> <span className="mt-chip mt-info">Full Matrix = power-user view</span> <span className="mt-chip mt-warn">Click any row/cell for selected department only</span></div>
+    <div className="mt-section"><span className="mt-chip mt-ok">Pending Stage = main action</span> <span className="mt-chip mt-info">Other Open Split = toggleable</span> <span className="mt-chip mt-warn">Click any row/cell for selected department only</span></div>
   </div>;
 }
 
@@ -2941,8 +2995,9 @@ function parseExcelBool(v){
   return !!v && s !== "";
 }
 function normalizeSizeSetName(v){
-  const s = String(v || "alpha").trim().toLowerCase();
-  if (SIZE_SETS[s]) return s;
+  const sets = getSizeSets();
+  const s = normalizeSizeGroupKey(v || "alpha");
+  if (sets[s]) return s;
   if (s.includes("kid")) return "kids";
   if (s.includes("waist") || s.includes("pant") || s.includes("trouser")) return "waist";
   return "alpha";
@@ -3076,7 +3131,7 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
       { name:"Instructions", rows:[
         { Rule:"Action", Detail:"Use ADD_UPDATE to add/update rows. Use HARD_DELETE to remove a style/order/colour/component from demo data." },
         { Rule:"Unique key", Detail:"Order No + Style No + Colour + Component identifies the row." },
-        { Rule:"Size Set", Detail:"Allowed: alpha, kids, waist." },
+        { Rule:"Size Set", Detail:`Allowed: ${Object.keys(getSizeSets()).join(", ")}. Add/edit groups in Settings.` },
         { Rule:"Booleans", Detail:"Print Required / Embroidery Required accept Yes/No, TRUE/FALSE, 1/0." },
         { Rule:"Hard delete", Detail:"For demo cleanup only. Live production should archive/approve instead of hard deleting." },
       ]}
@@ -3143,7 +3198,7 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
         <div className="mt-two"><div><label className="mt-small">Order No *</label><input className="mt-input" value={form.order_no} onChange={e=>setField("order_no",e.target.value.toUpperCase())}/></div><div><label className="mt-small">Style No *</label><input className="mt-input" value={form.style_no} onChange={e=>setField("style_no",e.target.value.toUpperCase())}/></div></div>
         <div className="mt-two"><div><label className="mt-small">Buyer / Brand *</label><input className="mt-input" value={form.buyer} onChange={e=>setField("buyer",e.target.value.toUpperCase())}/></div><div><label className="mt-small">Order Qty *</label><input className="mt-input" value={form.order_qty} onChange={e=>setField("order_qty",e.target.value.replace(/[^0-9]/g,""))}/></div></div>
         <div className="mt-two"><div><label className="mt-small">Colour *</label><input className="mt-input" value={form.colour} onChange={e=>setField("colour",e.target.value.toUpperCase())}/></div><div><label className="mt-small">Component *</label><input className="mt-input" value={form.component} onChange={e=>setField("component",e.target.value.toUpperCase())}/></div></div>
-        <div className="mt-two"><div><label className="mt-small">Size Set</label><select className="mt-select" value={form.size_set} onChange={e=>setField("size_set",e.target.value)}>{Object.keys(SIZE_SETS).map(k=><option key={k} value={k}>{k} · {SIZE_SETS[k].join(" / ")}</option>)}</select></div><div><label className="mt-small">Set ID</label><input className="mt-input" value={form.set_id} onChange={e=>setField("set_id",e.target.value.toUpperCase())} placeholder="Optional, for TOP/BOTTOM set matching"/></div></div>
+        <div className="mt-two"><div><label className="mt-small">Size Set</label><select className="mt-select" value={form.size_set} onChange={e=>setField("size_set",e.target.value)}>{Object.entries(getSizeSets()).map(([k,arr])=><option key={k} value={k}>{k} · {arr.join(" / ")}</option>)}</select></div><div><label className="mt-small">Set ID</label><input className="mt-input" value={form.set_id} onChange={e=>setField("set_id",e.target.value.toUpperCase())} placeholder="Optional, for TOP/BOTTOM set matching"/></div></div>
         <div className="mt-two"><div><label className="mt-small">Default stitching line</label><select className="mt-select" value={form.line} onChange={e=>setField("line",e.target.value)}>{productionLineNames().map(l=><option key={l} value={l}>{l}</option>)}</select></div><div><label className="mt-small">Priority</label><select className="mt-select" value={form.priority} onChange={e=>setField("priority",e.target.value)}>{["Low","Normal","High","Urgent"].map(x=><option key={x}>{x}</option>)}</select></div></div>
         <div className="mt-two"><label className="mt-small"><input type="checkbox" checked={!!form.print_required} onChange={e=>setField("print_required",e.target.checked)}/> Print required</label><label className="mt-small"><input type="checkbox" checked={!!form.embroidery_required} onChange={e=>setField("embroidery_required",e.target.checked)}/> Embroidery required</label></div>
         <div><label className="mt-small">Photo URL / thumbnail</label><input className="mt-input" style={{width:"100%"}} value={form.photo_url} onChange={e=>setField("photo_url",e.target.value)} placeholder="Optional direct/Supabase image URL"/></div>
@@ -3171,6 +3226,7 @@ function SettingsView({ onChanged }){
   const [tol,setTol]=useState(PROD_SETTINGS.cuttingTolerancePct);
   const [dispatchHold,setDispatchHold]=useState(PROD_SETTINGS.dispatchRamHoldPct);
   const [linesText,setLinesText]=useState(productionLineNames().join("\n"));
+  const [sizeSetsText,setSizeSetsText]=useState(sizeSetsToText(getSizeSets()));
   function applyTol(v){ const num=Math.max(0, Number(String(v).replace(/[^0-9.]/g,"")) || 0); setTol(num); PROD_SETTINGS.cuttingTolerancePct=num; onChanged?.(); }
   function applyDispatchHold(v){ const num=Math.max(0, Number(String(v).replace(/[^0-9.]/g,"")) || 0); setDispatchHold(num); PROD_SETTINGS.dispatchRamHoldPct=num; onChanged?.(); }
   function saveLines(){
@@ -3181,14 +3237,27 @@ function SettingsView({ onChanged }){
     onChanged?.();
     alert(`Saved ${PROD_SETTINGS.lineNames.length} line name(s).`);
   }
+  function saveSizeSets(){
+    const parsed = parseSizeSetsText(sizeSetsText);
+    if (!Object.keys(parsed).length) { alert("Add at least one size group, for example alpha = XS, S, M, L, XL"); return; }
+    saveCustomSizeSets(parsed);
+    onChanged?.();
+    alert(`Saved ${Object.keys(parsed).length} size group(s). Styles and entry screens will use this list.`);
+  }
+  function resetSizeSets(){
+    try { localStorage.removeItem("production_size_sets"); } catch {}
+    setSizeSetsText(sizeSetsToText(DEFAULT_SIZE_SETS));
+    onChanged?.();
+  }
   return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Rules</h3><div className="mt-panel-sub">Editable business rules — single source of truth used by entry validation, status flags and dashboards. Applies on the next screen render.</div></div>
     <div className="mt-section" style={{display:"grid", gap:10}}>
       <div className="mt-toolbar"><span className="mt-toolbar-label">Cutting tolerance %</span><input className="mt-input" style={{maxWidth:120}} value={tol} onChange={e=>applyTol(e.target.value)} /><span className="mt-small">Cutting may exceed order qty up to this %. One value drives entry allowed-limit, extra-cut status flag and cell marker.</span></div>
       <div className="mt-toolbar"><span className="mt-toolbar-label">Dispatch hold if R/A/M % above</span><input className="mt-input" style={{maxWidth:120}} value={dispatchHold} onChange={e=>applyDispatchHold(e.target.value)} /><span className="mt-small">Default 2%. Dispatch output/issue is blocked if any reconcile exists or total R/A/M is above this % of order qty.</span></div>
       <div className="mt-toolbar" style={{alignItems:"flex-start"}}><span className="mt-toolbar-label">Stitching line names</span><textarea className="mt-input" style={{minWidth:260, minHeight:110}} value={linesText} onChange={e=>setLinesText(e.target.value)} placeholder={'STF-1\nSTF-2\nSTF-3'} /><button className="mt-btn primary" onClick={saveLines}>Save Lines</button><span className="mt-small">One line per row, or comma separated. Planning uses this list for line-wise stitching plans.</span></div>
+      <div className="mt-toolbar" style={{alignItems:"flex-start"}}><span className="mt-toolbar-label">Size groups</span><textarea className="mt-input" style={{minWidth:360, minHeight:140}} value={sizeSetsText} onChange={e=>setSizeSetsText(e.target.value)} placeholder={'alpha = XS, S, M, L, XL, XXL\nkids = 2-3Y, 3-4Y, 4-5Y\nwaist = 30, 32, 34, 36'} /><div style={{display:"grid",gap:8}}><button className="mt-btn primary" onClick={saveSizeSets}>Save Size Groups</button><button className="mt-btn ghost" onClick={resetSizeSets}>Reset Defaults</button></div><span className="mt-small">Format: group = size, size, size. Add buyer/category groups anytime, then select them in Styles or bulk upload.</span></div>
     </div>
     <div className="mt-section"><h3 className="mt-panel-title">Bottleneck metric guide</h3><div className="mt-panel-sub">Daily Rate = recent 7-day average output from ledger for that department. Days Cover = queue/open WIP ÷ Daily Rate. Bottleneck Score = Queue WIP + 2×Reconcile Qty + R/A/M Qty, so impossible movements and quality loss rank higher than normal queue.</div></div>
-    <div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included through V7.5.16 logic</b><ul className="mt-small"><li>Add/edit production styles manually; bulk Excel add/update/delete; hard delete is allowed for demo cleanup with strong confirmation and ledger cleanup</li><li>Simple 6-day Excel-style planning grid: enter total day target by style/line without SMV/OPS complexity</li><li>WIP now separates one Pending Stage from All Activity by Cut %, so the grid stays narrow while still showing the full cut/order breakup</li><li>Selected department detail shows Good Output together with Reject/Missing/Alter and accounted/tail quantities for a complete HOD picture</li><li>Size-wise day entry with previous/updated total cross-check</li><li>Print / embroidery route toggles</li><li>Standard route changed to Checking → Packing → Dispatch; Iron removed as a normal department</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Dispatch hold: no dispatch when reconcile exists or R/A/M exceeds configured order %</li><li>Editable stitching line names in Settings used by Planning</li><li>Issued-to-department means accepted/with department; no normal issued-not-received bucket</li><li>Completed-not-issued-forward owner = Production Coordinator + Production Manager</li><li>Individual owner chase: Department HOD owns work-not-completed; Coordinator + Production Manager own completed-not-issued-forward</li><li>Style closure owner = Production Coordinator + Dept HOD; Production Manager handles movement/escalation/approval</li><li>WIP table page-specific filters, sorting, quick status buckets, and size-breakup toggle</li><li>Dashboard uses current-bin WIP logic: once a quantity moves to the next stage, it leaves the previous department bin.</li><li>Dashboard includes daily / 4-4-5 weekly / calendar-month production numbers, department × issue-type board, owner activity breakup, and production meeting focus.</li><li>Department-first dashboard pack: plan-vs-achieved/line efficiency, bottleneck/flow, aging/stuck WIP, quality/loss rate, party/outsource pending.</li><li>Dashboard drilldowns now use dashboard-specific rows, subtotal summaries, real size-stage data where available, and a visible size-source indicator.</li><li>Monthly comparison tab against Stitching Receiving with drillable summary filters</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Open-first WIP sheet modes: Open Control, Order View, Department View, Issue View, and Full Matrix</li><li>Focused WIP cell drawer shows selected department only; DPR entry shows only open styles for selected department/field; entry cells show open, previous, available, new entry, remaining and updated total; reductions/corrections require approval workflow later</li><li>Entry date / backdated audit logic with next-day default, same-day confirmation, reason and approval status</li><li>Live idle recalculation from production ledger where activity exists</li><li>Set convergence: a set packs/ships only min(components); Sets board + WIP chip show packable sets and unmatched pieces</li><li>Backdated entries validate feed as-of the entry date from the ledger; locked (older) backdated entries require reason + explicit manager-approval confirmation and are stamped in the audit ledger</li><li>Single configurable cutting tolerance replaces the old 8%/5%/0% mismatch</li><li>Party/outsource pending is consistent with the WIP open bucket (feed − output − R/A/M); outsourced stages label the with-department bucket as Pending at party</li><li>R/A/M day-entry path and impossible sequence reconcile checks</li><li>Planning tab: stitching line-wise rolling plan, department day-wise plan, department-specific planning pool, manual future plan, changeover remaining-hours formula, plan-vs-achieved style adherence, and Review control room. Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-info"><Lock size={12}/> Future RLS</span> <span className="mt-small">Keep this as a development app. We tighten RLS before real users and live factory data.</span></div></div>;
+    <div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included through V7.5.17 logic</b><ul className="mt-small"><li>Add/edit production styles manually; bulk Excel add/update/delete; hard delete is allowed for demo cleanup with strong confirmation and ledger cleanup</li><li>Editable size groups in Settings; Styles and bulk upload can use custom buyer/category size sets.</li><li>WIP Other Open Split column is now toggleable and hidden by default to avoid duplicate/confusing status reading.</li><li>Simple 6-day Excel-style planning grid: enter total day target by style/line without SMV/OPS complexity</li><li>WIP now separates one Pending Stage from All Activity by Cut %, so the grid stays narrow while still showing the full cut/order breakup</li><li>Selected department detail shows Good Output together with Reject/Missing/Alter and accounted/tail quantities for a complete HOD picture</li><li>Size-wise day entry with previous/updated total cross-check</li><li>Print / embroidery route toggles</li><li>Standard route changed to Checking → Packing → Dispatch; Iron removed as a normal department</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Dispatch hold: no dispatch when reconcile exists or R/A/M exceeds configured order %</li><li>Editable stitching line names in Settings used by Planning</li><li>Issued-to-department means accepted/with department; no normal issued-not-received bucket</li><li>Completed-not-issued-forward owner = Production Coordinator + Production Manager</li><li>Individual owner chase: Department HOD owns work-not-completed; Coordinator + Production Manager own completed-not-issued-forward</li><li>Style closure owner = Production Coordinator + Dept HOD; Production Manager handles movement/escalation/approval</li><li>WIP table page-specific filters, sorting, quick status buckets, and size-breakup toggle</li><li>Dashboard uses current-bin WIP logic: once a quantity moves to the next stage, it leaves the previous department bin.</li><li>Dashboard includes daily / 4-4-5 weekly / calendar-month production numbers, department × issue-type board, owner activity breakup, and production meeting focus.</li><li>Department-first dashboard pack: plan-vs-achieved/line efficiency, bottleneck/flow, aging/stuck WIP, quality/loss rate, party/outsource pending.</li><li>Dashboard drilldowns now use dashboard-specific rows, subtotal summaries, real size-stage data where available, and a visible size-source indicator.</li><li>Monthly comparison tab against Stitching Receiving with drillable summary filters</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Open-first WIP sheet modes: Open Control, Order View, Department View, Issue View, and Full Matrix</li><li>Focused WIP cell drawer shows selected department only; DPR entry shows only open styles for selected department/field; entry cells show open, previous, available, new entry, remaining and updated total; reductions/corrections require approval workflow later</li><li>Entry date / backdated audit logic with next-day default, same-day confirmation, reason and approval status</li><li>Live idle recalculation from production ledger where activity exists</li><li>Set convergence: a set packs/ships only min(components); Sets board + WIP chip show packable sets and unmatched pieces</li><li>Backdated entries validate feed as-of the entry date from the ledger; locked (older) backdated entries require reason + explicit manager-approval confirmation and are stamped in the audit ledger</li><li>Single configurable cutting tolerance replaces the old 8%/5%/0% mismatch</li><li>Party/outsource pending is consistent with the WIP open bucket (feed − output − R/A/M); outsourced stages label the with-department bucket as Pending at party</li><li>R/A/M day-entry path and impossible sequence reconcile checks</li><li>Planning tab: stitching line-wise rolling plan, department day-wise plan, department-specific planning pool, manual future plan, changeover remaining-hours formula, plan-vs-achieved style adherence, and Review control room. Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-info"><Lock size={12}/> Future RLS</span> <span className="mt-small">Keep this as a development app. We tighten RLS before real users and live factory data.</span></div></div>;
 }
 
 function withLiveIdle(rows, ledger=[], referenceDate=today()){
@@ -3240,6 +3309,9 @@ export default function App(){
   const [drawer,setDrawer] = useState(null);
   const [dashboardDrill,setDashboardDrill] = useState(null);
   const [notice,setNotice] = useState(null);
+  const [showUpdatePopup,setShowUpdatePopup] = useState(()=>{
+    try { return localStorage.getItem("production_app_seen_version") !== APP_VERSION; } catch { return true; }
+  });
   const calcRows = useMemo(()=>withLiveIdle(rows, ledger, today()), [rows, ledger]);
   const buyers = ["All", ...Array.from(new Set(calcRows.map(r=>r.buyer).filter(Boolean))).sort()];
   const orders = Array.from(new Set(calcRows.map(r=>r.order_no).filter(Boolean))).sort();
@@ -3251,6 +3323,10 @@ export default function App(){
     const hay = [r.order_no,r.style_no,r.buyer,r.colour,r.component,r.set_id].join(" ").toLowerCase();
     return okBuyer && okOrder && hay.includes(q);
   }),[calcRows,query,buyer,order]);
+  function markVersionSeen(){
+    try { localStorage.setItem("production_app_seen_version", APP_VERSION); } catch {}
+    setShowUpdatePopup(false);
+  }
   async function pullSupabase(){
     if(!isSupabaseConfigured || !supabase){ setNotice({tone:"warn", text:"Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel first."}); return; }
     const {data,error} = await supabase.from("production_orders").select("*").limit(500).order("created_at",{ascending:false});
@@ -3269,7 +3345,7 @@ export default function App(){
   }
   function exportAll(){
     const pack = buildReportSheets(visibleRows, ledger);
-    exportXlsx("production_dpr_v7_5_9_horizontal_quick_export.xlsx",[
+    exportXlsx(`production_dpr_${APP_VERSION.toLowerCase().replace(/[^a-z0-9]+/g,"_")}_horizontal_quick_export.xlsx`,[
       { name:"Factory Summary", rows:pack.factorySummary },
       { name:"Live WIP", rows:pack.wipStatus },
       { name:"Owner Chase", rows:pack.ownerRows },
@@ -3283,7 +3359,7 @@ export default function App(){
   const tabs = [
     ["dashboard","Dashboard",BarChart3], ["planning","Planning",ClipboardList], ["wip","Live WIP",Warehouse], ["entry","DPR Entry",ClipboardList], ["review","Review",ShieldCheck], ["owners","Who to Chase",Users], ["monthly","Monthly",FileSpreadsheet], ["styles","Styles",Shirt], ["routes","Routes",Filter], ["photos","Photos",ImageIcon], ["reports","Reports",FileSpreadsheet], ["settings","Settings",Settings]
   ];
-  return <div className="mt-app" data-theme="paper" data-settings-tick={settingsTick}><style>{FONT + CSS}</style><div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>V7.5.16</span></div><div className="mt-sub">Grid-first WIP sheet · stable checkpoint · non-blocking demo hard-delete hotfix · add/edit/delete styles · bulk Excel update · printable 3+3 planning grid · safe size-wise day entry · contextual dashboards · planning adherence · closure control · photo thumbnails · audit-table ready.</div></div><div className="mt-actions"><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase}><Upload size={14}/>Seed Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
+  return <div className="mt-app" data-theme="paper" data-settings-tick={settingsTick}><style>{FONT + CSS}</style>{showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">This update adds editable size groups, a cleaner toggleable WIP open-split view, and clearer Pending Stage reading. After Vercel deploy, use refresh once if an older cached screen is visible.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}<div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Grid-first WIP sheet · editable size groups · toggleable open split · update popup · non-blocking demo hard-delete · bulk Excel update · printable 3+3 planning · safe size-wise day entry · department closure control.</div></div><div className="mt-actions"><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase}><Upload size={14}/>Seed Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
       <PageFilters tab={tab} query={query} setQuery={setQuery} buyer={buyer} setBuyer={setBuyer} buyers={buyers} order={order} setOrder={setOrder} orders={orders} visibleRows={visibleRows}/>
