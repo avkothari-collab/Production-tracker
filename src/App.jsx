@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.64";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.63 manual 70 percent changeover override";
+const APP_VERSION = "V7.5.65";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.65 simple plan reading views";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -423,6 +423,22 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-plan-board-wrap.fit .mt-plan-cell-board { min-height:120px; }
 .mt-plan-board-wrap.printable .mt-plan-cell-actions, .mt-plan-board-wrap.printable .mt-plan-signal { display:none; }
 .mt-plan-cascade-note { border:1px solid var(--line-2); background:#fffaf1; border-radius:12px; padding:10px; font-size:10px; line-height:1.45; color:var(--muted-3); }
+
+.mt-plan-view-toggle { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+.mt-plan-simple-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px; }
+.mt-plan-simple-card { border:1px solid var(--line-2); border-radius:14px; background:var(--surface); overflow:hidden; }
+.mt-plan-simple-head { background:#fff7ea; border-bottom:1px solid var(--line-3); padding:10px 12px; display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+.mt-plan-simple-title { font-family:'Archivo',sans-serif; font-weight:800; font-size:14px; }
+.mt-plan-simple-body { padding:10px; display:grid; gap:8px; }
+.mt-plan-simple-slot { border:1px solid var(--line-3); border-radius:10px; background:#fffdf8; padding:8px; display:grid; gap:5px; }
+.mt-plan-simple-style { font-family:'Archivo',sans-serif; font-weight:800; font-size:13px; }
+.mt-plan-simple-meta { display:flex; gap:5px; flex-wrap:wrap; font-size:9px; color:var(--muted-3); }
+.mt-plan-simple-empty { color:var(--muted-2); font-size:10px; padding:8px; border:1px dashed var(--line-2); border-radius:10px; background:#fffaf1; }
+.mt-plan-simple-kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-bottom:10px; }
+.mt-plan-simple-kpi { border:1px solid var(--line-2); background:#fffdf8; border-radius:12px; padding:10px; }
+.mt-plan-simple-kpi .label { font-size:8.5px; text-transform:uppercase; letter-spacing:.35px; color:var(--muted-2); font-weight:900; }
+.mt-plan-simple-kpi .value { font-family:'Archivo',sans-serif; font-weight:800; font-size:20px; margin-top:4px; }
+@media (max-width:760px){ .mt-plan-simple-kpis{grid-template-columns:repeat(2,minmax(0,1fr));} }
 
 .mt-plan-excel-table th.day-col, .mt-plan-excel-table td.day-col { min-width:285px; width:285px; }
 .mt-plan-cell-board.columnar { min-height:238px; gap:6px; }
@@ -5087,12 +5103,62 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
   </div>;
 }
 
+
+function SimplePlanReadingView({ rows, planRows, ledger, activeDept, weekDays, mode="summary" }){
+  const lines = activeDept === "stitching" ? productionLineNames() : [`${stageLabel(activeDept)} Total`];
+  const weekPlans = (planRows||[]).filter(p=>String(p.dept)===String(activeDept) && weekDays.includes(String(p.plan_date||"").slice(0,10)));
+  const pvaRows = planVsAchievedRows(weekPlans, rows, ledger);
+  const totals = weekPlans.reduce((acc,p)=>{
+    const plan = n(p.planned_qty);
+    const achieved = achievedForPlan(p, rows, ledger);
+    acc.plan += plan; acc.achieved += achieved; acc.balance += Math.max(0, plan-achieved); acc.excess += Math.max(0, achieved-plan); acc.hours += planHours(p); acc.ops += n(p.ops);
+    return acc;
+  }, { plan:0, achieved:0, balance:0, excess:0, hours:0, ops:0 });
+  const dayRows = weekDays.map(day=>{
+    const dayPlans = weekPlans.filter(p=>String(p.plan_date||"").slice(0,10)===day);
+    const plan = dayPlans.reduce((a,p)=>a+n(p.planned_qty),0);
+    const achieved = dayPlans.reduce((a,p)=>a+achievedForPlan(p, rows, ledger),0);
+    const styles = uniqueList(dayPlans.map(planStyleText).filter(Boolean));
+    return { Date:day, Day:shortDayLabel(day), Styles:styles.join(", "), Planned_Qty:plan, Achieved_Qty:achieved, Balance:Math.max(0,plan-achieved), Achievement:plan ? `${Math.round(achieved*1000/plan)/10}%` : "—", Plan_Hours:dayPlans.reduce((a,p)=>a+planHours(p),0), OPS:dayPlans.reduce((a,p)=>a+n(p.ops),0) };
+  });
+  const lineRows = lines.map(line=>{
+    const lp = weekPlans.filter(p=>String(p.line || planCellLineKey(activeDept,line))===String(planCellLineKey(activeDept,line)));
+    const plan = lp.reduce((a,p)=>a+n(p.planned_qty),0);
+    const achieved = lp.reduce((a,p)=>a+achievedForPlan(p, rows, ledger),0);
+    return { Line:line, Styles:uniqueList(lp.map(planStyleText).filter(Boolean)).join(", "), Planned_Qty:plan, Achieved_Qty:achieved, Balance:Math.max(0,plan-achieved), Achievement:plan ? `${Math.round(achieved*1000/plan)/10}%` : "—", Plan_Hours:lp.reduce((a,p)=>a+planHours(p),0), OPS:lp.reduce((a,p)=>a+n(p.ops),0) };
+  }).filter(r=>n(r.Planned_Qty) || n(r.Achieved_Qty) || r.Styles);
+  if (mode === "achieved") {
+    return <div>
+      <div className="mt-plan-simple-kpis"><div className="mt-plan-simple-kpi"><div className="label">Week planned</div><div className="value">{fmt(totals.plan)}</div></div><div className="mt-plan-simple-kpi"><div className="label">Achieved</div><div className="value">{fmt(totals.achieved)}</div></div><div className="mt-plan-simple-kpi"><div className="label">Balance</div><div className="value">{fmt(totals.balance)}</div></div><div className="mt-plan-simple-kpi"><div className="label">Achievement</div><div className="value">{totals.plan ? `${Math.round(totals.achieved*1000/totals.plan)/10}%` : "—"}</div></div></div>
+      <SimpleTable title={`${stageLabel(activeDept)} weekly achieved summary`} sub="Simple reading view: what was planned, what has been entered as actual, and what balance remains. This is not the entry screen." rows={pvaRows} empty="No plan rows for this week yet." />
+    </div>;
+  }
+  return <div>
+    <div className="mt-plan-simple-kpis"><div className="mt-plan-simple-kpi"><div className="label">Planned qty</div><div className="value">{fmt(totals.plan)}</div></div><div className="mt-plan-simple-kpi"><div className="label">Achieved qty</div><div className="value">{fmt(totals.achieved)}</div></div><div className="mt-plan-simple-kpi"><div className="label">Plan hours</div><div className="value">{fmt(totals.hours)}</div></div><div className="mt-plan-simple-kpi"><div className="label">OPS total</div><div className="value">{fmt(totals.ops)}</div></div></div>
+    <div className="mt-plan-simple-grid">{lines.map(line=>{
+      const lp = weekPlans.filter(p=>String(p.line || planCellLineKey(activeDept,line))===String(planCellLineKey(activeDept,line)));
+      const linePlan = lp.reduce((a,p)=>a+n(p.planned_qty),0);
+      const lineAch = lp.reduce((a,p)=>a+achievedForPlan(p, rows, ledger),0);
+      return <div key={line} className="mt-plan-simple-card"><div className="mt-plan-simple-head"><div className="mt-plan-simple-title">{line}</div><div className="mt-plan-simple-meta"><span className="mt-chip mt-info">Plan {fmt(linePlan)}</span><span className={`mt-chip ${lineAch>=linePlan && linePlan ? "mt-ok" : lineAch ? "mt-warn" : "mt-muted"}`}>Done {fmt(lineAch)}</span></div></div><div className="mt-plan-simple-body">{weekDays.map(day=>{
+        const daySlots = lp.filter(p=>String(p.plan_date||"").slice(0,10)===day);
+        const dPlan = daySlots.reduce((a,p)=>a+n(p.planned_qty),0);
+        const dAch = daySlots.reduce((a,p)=>a+achievedForPlan(p, rows, ledger),0);
+        return <div key={`${line}-${day}`} className="mt-plan-simple-slot"><div className="mt-plan-simple-meta"><b>{shortDayLabel(day)}</b><span>Plan {fmt(dPlan)}</span><span>Done {fmt(dAch)}</span><span>Bal {fmt(Math.max(0,dPlan-dAch))}</span></div>{daySlots.length ? daySlots.map(p=><div key={p.id || `${day}-${planSlotNo(p)}`}><div className="mt-plan-simple-style">{planStyleText(p) || "—"}</div><div className="mt-plan-simple-meta"><span>{p.buyer || ""}</span><span>Qty {fmt(p.planned_qty)}</span><span>{fmt(planHours(p))}h</span><span>OPS {fmt(p.ops)}</span>{p.short_close ? <span className="mt-chip mt-purple">Short close</span> : null}</div></div>) : <div className="mt-plan-simple-empty">No style planned</div>}</div>;
+      })}</div></div>;
+    })}</div>
+    <div style={{height:12}}/><SimpleTable title="Day-wise planned vs achieved" sub="Fast weekly reading by actual plan date. Use Achieved Weekly for full style-level detail." rows={dayRows} empty="No plan rows for this week." />
+    <div style={{height:12}}/><SimpleTable title="Line-wise planned vs achieved" sub="Line meeting view: target, done, balance and achievement percentage." rows={lineRows} empty="No line plan rows for this week." />
+  </div>;
+}
+
 function PlanningView({ rows, planRows, setPlanRows, ledger, setRows, onPlanUpsert, onPlanDelete, planSaveState }){
   const [mode,setMode] = useState("stitching");
   const [dept,setDept] = useState("printing");
   const [weekStart,setWeekStart] = useState(()=>nextProductionMonday(today()));
   const [showTargets,setShowTargets] = useState(true);
   const [fitBoard,setFitBoard] = useState(false);
+  const [planViewMode,setPlanViewMode] = useState(()=>safeJsonLoad(uiStorageKey("plan_view_mode"), "entry"));
+  useEffect(()=>safeJsonSave(uiStorageKey("plan_view_mode"), planViewMode), [planViewMode]);
   const activeDept = mode === "stitching" ? "stitching" : dept;
   const normalizedWeekStart = lineBoardWeekStart(weekStart);
   const weekDays = planningSixDays(normalizedWeekStart);
@@ -5109,9 +5175,9 @@ function PlanningView({ rows, planRows, setPlanRows, ledger, setRows, onPlanUpse
       { name:"Projected Feed", rows:projectedRows }
     ]);
   }
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Planning — Excel Weekly Board</h3><div className="mt-panel-sub">Plan like the factory sheet: line × day cells, direct typing, Qty/End Date/OPS, auto totals and P0 cascade warnings. Each line/day now has remaining-hours control: full-day target × planned hours calculates Qty, and manual Qty override is still allowed.</div></div>
-    <div className="mt-section no-print"><div className="mt-filter-row"><button className={`mt-btn ${mode==="stitching"?"primary":"ghost"}`} onClick={()=>setMode("stitching")}>Stitching line board</button><button className={`mt-btn ${mode==="dept"?"primary":"ghost"}`} onClick={()=>setMode("dept")}>Other dept board</button>{mode==="dept" && <select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.filter(s=>!['stitching'].includes(s.key)).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>}<span className="mt-toolbar-label">Week</span><input className="mt-input" type="date" value={weekStart} onChange={e=>setWeekStart(e.target.value)}/><button className="mt-btn ghost" onClick={()=>setWeekStart(lineBoardWeekStart(today()))}>This week</button><button className="mt-btn ghost" onClick={()=>setWeekStart(nextProductionMonday(today()))}>Next week</button><button className={`mt-btn ${fitBoard?"active":"ghost"}`} onClick={()=>setFitBoard(v=>!v)}>Compact board</button><button className={`mt-btn ${showTargets?"active":"ghost"}`} onClick={()=>setShowTargets(v=>!v)}>{showTargets ? "Auto qty calculator: on" : "Auto qty calculator: off"}</button><button className="mt-btn primary" onClick={exportWeekDetail}><Download size={14}/>Export plan detail</button>{planSaveState && <span className={`mt-chip ${statusClass(planSaveState.tone)}`}>{planSaveState.text}</span>}</div><div className="mt-plan-cascade-note"><b>P0 plan truth:</b> plan cells autosave to the shared production_plan_rows table, are audited, and carry cascade status by actual plan date. <b>Cascade rule now used:</b> when you are sitting on Thursday and planning Monday, earlier Thu/Fri/Sat running styles on the same line consume balance first. <b>70% auto-applies only when the style changes; continue-running days stay 100%, with manual checkbox override available.</b> The next style is flagged until prior quantity is finished or <b>short close</b> is marked. For Printing/Stitching/Checking/Packing, previous department actual output + upstream planned output ready by the plan date is used as projected feed; projected feed is shown separately from actual-ready feed.</div></div>
-    <div className="mt-section"><PlanExcelLineBoard rows={rows} planRows={planRows} setPlanRows={setPlanRows} setRows={setRows} activeDept={activeDept} weekDays={weekDays} showTargets={showTargets} fit={fitBoard} ledger={ledger} onPlanUpsert={onPlanUpsert} onPlanDelete={onPlanDelete}/></div>
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Planning — Entry Board / Simple View</h3><div className="mt-panel-sub">Use Entry Board for typing plans; switch to Simple View or Achieved Weekly for reading the week, entry-done status, target-vs-actual and balance without the heavy entry UI.</div></div>
+    <div className="mt-section no-print"><div className="mt-filter-row"><button className={`mt-btn ${mode==="stitching"?"primary":"ghost"}`} onClick={()=>setMode("stitching")}>Stitching line board</button><button className={`mt-btn ${mode==="dept"?"primary":"ghost"}`} onClick={()=>setMode("dept")}>Other dept board</button>{mode==="dept" && <select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.filter(s=>!['stitching'].includes(s.key)).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>}<span className="mt-toolbar-label">Week</span><input className="mt-input" type="date" value={weekStart} onChange={e=>setWeekStart(e.target.value)}/><button className="mt-btn ghost" onClick={()=>setWeekStart(lineBoardWeekStart(today()))}>This week</button><button className="mt-btn ghost" onClick={()=>setWeekStart(nextProductionMonday(today()))}>Next week</button><button className={`mt-btn ${fitBoard?"active":"ghost"}`} onClick={()=>setFitBoard(v=>!v)}>Compact board</button><button className={`mt-btn ${showTargets?"active":"ghost"}`} onClick={()=>setShowTargets(v=>!v)}>{showTargets ? "Auto qty calculator: on" : "Auto qty calculator: off"}</button><span className="mt-toolbar-label">Plan View</span>{[["entry","Entry Board"],["simple","Simple View"],["achieved","Achieved Weekly"]].map(([k,l])=><button key={k} className={`mt-btn ${planViewMode===k?"active":"ghost"}`} onClick={()=>setPlanViewMode(k)}>{l}</button>)}<button className="mt-btn primary" onClick={exportWeekDetail}><Download size={14}/>Export plan detail</button>{planSaveState && <span className={`mt-chip ${statusClass(planSaveState.tone)}`}>{planSaveState.text}</span>}</div><div className="mt-plan-cascade-note"><b>P0 plan truth:</b> plan cells autosave to the shared production_plan_rows table, are audited, and carry cascade status by actual plan date. <b>Cascade rule now used:</b> when you are sitting on Thursday and planning Monday, earlier Thu/Fri/Sat running styles on the same line consume balance first. <b>70% auto-applies only when the style changes; continue-running days stay 100%, with manual checkbox override available.</b> The next style is flagged until prior quantity is finished or <b>short close</b> is marked. For Printing/Stitching/Checking/Packing, previous department actual output + upstream planned output ready by the plan date is used as projected feed; projected feed is shown separately from actual-ready feed.</div></div>
+    <div className="mt-section">{planViewMode === "entry" ? <PlanExcelLineBoard rows={rows} planRows={planRows} setPlanRows={setPlanRows} setRows={setRows} activeDept={activeDept} weekDays={weekDays} showTargets={showTargets} fit={fitBoard} ledger={ledger} onPlanUpsert={onPlanUpsert} onPlanDelete={onPlanDelete}/> : <SimplePlanReadingView rows={rows} planRows={planRows} ledger={ledger} activeDept={activeDept} weekDays={weekDays} mode={planViewMode}/>}</div>
     <div className="mt-section"><SimpleTable title="Plan Impact Review — Manager Approval Queue" sub="DPR entry by data operator does not auto-change future plan. This queue shows shortages/excess after actual output so Production Manager can apply cascade, part-cover promise, short close, no-change or manual edit." rows={impactRows} empty="No pending plan impacts for this department." /></div>
     <div className="mt-section"><SimpleTable title="Projected Feed Check" sub="Shows actual ready feed plus upstream planned feed that should be ready by this plan date using department buffer days. Yellow readings mean stitching/checking/packing depends on earlier plan being achieved, not only actual feed already posted." rows={projectedRows} empty="No projected feed rows for this week." /></div>
     <div className="mt-section"><SimpleTable title={`${stageLabel(activeDept)} Week Plan Rows`} sub="Every filled line/day cell becomes a plan row underneath, so plan-vs-achieved and reports keep working without making the board rigid." rows={weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Style:p.style_no || p.style_input, Buyer:p.buyer, Plan_Qty:p.planned_qty, End_Date:p.stitching_end_date||"", OPS:p.ops||"", Short_Close:p.short_close?"Yes":"No", Source:p.source_label, P0_Status:p.validation_status || planValidationSnapshot(p, rows, planRows, ledger).level, P0_Message:p.validation_message || planValidationSnapshot(p, rows, planRows, ledger).message, Status:p.status, Remarks:p.remarks }))} empty="No weekly plan cells filled yet." /></div>
