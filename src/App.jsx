@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.50";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.50 review history left navigation excel WIP exports";
+const APP_VERSION = "V7.5.53";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.53 Excel weekly planning cascade and live presence";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -328,7 +328,77 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-history-kpi .label { font-size:9px; text-transform:uppercase; color:var(--muted-2); font-weight:800; letter-spacing:.3px; }
 .mt-history-kpi .value { font-family:'Archivo',sans-serif; font-size:19px; font-weight:800; margin-top:4px; }
 .mt-excel-filter-pick { min-width:118px; }
+
+.mt-login-page { position:fixed; inset:0; z-index:9999; background:linear-gradient(135deg,#fffaf1 0%,#f4eadc 100%); display:flex; align-items:center; justify-content:center; padding:24px; }
+.mt-login-card { width:min(860px,96vw); min-height:460px; display:grid; grid-template-columns:1.05fr 1fr; background:#fffdf8; border:0; border-radius:18px; box-shadow:10px 10px 0 #26231f, 0 22px 60px rgba(31,31,29,.12); overflow:hidden; }
+.mt-login-left { background:#fbf4e8; padding:28px 32px; display:flex; flex-direction:column; justify-content:space-between; gap:24px; }
+.mt-login-brand { font-family:'Archivo',sans-serif; font-weight:800; font-size:11px; letter-spacing:1.2px; text-transform:uppercase; }
+.mt-login-product { font-family:'Archivo',sans-serif; font-weight:800; font-size:33px; letter-spacing:-1.1px; margin:12px 0 8px; }
+.mt-login-copy { font-size:11px; line-height:1.55; max-width:430px; }
+.mt-login-feature-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:22px; }
+.mt-login-feature { background:rgba(255,255,255,.72); border:1px solid rgba(31,31,29,.04); border-radius:12px; padding:13px; min-height:58px; }
+.mt-login-feature b { display:block; font-family:'Archivo',sans-serif; font-size:17px; }
+.mt-login-feature span { display:block; margin-top:4px; font-size:9px; color:var(--muted-3); font-weight:800; }
+.mt-login-note { background:rgba(255,255,255,.75); border-radius:12px; padding:12px; font-size:10.5px; line-height:1.45; }
+.mt-login-right { padding:42px 36px; display:flex; flex-direction:column; justify-content:center; }
+.mt-login-title { font-family:'Archivo',sans-serif; font-weight:800; font-size:25px; letter-spacing:-.5px; margin-bottom:4px; }
+.mt-login-subcopy { font-size:11px; color:var(--muted-3); margin-bottom:18px; }
+.mt-login-field-label { display:block; font-size:9px; font-weight:900; letter-spacing:.55px; text-transform:uppercase; margin:12px 0 6px; color:var(--ink); }
+.mt-login-input { width:100%; border:0; border-bottom:1px solid var(--line-2); background:transparent; padding:10px 8px; min-height:42px; font-size:12px; outline:none; }
+.mt-login-input:focus { border-bottom-color:var(--ink); background:#fffaf1; }
+.mt-login-submit { width:100%; border:0; border-bottom:1px solid var(--line-2); border-radius:0 0 10px 10px; background:#fffdf8; color:var(--ink); margin-top:18px; padding:12px; min-height:44px; font-weight:900; cursor:pointer; }
+.mt-login-submit:hover { background:#fff7ea; }
+.mt-login-submit:disabled { opacity:.55; cursor:not-allowed; }
+.mt-login-minor { display:flex; justify-content:center; gap:10px; margin-top:12px; font-size:10px; font-weight:900; }
+.mt-login-link { border:0; background:transparent; cursor:pointer; font-weight:900; text-decoration:none; color:var(--ink); }
+.mt-login-msg { margin-top:14px; border-radius:10px; padding:10px; font-size:10.5px; line-height:1.4; }
+.mt-login-access-panel { margin-top:14px; border:1px solid var(--line-2); border-radius:12px; background:#fffaf1; padding:12px; }
+.mt-login-access-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.mt-wip-sticky-tools { position:sticky; top:0; z-index:18; background:var(--surface); border-bottom:1px solid var(--line-3); box-shadow:0 2px 10px rgba(31,31,29,.04); }
+.mt-wip-table-wrap { max-height:calc(100vh - 260px); }
+.mt-wip-table-wrap .mt-table th { top:0; }
+.mt-wip-table-wrap .mt-col-filter-row th { top:34px; }
+.mt-wip-fit-table table.mt-table { min-width:0; table-layout:fixed; }
+.mt-wip-fit-table .mt-style-main { min-width:170px; }
+.mt-wip-fit-table .mt-table th, .mt-wip-fit-table .mt-table td { white-space:normal; overflow-wrap:anywhere; padding:6px; }
+.mt-wip-fit-table .mt-stage-cell { min-width:86px; }
+.mt-column-menu { border:1px solid var(--line-2); background:#fffaf1; border-radius:10px; padding:7px 9px; }
+.mt-column-menu summary { cursor:pointer; font-size:10px; font-weight:900; text-transform:uppercase; letter-spacing:.3px; }
+.mt-column-choice { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--line-2); background:white; border-radius:999px; padding:5px 8px; font-size:9.5px; font-weight:900; margin:6px 5px 0 0; }
+@media (max-width:760px){ .mt-login-card{grid-template-columns:1fr; min-height:0;} .mt-login-left{padding:22px;} .mt-login-right{padding:26px 22px;} .mt-login-product{font-size:27px;} }
+
 @media (max-width:980px){ .mt-layout,.mt-layout.nav-collapsed{grid-template-columns:1fr;} .mt-side-nav{position:relative;top:auto;} .mt-side-scroll{display:flex; overflow-x:auto;} .mt-side-nav button.mt-side-tab{width:auto; min-width:118px; border-right:1px solid var(--line-3);} .mt-layout.nav-collapsed .mt-side-label{display:inline;} }
+
+
+
+.mt-presence-strip { display:flex; align-items:center; gap:7px; flex-wrap:wrap; padding:8px 22px; border-top:1px solid rgba(255,255,255,.06); background:#171511; }
+.mt-presence-pill { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--on-dark-line); background:rgba(255,255,255,.05); color:var(--bg); border-radius:999px; padding:4px 8px; font-size:9.5px; max-width:280px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.mt-presence-pill span:last-child { color:var(--on-dark-2); overflow:hidden; text-overflow:ellipsis; }
+.mt-presence-dot { width:7px; height:7px; background:#64d99b; border-radius:50%; box-shadow:0 0 0 3px rgba(100,217,155,.12); flex:0 0 auto; }
+.mt-plan-board-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+.mt-plan-board-title { font-family:'Archivo',sans-serif; font-weight:800; font-size:17px; }
+.mt-plan-excel-table { min-width:1180px; table-layout:fixed; }
+.mt-plan-excel-table th.day-col, .mt-plan-excel-table td.day-col { min-width:250px; width:250px; vertical-align:top; }
+.mt-plan-excel-table th.line-col, .mt-plan-excel-table td.line-col { min-width:145px; width:145px; }
+.mt-plan-line-name { font-family:'Archivo',sans-serif; font-size:14px; font-weight:800; }
+.mt-plan-cell-board { min-height:136px; display:grid; gap:5px; align-content:start; }
+.mt-plan-cell-board input, .mt-plan-cell-board select { width:100%; min-height:28px; padding:5px 6px; font-size:9.5px; border:1px solid var(--line-2); background:white; }
+.mt-plan-cell-board .style-input { font-weight:900; font-size:10.5px; border:2px solid var(--accent); background:#fffaf1; }
+.mt-plan-mini-row { display:grid; grid-template-columns:1.25fr .75fr .65fr; gap:5px; }
+.mt-plan-mini-row.two { grid-template-columns:1fr 1fr; }
+.mt-plan-cell-actions { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
+.mt-plan-cell-actions .mt-btn { min-height:24px; padding:3px 6px; font-size:8.8px; }
+.mt-plan-signal { border:1px dashed var(--line-2); border-radius:8px; padding:4px 6px; font-size:8.8px; line-height:1.22; color:var(--muted-3); background:#fffdf8; }
+.mt-plan-signal.ok { border-color:#b8d9c4; background:#eef8f1; color:#1f6f54; }
+.mt-plan-signal.warn { border-color:#e7c061; background:#fff7db; color:#785900; }
+.mt-plan-signal.late { border-color:#e6a098; background:#fff0ed; color:#8c241a; }
+.mt-plan-signal.purple { border-color:#cab5ea; background:#f4efff; color:#5b3f8d; }
+.mt-plan-total-row td { background:#fff7ea !important; font-weight:800; }
+.mt-plan-day-total { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.mt-plan-board-wrap.fit .mt-plan-excel-table th.day-col, .mt-plan-board-wrap.fit .mt-plan-excel-table td.day-col { min-width:190px; width:190px; }
+.mt-plan-board-wrap.fit .mt-plan-cell-board { min-height:120px; }
+.mt-plan-board-wrap.printable .mt-plan-cell-actions, .mt-plan-board-wrap.printable .mt-plan-signal { display:none; }
+.mt-plan-cascade-note { border:1px solid var(--line-2); background:#fffaf1; border-radius:12px; padding:10px; font-size:10px; line-height:1.45; color:var(--muted-3); }
 
 @media print { .mt-top,.mt-toolbar,.no-print,.mt-tabs { display:none !important; } .mt-page{padding:0;} .mt-card,.mt-table-wrap{border:0; box-shadow:none;} .mt-table th{background:#111 !important; color:#fff !important;} }
 @media (max-width:1180px){ .mt-dash-grid{grid-template-columns:repeat(3,minmax(0,1fr));} .mt-mini-board{grid-template-columns:1fr;} .mt-summary-strip,.mt-month-grid{grid-template-columns:repeat(2,minmax(0,1fr));} }
@@ -559,6 +629,78 @@ function userAuditBase(extra={}){
     user_name:p.name || "Not logged in", user_email:p.email || "", user_role:p.role || "", user_department:p.department || "",
     browser_id:productionBrowserId(), app_version:APP_VERSION, created_at:new Date().toISOString(), ...extra
   };
+}
+
+function productionTabLabel(tab){
+  const map = { dashboard:"Dashboard", planning:"Planning", wip:"Live WIP", entry:"DPR Entry", register:"Register", review:"Review", owners:"Who to Chase", monthly:"Monthly", styles:"Styles", routes:"Routes", photos:"Photos", reports:"Reports", users:"Users/Audit", settings:"Settings" };
+  return map[tab] || String(tab || "Dashboard");
+}
+function productionPresenceContext(tab, drawer=null, drill=null){
+  const base = productionTabLabel(tab);
+  if (drawer?.row) {
+    const row = drawer.row || {};
+    const stage = drawer.stage || rowStatus(row).stage || "";
+    return `${base} · ${row.style_no || "Style"}${row.order_no ? ` / ${row.order_no}` : ""}${stage ? ` · ${stageLabel(stage)}` : ""}`;
+  }
+  if (drill?.title) return `${base} · ${drill.title}`;
+  return base;
+}
+function buildProductionPresencePayload(profile, tab, drawer=null, drill=null){
+  const p = profile || currentUserProfile();
+  const row = drawer?.row || {};
+  const stage = drawer?.stage || "";
+  return {
+    user_name:p.name || displayNameFromEmail(p.email) || "Unknown user",
+    user_email:normalizeUserEmail(p.email),
+    user_role:p.role || "",
+    user_department:p.department || "",
+    page_key:tab || "dashboard",
+    page:productionTabLabel(tab),
+    context:productionPresenceContext(tab, drawer, drill),
+    order_no:row.order_no || "",
+    style_no:row.style_no || "",
+    colour:row.colour || "",
+    component:row.component || "",
+    stage:stage || "",
+    stage_label:stage ? stageLabel(stage) : "",
+    browser_id:productionBrowserId(),
+    app_version:APP_VERSION,
+    online_at:new Date().toISOString(),
+  };
+}
+function flattenProductionPresenceState(state){
+  const rows = Object.values(state || {}).flat().map((p,idx)=>({
+    User:p.user_name || displayNameFromEmail(p.user_email) || "Unknown user",
+    Role:p.user_role || "",
+    Department:p.user_department || "",
+    Page:p.page || productionTabLabel(p.page_key),
+    Context:p.context || p.page || "",
+    Order:p.order_no || "",
+    Style:p.style_no || "",
+    Colour:p.colour || "",
+    Component:p.component || "",
+    Stage:p.stage_label || stageLabel(p.stage || ""),
+    Email:p.user_email || "",
+    Browser:p.browser_id || "",
+    Seen:p.online_at || "",
+    _presenceIdx:idx,
+  }));
+  return rows.sort((a,b)=>String(a.User).localeCompare(String(b.User)) || String(b.Seen).localeCompare(String(a.Seen)));
+}
+function presenceSummaryText(peers=[]){
+  const count = (peers || []).length;
+  if (!count) return "Realtime presence starting";
+  const pages = uniqueList((peers || []).map(p=>p.Page).filter(Boolean));
+  return `${count} live user${count===1?"":"s"}${pages.length ? ` · ${pages.slice(0,3).join(", ")}${pages.length>3?"…":""}` : ""}`;
+}
+function PresenceStrip({ peers=[] }){
+  const rows = (peers || []).slice(0,8);
+  return <div className="mt-presence-strip no-print">
+    <span className="mt-toolbar-label">Live presence</span>
+    {rows.length ? rows.map((p,idx)=><span key={`${p.Email}-${p.Browser}-${idx}`} className="mt-presence-pill" title={`${p.User} · ${p.Context}${p.Style ? ` · ${p.Style}` : ""}`}>
+      <span className="mt-presence-dot"/> <b>{p.User}</b><span>{p.Context}</span>
+    </span>) : <span className="mt-chip mt-muted">Realtime users will appear here after Supabase presence connects.</span>}
+  </div>;
 }
 async function upsertProductionAppUser(profile=currentUserProfile()){
   if (!profile?.name || !hasValidSupabaseEnv()) return { skipped:true };
@@ -2802,6 +2944,8 @@ function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
   const [route,setRoute] = useState(()=>safeJsonLoad(uiStorageKey("wip_route"), "all"));
   const [viewMode,setViewMode] = useState(()=>safeJsonLoad(uiStorageKey("wip_view_mode"), "matrix"));
   const [columnFilters,setColumnFilters] = useState(()=>safeJsonLoad(uiStorageKey("wip_column_filters"), {}));
+  const [fitColumns,setFitColumns] = useState(()=>safeJsonLoad(uiStorageKey("wip_fit_columns"), true));
+  const [visibleCols,setVisibleCols] = useState(()=>({ status:true, owner:true, route:true, stages:true, open:true, idle:false, action:true, ...safeJsonLoad(uiStorageKey("wip_visible_cols"), {}) }));
   useEffect(()=>safeJsonSave(uiStorageKey("wip_search"), localSearch), [localSearch]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_dept"), dept), [dept]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_issue"), issue), [issue]);
@@ -2809,7 +2953,9 @@ function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
   useEffect(()=>safeJsonSave(uiStorageKey("wip_route"), route), [route]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_view_mode"), viewMode), [viewMode]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_column_filters"), columnFilters), [columnFilters]);
-  useEffect(()=>{ if (!clearTick) return; setLocalSearch(""); setDept("all"); setIssue("all"); setOwner("all"); setRoute("all"); setViewMode("matrix"); setColumnFilters({}); setSort({key:"open",dir:"desc"}); }, [clearTick]);
+  useEffect(()=>safeJsonSave(uiStorageKey("wip_fit_columns"), fitColumns), [fitColumns]);
+  useEffect(()=>safeJsonSave(uiStorageKey("wip_visible_cols"), visibleCols), [visibleCols]);
+  useEffect(()=>{ if (!clearTick) return; setLocalSearch(""); setDept("all"); setIssue("all"); setOwner("all"); setRoute("all"); setViewMode("matrix"); setColumnFilters({}); setVisibleCols({ status:true, owner:true, route:true, stages:true, open:true, idle:false, action:true }); setSort({key:"open",dir:"desc"}); }, [clearTick]);
   const [showCutActivity,setShowCutActivity] = useState(false);
   const [sizeBreak,setSizeBreak] = useState(false);
   const [sort,setSort] = useState({ key:"open", dir:"desc" });
@@ -2839,6 +2985,8 @@ function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
   const selectedDeptForSize = dept === "all" ? null : dept;
   const hasGridColumnFilters = hasWipColumnFilters(columnFilters);
   const setGridColumnFilter = (key, value) => setColumnFilters(prev => ({ ...(prev || {}), [key]:value }));
+  const toggleWipCol = (key) => setVisibleCols(prev => ({ ...(prev || {}), [key]: !prev?.[key] }));
+  const resetWipCols = () => setVisibleCols({ status:true, owner:true, route:true, stages:true, open:true, idle:false, action:true });
   const clearWipFilters = () => { setLocalSearch(""); setDept("all"); setIssue("all"); setOwner("all"); setRoute("all"); setColumnFilters({}); setSort({key:"open",dir:"desc"}); };
   const controlRows = wipControlRows(filtered);
   const openRowDrill = (row, stage) => onOpen?.(row, stage || rowStatus(row).stage || routeFor(row)[0] || "cutting");
@@ -2854,6 +3002,8 @@ function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
   };
   function exportCurrentWip(){ exportXlsx(`production_wip_${viewMode}_${today()}.xlsx`, [{ name:`WIP ${viewMode}`, rows:currentWipExportRows() }]); }
   function exportStageWip(){ exportXlsx(`production_wip_stage_detail_${dept}_${today()}.xlsx`, [{ name:"Style Stage Detail", rows:stageWipExportRows() }]); }
+  const matrixColumnCount = 1 + (visibleCols.status?1:0) + (showCutActivity?1:0) + (visibleCols.owner?1:0) + (visibleCols.route?1:0) + (visibleCols.stages?STAGES.length:0) + (visibleCols.open?1:0) + (visibleCols.idle?1:0) + (visibleCols.action?1:0);
+  const controlColumnCount = showCutActivity ? 8 : 7;
   return <div className="mt-card">
     <div className="mt-section"><h3 className="mt-panel-title">Live WIP Status — Grid / Open Control</h3><div className="mt-panel-sub">Pending Stage = one main action. Optional Route Progress / Balance shows cut, stage done, issued-forward and pack balance so the sheet stays precise but still traceable.</div></div>
     <div className="mt-section no-print">
@@ -2868,22 +3018,22 @@ function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
         <button className={`mt-btn ${hasGridColumnFilters ? "primary" : "ghost"}`} onClick={clearWipFilters}>Clear WIP Filters</button>
         <span className="mt-page-filter-note">{filtered.length} rows · {controlRows.length} open/control rows</span>
       </div>
-      <div className="mt-view-mode-bar"><span className="mt-toolbar-label">Sheet View</span>{[["matrix","Grid View"],["control","Open Control"],["order","Order View"],["department","Department View"],["issue","Issue View"]].map(([k,l])=><button key={k} className={`mt-btn ${viewMode===k?"active":"ghost"}`} onClick={()=>setViewMode(k)}>{l}</button>)}<button className={`mt-btn ${showCutActivity?"active":"ghost"}`} onClick={()=>setShowCutActivity(v=>!v)}>{showCutActivity ? "Hide Route Progress" : "Show Route Progress"}</button>{currentUserCan("production.export") && <button className="mt-btn primary" onClick={exportCurrentWip}><Download size={14}/>Export Current View</button>}{currentUserCan("production.export") && <button className="mt-btn" onClick={exportStageWip}><Download size={14}/>Export Style Stage Detail</button>}<span className="mt-chip mt-info">Excel-like: sort headers + select filters + export</span></div>
+      <div className="mt-view-mode-bar mt-wip-sticky-tools"><span className="mt-toolbar-label">Sheet View</span>{[["matrix","Grid View"],["control","Open Control"],["order","Order View"],["department","Department View"],["issue","Issue View"]].map(([k,l])=><button key={k} className={`mt-btn ${viewMode===k?"active":"ghost"}`} onClick={()=>setViewMode(k)}>{l}</button>)}<button className={`mt-btn ${showCutActivity?"active":"ghost"}`} onClick={()=>setShowCutActivity(v=>!v)}>{showCutActivity ? "Hide Route Progress" : "Show Route Progress"}</button><button className={`mt-btn ${fitColumns?"active":"ghost"}`} onClick={()=>setFitColumns(v=>!v)} title="Fit visible columns into screen like the Merch Tracker grid">{fitColumns ? "Fit columns: on" : "Fit columns: off"}</button><details className="mt-column-menu"><summary>Columns</summary><div>{[["status","Current Status"],["owner","Owner"],["route","Route"],["stages","Stage cells"],["open","Open Qty"],["idle","Idle"],["action","Next Action"]].map(([k,l])=><label key={k} className="mt-column-choice"><input type="checkbox" checked={!!visibleCols[k]} onChange={()=>toggleWipCol(k)} />{l}</label>)}<button className="mt-btn ghost" style={{marginTop:6}} onClick={resetWipCols}>Reset columns</button></div></details>{currentUserCan("production.export") && <button className="mt-btn primary" onClick={exportCurrentWip}><Download size={14}/>Export Current View</button>}{currentUserCan("production.export") && <button className="mt-btn" onClick={exportStageWip}><Download size={14}/>Export Style Stage Detail</button>}<span className="mt-chip mt-info">Excel-like: frozen header + sort + select filters + column chooser + export</span></div>
     </div>
-    {viewMode === "order" || viewMode === "department" || viewMode === "issue" ? <SimpleTable title={viewMode==="order"?"Order-wise WIP summary":viewMode==="department"?"Department open summary":"Issue-wise open summary"} sub="Summary view first. Click Full Matrix or drill dashboards only when style-level detail is needed." rows={modeRows} empty="No rows in this view." /> : viewMode === "control" ? <div className="mt-table-wrap"><table className="mt-table mt-compact-wip-table"><thead><tr><th className="mt-sticky">Open Style / Order</th><th>Current Status / Entry</th><th>Next Action</th>{showCutActivity && <th>Route Progress / Balance</th>}<th>Open Qty</th><th>R/A/M</th><th>Idle</th><th>Owner</th></tr></thead><tbody>{controlRows.length ? controlRows.map(({row,status})=>{ const stage=status.stage || routeFor(row)[0] || "cutting"; const st=sdata(row,stage); const c=cellBreakup(row,stage); return <React.Fragment key={row.id}><tr className="drillable" onClick={()=>openRowDrill(row,stage)}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}</div></div></td><td><PrimaryPendingStage row={row} onOpen={(st)=>openRowDrill(row,st)} onEntry={onEntry}/></td><td><div className="mt-small">{status.action}</div></td>{showCutActivity && <td><RouteProgressSnapshot row={row} compact={true} onOpen={(st)=>openRowDrill(row,st)}/></td>}<td><div className="mt-open-big">{fmt(status.qty)}</div><div className="mt-small">{c.note}</div></td><td>{fmt(c.ram)}</td><td>{status.idle}d</td><td><b>{status.owner}</b>{status.support ? <div className="mt-small">Support: {status.support}</div> : null}</td></tr>{sizeBreak && <tr className="mt-subrow"><td colSpan={showCutActivity ? 8 : 7}><SizeBreakupStrip row={row} stage={selectedDeptForSize || stage}/></td></tr>}</React.Fragment>; }) : <tr><td colSpan={showCutActivity ? 8 : 7} style={{padding:18}}>No open/control rows in the current WIP filters.</td></tr>}</tbody></table></div> : <div className="mt-table-wrap"><table className="mt-table"><thead><tr><SortTh sticky label="Style" sortKey="style" sort={sort} setSort={setSort}/><SortTh label="Current Status / Entry" sortKey="status" sort={sort} setSort={setSort}/>{showCutActivity && <th>Route Progress / Balance</th>}<SortTh label="Owner" sortKey="owner" sort={sort} setSort={setSort}/><SortTh label="Route" sortKey="route" sort={sort} setSort={setSort}/>{STAGES.map(stage=><th key={stage.key}>{stage.short}</th>)}<SortTh label="Open" sortKey="open" sort={sort} setSort={setSort}/><SortTh label="Idle" sortKey="idle" sort={sort} setSort={setSort}/><th>Next Action</th></tr><tr className="mt-col-filter-row"><th className="mt-sticky"><input className="mt-col-filter-input" value={columnFilters.style || ""} onChange={e=>setGridColumnFilter("style", e.target.value)} placeholder="order/style/buyer/colour" /></th><th><select className="mt-col-filter-select mt-excel-filter-pick" value={columnFilters.status || ""} onChange={e=>setGridColumnFilter("status", e.target.value)}><option value="">All status</option><option value="with">With dept</option><option value="ready">Ready next</option><option value="issued">Issued</option><option value="reconcile">Reconcile</option><option value="ram">R/A/M</option><option value="closed">Closed</option></select></th>{showCutActivity && <th><input className="mt-col-filter-input" value={columnFilters.other || ""} onChange={e=>setGridColumnFilter("other", e.target.value)} placeholder="route progress" /></th>}<th><input className="mt-col-filter-input" value={columnFilters.owner || ""} onChange={e=>setGridColumnFilter("owner", e.target.value)} placeholder="owner" /></th><th><input className="mt-col-filter-input" value={columnFilters.route || ""} onChange={e=>setGridColumnFilter("route", e.target.value)} placeholder="route" /></th>{STAGES.map(stage=><th key={`filter-${stage.key}`}><select className="mt-col-filter-select stage" value={columnFilters[`stage:${stage.key}`] || ""} onChange={e=>setGridColumnFilter(`stage:${stage.key}`, e.target.value)} title={`Filter ${stage.label} cell`}><option value="">All</option><option value="open">Open</option><option value="0R">R/A/M</option><option value="skip">Skip</option><option value="over">Over</option><option value="feed">Feed</option><option value="good">Good</option></select></th>)}<th><input className="mt-col-filter-input" value={columnFilters.open || ""} onChange={e=>setGridColumnFilter("open", e.target.value)} placeholder="qty" /></th><th><input className="mt-col-filter-input" value={columnFilters.idle || ""} onChange={e=>setGridColumnFilter("idle", e.target.value)} placeholder="idle" /></th><th><div style={{display:"flex",gap:4}}><input className="mt-col-filter-input" value={columnFilters.action || ""} onChange={e=>setGridColumnFilter("action", e.target.value)} placeholder="action" /><button className="mt-btn ghost mt-col-filter-clear" onClick={()=>setColumnFilters({})} title="Clear only grid column filters">Clear</button></div></th></tr></thead><tbody>
+    {viewMode === "order" || viewMode === "department" || viewMode === "issue" ? <SimpleTable title={viewMode==="order"?"Order-wise WIP summary":viewMode==="department"?"Department open summary":"Issue-wise open summary"} sub="Summary view first. Click Full Matrix or drill dashboards only when style-level detail is needed." rows={modeRows} empty="No rows in this view." /> : viewMode === "control" ? <div className={`mt-table-wrap mt-wip-table-wrap ${fitColumns?"mt-wip-fit-table":""}`}><table className="mt-table mt-compact-wip-table"><thead><tr><th className="mt-sticky">Open Style / Order</th><th>Current Status / Entry</th><th>Next Action</th>{showCutActivity && <th>Route Progress / Balance</th>}<th>Open Qty</th><th>R/A/M</th><th>Idle</th><th>Owner</th></tr></thead><tbody>{controlRows.length ? controlRows.map(({row,status})=>{ const stage=status.stage || routeFor(row)[0] || "cutting"; const st=sdata(row,stage); const c=cellBreakup(row,stage); return <React.Fragment key={row.id}><tr className="drillable" onClick={()=>openRowDrill(row,stage)}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}</div></div></td><td><PrimaryPendingStage row={row} onOpen={(st)=>openRowDrill(row,st)} onEntry={onEntry}/></td><td><div className="mt-small">{status.action}</div></td>{showCutActivity && <td><RouteProgressSnapshot row={row} compact={true} onOpen={(st)=>openRowDrill(row,st)}/></td>}<td><div className="mt-open-big">{fmt(status.qty)}</div><div className="mt-small">{c.note}</div></td><td>{fmt(c.ram)}</td><td>{status.idle}d</td><td><b>{status.owner}</b>{status.support ? <div className="mt-small">Support: {status.support}</div> : null}</td></tr>{sizeBreak && <tr className="mt-subrow"><td colSpan={controlColumnCount}><SizeBreakupStrip row={row} stage={selectedDeptForSize || stage}/></td></tr>}</React.Fragment>; }) : <tr><td colSpan={controlColumnCount} style={{padding:18}}>No open/control rows in the current WIP filters.</td></tr>}</tbody></table></div> : <div className={`mt-table-wrap mt-wip-table-wrap ${fitColumns?"mt-wip-fit-table":""}`}><table className="mt-table"><thead><tr><SortTh sticky label="Style" sortKey="style" sort={sort} setSort={setSort}/>{visibleCols.status && <SortTh label="Current Status / Entry" sortKey="status" sort={sort} setSort={setSort}/>} {showCutActivity && <th>Route Progress / Balance</th>} {visibleCols.owner && <SortTh label="Owner" sortKey="owner" sort={sort} setSort={setSort}/>} {visibleCols.route && <SortTh label="Route" sortKey="route" sort={sort} setSort={setSort}/>} {visibleCols.stages && STAGES.map(stage=><th key={stage.key}>{stage.short}</th>)} {visibleCols.open && <SortTh label="Open" sortKey="open" sort={sort} setSort={setSort}/>} {visibleCols.idle && <SortTh label="Idle" sortKey="idle" sort={sort} setSort={setSort}/>} {visibleCols.action && <th>Next Action</th>}</tr><tr className="mt-col-filter-row"><th className="mt-sticky"><input className="mt-col-filter-input" value={columnFilters.style || ""} onChange={e=>setGridColumnFilter("style", e.target.value)} placeholder="order/style/buyer/colour" /></th>{visibleCols.status && <th><select className="mt-col-filter-select mt-excel-filter-pick" value={columnFilters.status || ""} onChange={e=>setGridColumnFilter("status", e.target.value)}><option value="">All status</option><option value="with">With dept</option><option value="ready">Ready next</option><option value="issued">Issued</option><option value="reconcile">Reconcile</option><option value="ram">R/A/M</option><option value="closed">Closed</option></select></th>} {showCutActivity && <th><input className="mt-col-filter-input" value={columnFilters.other || ""} onChange={e=>setGridColumnFilter("other", e.target.value)} placeholder="route progress" /></th>} {visibleCols.owner && <th><input className="mt-col-filter-input" value={columnFilters.owner || ""} onChange={e=>setGridColumnFilter("owner", e.target.value)} placeholder="owner" /></th>} {visibleCols.route && <th><input className="mt-col-filter-input" value={columnFilters.route || ""} onChange={e=>setGridColumnFilter("route", e.target.value)} placeholder="route" /></th>} {visibleCols.stages && STAGES.map(stage=><th key={`filter-${stage.key}`}><select className="mt-col-filter-select stage" value={columnFilters[`stage:${stage.key}`] || ""} onChange={e=>setGridColumnFilter(`stage:${stage.key}`, e.target.value)} title={`Filter ${stage.label} cell`}><option value="">All</option><option value="open">Open</option><option value="0R">R/A/M</option><option value="skip">Skip</option><option value="over">Over</option><option value="feed">Feed</option><option value="good">Good</option></select></th>)} {visibleCols.open && <th><input className="mt-col-filter-input" value={columnFilters.open || ""} onChange={e=>setGridColumnFilter("open", e.target.value)} placeholder="qty" /></th>} {visibleCols.idle && <th><input className="mt-col-filter-input" value={columnFilters.idle || ""} onChange={e=>setGridColumnFilter("idle", e.target.value)} placeholder="idle" /></th>} {visibleCols.action && <th><div style={{display:"flex",gap:4}}><input className="mt-col-filter-input" value={columnFilters.action || ""} onChange={e=>setGridColumnFilter("action", e.target.value)} placeholder="action" /><button className="mt-btn ghost mt-col-filter-clear" onClick={()=>setColumnFilters({})} title="Clear only grid column filters">Clear</button></div></th>}</tr></thead><tbody>
       {filtered.map(row => { const rs = rowStatus(row); const sizeStage = selectedDeptForSize || rs.stage; const openDrill = () => openRowDrill(row, rs.stage || routeFor(row)[0] || "cutting"); return <React.Fragment key={row.id}>
         <tr>
           <td className="mt-sticky mt-clickable-cell" onClick={openDrill} title="Click to open selected/current department"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}<div className="mt-drill-hint">Open detail</div></div></div></td>
-          <td className="mt-clickable-cell" onClick={openDrill}><PrimaryPendingStage row={row} onOpen={(stage)=>onOpen?.(row, stage)} onEntry={onEntry}/><div className="mt-small">Idle {rs.idle}d</div></td>
+          {visibleCols.status && <td className="mt-clickable-cell" onClick={openDrill}><PrimaryPendingStage row={row} onOpen={(stage)=>onOpen?.(row, stage)} onEntry={onEntry}/><div className="mt-small">Idle {rs.idle}d</div></td>}
           {showCutActivity && <td><RouteProgressSnapshot row={row} compact={true} onOpen={(stage)=>onOpen?.(row, stage)}/></td>}
-          <td className="mt-clickable-cell" onClick={openDrill}><b>{rs.owner}</b>{rs.support ? <div className="mt-small">Support: {rs.support}</div> : null}</td>
-          <td className="mt-clickable-cell" onClick={openDrill}><span className="mt-chip mt-info">{routeType(row)}</span><div style={{marginTop:4}}>{routeFor(row).map(k=><span key={k} className="mt-chip mt-muted" style={{margin:"0 3px 3px 0"}}>{STAGE_BY_KEY[k].short}</span>)}</div></td>
-          {STAGES.map(s=><StageCell key={s.key} row={row} stageKey={s.key} onOpen={onOpen}/>) }
-          <td className="mt-clickable-cell" onClick={openDrill}><b>{fmt(rs.qty)}</b></td><td className="mt-clickable-cell" onClick={openDrill}>{rs.idle}d</td><td className="mt-clickable-cell" onClick={openDrill}>{rs.action}</td>
+          {visibleCols.owner && <td className="mt-clickable-cell" onClick={openDrill}><b>{rs.owner}</b>{rs.support ? <div className="mt-small">Support: {rs.support}</div> : null}</td>}
+          {visibleCols.route && <td className="mt-clickable-cell" onClick={openDrill}><span className="mt-chip mt-info">{routeType(row)}</span><div style={{marginTop:4}}>{routeFor(row).map(k=><span key={k} className="mt-chip mt-muted" style={{margin:"0 3px 3px 0"}}>{STAGE_BY_KEY[k].short}</span>)}</div></td>}
+          {visibleCols.stages && STAGES.map(s=><StageCell key={s.key} row={row} stageKey={s.key} onOpen={onOpen}/>) }
+          {visibleCols.open && <td className="mt-clickable-cell" onClick={openDrill}><b>{fmt(rs.qty)}</b></td>}{visibleCols.idle && <td className="mt-clickable-cell" onClick={openDrill}>{rs.idle}d</td>}{visibleCols.action && <td className="mt-clickable-cell" onClick={openDrill}>{rs.action}</td>}
         </tr>
-        {sizeBreak && <tr className="mt-subrow"><td colSpan={STAGES.length + (showCutActivity ? 9 : 8)}><SizeBreakupStrip row={row} stage={sizeStage}/></td></tr>}
+        {sizeBreak && <tr className="mt-subrow"><td colSpan={matrixColumnCount}><SizeBreakupStrip row={row} stage={sizeStage}/></td></tr>}
       </React.Fragment>;})}
-      {!filtered.length && <tr><td colSpan={STAGES.length + (showCutActivity ? 9 : 8)} style={{padding:18}}>No rows match current WIP filters.</td></tr>}
+      {!filtered.length && <tr><td colSpan={matrixColumnCount} style={{padding:18}}>No rows match current WIP filters.</td></tr>}
     </tbody></table></div>}
     <div className="mt-section"><span className="mt-chip mt-ok">Current Status = clickable DPR entry context</span> <span className="mt-chip mt-info">Route Progress / Balance = toggleable</span> <span className="mt-chip mt-warn">Click any row/cell for selected department only</span></div>
   </div>;
@@ -4246,70 +4396,166 @@ function samePlanRow(p, base, day){
   return p.row_id===base.row_id && p.dept===base.dept && (p.line||"")===(base.line||"") && p.plan_date===day;
 }
 
-function PlanPrintGrid({ gridRows, weekDays, activeDept, line, planRows, setWeekQty }){
-  const blocks = [weekDays.slice(0,3), weekDays.slice(3,6)];
-  return <div className="mt-plan-print-block">{blocks.map((days,idx)=><div key={idx} className="mt-table-wrap"><table className="mt-table mt-plan-week-table mt-plan-print-table"><thead><tr><th className="mt-sticky mt-plan-row-label">Style / {activeDept==="stitching"?"line":"dept"}</th>{days.map(day=><th key={day} className="day-col">{shortDayLabel(day)}</th>)}<th>Notes</th></tr></thead><tbody>{gridRows.length ? gridRows.map(gr=><tr key={`${idx}-${gr.row_id}-${gr.line||"dept"}`}><td className="mt-sticky"><b>{gr.style_no}</b><div className="mt-small">{gr.order_no} · {gr.buyer} · {gr.colour} · {gr.component}</div><span className="mt-chip mt-info">{activeDept==="stitching" ? (gr.line||line) : stageLabel(activeDept)}</span></td>{days.map(day=>{ const existing=(planRows||[]).find(p=>samePlanRow(p,gr,day)); return <td key={day} className="day-col"><div className="mt-plan-cell"><input className="mt-input mandatory" value={existing?.planned_qty || ""} onChange={e=>setWeekQty(gr,day,e.target.value)} placeholder="0"/><span className="hint">total day target</span>{existing?.achieved_qty_snapshot ? <span className="hint">ach {fmt(existing.achieved_qty_snapshot)}</span> : null}</div></td>; })}<td><span className="mt-small">Printable {idx===0?"top":"bottom"} half. Type total daily target; no SMV required.</span></td></tr>) : <tr><td colSpan={days.length+2}>Select a style from the pool to start the weekly grid.</td></tr>}</tbody></table></div>)}</div>;
+function lineBoardWeekStart(iso){
+  const d = parseYmd(iso || today());
+  const day = d.getDay() || 7;
+  d.setDate(d.getDate() - day + 1);
+  return ymd(d);
+}
+function nextProductionMonday(iso=today()){
+  const d = parseYmd(iso || today());
+  const day = d.getDay() || 7;
+  const add = day === 1 ? 7 : (8 - day);
+  d.setDate(d.getDate() + add);
+  return ymd(d);
+}
+function planCellLineKey(activeDept, line){ return activeDept === "stitching" ? String(line || "").trim() : `${activeDept}_total`; }
+function planCellMatches(p, activeDept, line, day){ return String(p.dept||"")===String(activeDept) && String(p.plan_date||"").slice(0,10)===String(day||"").slice(0,10) && String(p.line || planCellLineKey(activeDept,line) || "")===String(planCellLineKey(activeDept,line)||""); }
+function planStyleText(p){ return String(p?.style_input || p?.style_no || "").trim(); }
+function styleKeyOf(row){ return [row?.order_no,row?.style_no,row?.colour,row?.component].map(x=>String(x||"").trim().toUpperCase()).join("|"); }
+function resolvePlanStyle(rows, raw){
+  const q = String(raw || "").trim().toUpperCase();
+  if (!q) return null;
+  return (rows||[]).find(r=>String(r.style_no||"").toUpperCase()===q)
+    || (rows||[]).find(r=>[r.style_no,r.order_no,r.buyer,r.colour,r.component].join(" ").toUpperCase().includes(q))
+    || null;
+}
+function sumPlanQty(planRows, matcher){ return (planRows||[]).filter(matcher).reduce((a,p)=>a+n(p.planned_qty),0); }
+function upstreamStageFor(row, dept){ const route=routeFor(row); const idx=route.indexOf(dept); return idx>0 ? route[idx-1] : null; }
+function plannedQtyUpTo(planRows, row, dept, iso, includeSameDay=false){
+  const key = styleKeyOf(row); const day = String(iso||"").slice(0,10);
+  return sumPlanQty(planRows, p=>String(p.dept)===String(dept) && String(p.plan_date||"").slice(0,10) && (includeSameDay ? String(p.plan_date).slice(0,10)<=day : String(p.plan_date).slice(0,10)<day) && (p.row_id===row?.id || styleKeyOf(p)===key));
+}
+function feedAvailableAsOf(row, dept, day, planRows){
+  if (!row) return { feed:0, prevStage:null, actualPrev:0, plannedPrev:0, note:"No style linked" };
+  if (dept === "cutting") return { feed:n(row.order_qty), prevStage:null, actualPrev:n(row.order_qty), plannedPrev:0, note:"Order qty base" };
+  const prevStage = upstreamStageFor(row, dept);
+  if (!prevStage) return { feed:n(row.order_qty), prevStage:null, actualPrev:n(row.order_qty), plannedPrev:0, note:"No previous route stage" };
+  const actualPrev = n(sdata(row, prevStage).output);
+  const plannedPrev = plannedQtyUpTo(planRows, row, prevStage, day, true);
+  const routeFeed = Math.max(actualPrev, Math.min(n(row.order_qty), actualPrev + plannedPrev));
+  return { feed:routeFeed, prevStage, actualPrev, plannedPrev, note:`${stageLabel(prevStage)} actual ${fmt(actualPrev)} + plan by date ${fmt(plannedPrev)}` };
+}
+function remainingForStyleAsOf(row, dept, day, planRows){
+  if (!row) return { remaining:0, feed:0, consumed:0, prevStage:null, note:"Free text style; no master quantity linked." };
+  const feedInfo = feedAvailableAsOf(row, dept, day, planRows);
+  const actualDone = n(sdata(row, dept).output);
+  const plannedBefore = plannedQtyUpTo(planRows, row, dept, day, false);
+  const shortClosedBefore = (planRows||[]).some(p=>(p.row_id===row.id || styleKeyOf(p)===styleKeyOf(row)) && String(p.dept)===String(dept) && String(p.plan_date||"").slice(0,10)<String(day||"").slice(0,10) && p.short_close);
+  const consumed = shortClosedBefore ? feedInfo.feed : actualDone + plannedBefore;
+  return { remaining:Math.max(0, n(feedInfo.feed)-n(consumed)), feed:n(feedInfo.feed), consumed:n(consumed), actualDone, plannedBefore, prevStage:feedInfo.prevStage, note:feedInfo.note, shortClosedBefore };
+}
+function planCellSignal(plan, rows, planRows, activeDept, line, day){
+  if (!plan || !planStyleText(plan)) return { tone:"muted", text:"Blank cell — type style, qty, end date and OPS directly." };
+  const linked = resolvePlanStyle(rows, planStyleText(plan)) || rows.find(r=>r.id===plan.row_id);
+  if (plan.short_close) return { tone:"purple", text:"Short close override marked — next style can roll even if balance remains." };
+  const thisRemain = linked ? remainingForStyleAsOf(linked, activeDept, day, planRows) : null;
+  const qty = n(plan.planned_qty);
+  const previous = (planRows||[]).filter(p=>String(p.dept)===String(activeDept) && String(p.line||"")===String(planCellLineKey(activeDept,line)) && String(p.plan_date||"").slice(0,10)<String(day||"").slice(0,10) && planStyleText(p)).sort((a,b)=>String(b.plan_date).localeCompare(String(a.plan_date)))[0];
+  if (previous && !previous.short_close) {
+    const prevLinked = resolvePlanStyle(rows, planStyleText(previous)) || rows.find(r=>r.id===previous.row_id);
+    const different = planStyleText(previous).toUpperCase() !== planStyleText(plan).toUpperCase();
+    if (prevLinked && different) {
+      const prevRemain = remainingForStyleAsOf(prevLinked, activeDept, day, planRows);
+      if (prevRemain.remaining > 0) return { tone:"late", text:`Line still has ${fmt(prevRemain.remaining)} of ${previous.style_no || previous.style_input}. Finish / consume / short-close before rolling to ${plan.style_no || plan.style_input}.` };
+    }
+  }
+  if (!linked) return { tone:"warn", text:"Free text style — allowed, but no master qty/cascade check until linked to Styles." };
+  if (qty > thisRemain.remaining && thisRemain.remaining > 0) return { tone:"warn", text:`Qty above available cascade balance. Available as-of date ${fmt(thisRemain.remaining)} / feed ${fmt(thisRemain.feed)}. ${thisRemain.note}` };
+  if (thisRemain.remaining <= 0 && qty > 0) return { tone:"late", text:`No open cascade balance as-of this date. ${thisRemain.note}. Mark short close only if management overrides.` };
+  return { tone:"ok", text:`Cascade OK. Available before this day ${fmt(thisRemain.remaining)} / feed ${fmt(thisRemain.feed)}. ${thisRemain.note}` };
+}
+function PlanExcelLineBoard({ rows, planRows, setPlanRows, activeDept, weekDays, showTargets=false, fit=false }){
+  const [search,setSearch] = useState("");
+  const boardRows = activeDept === "stitching" ? productionLineNames() : [`${stageLabel(activeDept)} Total`];
+  const datalistId = `plan-style-list-${activeDept}`;
+  const filteredStyles = useMemo(()=>{
+    const q=search.trim().toLowerCase();
+    return (rows||[]).filter(r=>!q || [r.style_no,r.order_no,r.buyer,r.colour,r.component].join(" ").toLowerCase().includes(q)).slice(0,120);
+  }, [rows, search]);
+  function findCell(line, day){ return (planRows||[]).find(p=>planCellMatches(p, activeDept, line, day)); }
+  function cleanPatchForStyle(base, patch){
+    const text = patch.style_input !== undefined ? patch.style_input : planStyleText(base);
+    const linked = resolvePlanStyle(rows, text) || rows.find(r=>r.id===base?.row_id);
+    const out = { ...patch, style_input:text };
+    if (linked) Object.assign(out, { row_id:linked.id, order_no:linked.order_no, style_no:linked.style_no, buyer:patch.buyer !== undefined ? patch.buyer : linked.buyer, colour:linked.colour, component:linked.component });
+    else if (text) Object.assign(out, { row_id:"", style_no:text.toUpperCase(), order_no:base?.order_no || "", buyer:patch.buyer !== undefined ? patch.buyer : (base?.buyer || ""), colour:base?.colour || "", component:base?.component || "" });
+    return out;
+  }
+  function updateCell(line, day, patch){
+    setPlanRows(prev=>{
+      const existing = (prev||[]).find(p=>planCellMatches(p, activeDept, line, day));
+      const base = existing || { id:uid("plan"), plan_date:day, dept:activeDept, line:planCellLineKey(activeDept,line), source:"manual_excel_board", source_label:"Excel weekly line board", source_type:"Manual / cascade checked", remaining_hours:8, difficulty:"Normal", priority:"Normal", status:"Draft", remarks:"" };
+      const cleaned = cleanPatchForStyle(base, patch);
+      const next = { ...base, ...cleaned, plan_date:day, dept:activeDept, line:planCellLineKey(activeDept,line), planned_qty: cleaned.planned_qty !== undefined ? n(cleaned.planned_qty) : n(base.planned_qty), ops: cleaned.ops !== undefined ? n(cleaned.ops) : n(base.ops), eight_hr_target: cleaned.planned_qty !== undefined ? n(cleaned.planned_qty) : n(base.eight_hr_target || base.planned_qty), status: cleaned.short_close ? "Short close override" : "Draft", updated_at:new Date().toISOString() };
+      const hasContent = planStyleText(next) || n(next.planned_qty) || n(next.ops) || next.stitching_end_date || next.remarks || next.short_close;
+      if (!hasContent) return (prev||[]).filter(p=>p.id!==existing?.id);
+      return existing ? (prev||[]).map(p=>p.id===existing.id ? next : p) : [...(prev||[]), next];
+    });
+  }
+  function clearCell(line, day){ setPlanRows(prev=>(prev||[]).filter(p=>!planCellMatches(p, activeDept, line, day))); }
+  function carryForward(line, day){
+    const idx = weekDays.indexOf(day);
+    const prevDay = idx > 0 ? weekDays[idx-1] : null;
+    const prev = prevDay ? findCell(line, prevDay) : null;
+    if (!prev) return;
+    updateCell(line, day, { style_input:planStyleText(prev), buyer:prev.buyer || "", planned_qty:prev.planned_qty || "", ops:prev.ops || "", stitching_end_date:prev.stitching_end_date || "", remarks:"CONTINUE RUNNING", short_close:false });
+  }
+  function fillNext(line, day){
+    const idx=weekDays.indexOf(day); const next=idx>=0 ? weekDays[idx+1] : null; const curr=findCell(line,day);
+    if (next && curr) updateCell(line,next,{ style_input:planStyleText(curr), buyer:curr.buyer||"", planned_qty:curr.planned_qty||"", ops:curr.ops||"", stitching_end_date:curr.stitching_end_date||"", remarks:"CONTINUE RUNNING", short_close:false });
+  }
+  function exportBoard(){
+    const out = [];
+    boardRows.forEach(line=>{
+      const row = { Line:line };
+      weekDays.forEach(day=>{
+        const p=findCell(line,day)||{};
+        row[`${shortDayLabel(day)} Style`] = planStyleText(p);
+        row[`${shortDayLabel(day)} Brand`] = p.buyer || "";
+        row[`${shortDayLabel(day)} Qty`] = n(p.planned_qty) || "";
+        row[`${shortDayLabel(day)} End Date`] = p.stitching_end_date || "";
+        row[`${shortDayLabel(day)} OPS`] = n(p.ops) || "";
+        row[`${shortDayLabel(day)} Note`] = p.short_close ? "SHORT CLOSE" : (p.remarks || "");
+      });
+      out.push(row);
+    });
+    exportXlsx(`production_${activeDept}_weekly_line_board_${weekDays[0]}.xlsx`, [{ name:"Weekly Line Board", rows:out }, { name:"Plan Rows", rows:(planRows||[]).filter(p=>p.dept===activeDept && weekDays.includes(String(p.plan_date||"").slice(0,10))) }]);
+  }
+  const blocks=[weekDays.slice(0,3), weekDays.slice(3,6)];
+  return <div className={`mt-plan-board-wrap ${fit?"fit":""}`}>
+    <datalist id={datalistId}>{filteredStyles.map(r=><option key={r.id} value={r.style_no}>{r.order_no} · {r.buyer} · {r.colour} · {r.component}</option>)}</datalist>
+    <div className="mt-plan-board-head no-print"><div><div className="mt-plan-board-title">Excel Weekly Line Board — {stageLabel(activeDept)}</div><div className="mt-panel-sub">Type directly in the line × day cells. Style is free text with typeahead; Qty, End Date and OPS total automatically. Cascade warnings look at earlier line plans and previous-department finish plans.</div></div><div className="mt-toolbar"><span className="mt-toolbar-label">Find style</span><input className="mt-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="filter typeahead styles"/><button className="mt-btn primary" onClick={exportBoard}><Download size={14}/>Export Board</button></div></div>
+    {blocks.map((days,blockIdx)=>{
+      const dayTotals = days.map(day=>({ day, qty:boardRows.reduce((a,line)=>a+n(findCell(line,day)?.planned_qty),0), ops:boardRows.reduce((a,line)=>a+n(findCell(line,day)?.ops),0) }));
+      return <div key={blockIdx} className="mt-table-wrap" style={{marginBottom:12}}><table className="mt-table mt-plan-excel-table"><thead><tr><th className="line-col">Line</th>{days.map(day=><th key={day} className="day-col"><div>{shortDayLabel(day)}</div><div className="mt-small">Style · Brand · Qty · End Date · OPS</div></th>)}</tr></thead><tbody>{boardRows.map(line=><tr key={`${blockIdx}-${line}`}><td className="line-col"><div className="mt-plan-line-name">{line}</div><div className="mt-small">Editable in Settings</div></td>{days.map(day=>{ const p=findCell(line,day); const sig=planCellSignal(p, rows, planRows, activeDept, line, day); return <td key={`${line}-${day}`} className="day-col"><div className="mt-plan-cell-board"><input className="style-input" list={datalistId} value={planStyleText(p)} onChange={e=>updateCell(line,day,{style_input:e.target.value})} placeholder="STYLE"/><div className="mt-plan-mini-row"><input value={p?.buyer || ""} onChange={e=>updateCell(line,day,{buyer:e.target.value})} placeholder="BRAND"/><input value={p?.planned_qty || ""} onChange={e=>updateCell(line,day,{planned_qty:e.target.value.replace(/[^0-9]/g,"")})} placeholder="QTY"/><input value={p?.ops || ""} onChange={e=>updateCell(line,day,{ops:e.target.value.replace(/[^0-9]/g,"")})} placeholder="OPS"/></div><div className="mt-plan-mini-row two"><input type="date" value={p?.stitching_end_date || ""} onChange={e=>updateCell(line,day,{stitching_end_date:e.target.value})} title="Stitching / department finish date"/><input value={p?.remarks || ""} onChange={e=>updateCell(line,day,{remarks:e.target.value})} placeholder="CONTINUE / HALF DAY"/></div><div className={`mt-plan-signal ${sig.tone}`}>{sig.text}</div><div className="mt-plan-cell-actions no-print"><button className="mt-btn ghost" onClick={()=>carryForward(line,day)}>← carry</button><button className="mt-btn ghost" onClick={()=>fillNext(line,day)}>carry →</button><label className="mt-small"><input type="checkbox" checked={!!p?.short_close} onChange={e=>updateCell(line,day,{short_close:e.target.checked, remarks:e.target.checked ? "SPECIAL SHORT CLOSE" : (p?.remarks || "")})}/> short close</label><button className="mt-btn ghost" onClick={()=>clearCell(line,day)}>Clear</button></div></div></td>; })}</tr>)}<tr className="mt-plan-total-row"><td>Total</td>{dayTotals.map(t=><td key={t.day}><div className="mt-plan-day-total"><span>Qty {fmt(t.qty)}</span><span>OPS {fmt(t.ops)}</span></div></td>)}</tr></tbody></table></div>;
+    })}
+  </div>;
 }
 
 function PlanningView({ rows, planRows, setPlanRows, ledger, setRows }){
   const [mode,setMode] = useState("stitching");
   const [dept,setDept] = useState("printing");
-  const [date,setDate] = useState(defaultEntryDate(ledger));
-  const [line,setLine] = useState(productionLineNames()[0] || "STF-1");
-  const [selectedRow,setSelectedRow] = useState(rows[0]?.id || "");
-  const [manualQty,setManualQty] = useState("");
-  const [eightHr,setEightHr] = useState("1200");
-  const [remainingHours,setRemainingHours] = useState("8");
-  const [changeover,setChangeover] = useState(false);
+  const [weekStart,setWeekStart] = useState(()=>nextProductionMonday(today()));
+  const [showTargets,setShowTargets] = useState(false);
+  const [fitBoard,setFitBoard] = useState(false);
   const activeDept = mode === "stitching" ? "stitching" : dept;
-  const pool = planningPoolRows(rows, activeDept, planRows);
-  const row = rows.find(r=>r.id===selectedRow) || rows[0];
-  const sourceOptions = row ? stagePlanSources(row, activeDept) : [];
-  const [source,setSource] = useState("manual_future");
-  useEffect(()=>{ if (row) setSource(bestPlanSource(row, activeDept).key); }, [selectedRow, activeDept]);
-  const chosenSource = sourceOptions.find(s=>s.key===source) || sourceOptions[0] || {qty:0,label:"Manual future plan",readyType:"Manual / not yet ready"};
-  const recommended = changeover ? planRowEffectiveQty({eight_hr_target:eightHr,changeover,remaining_hours:remainingHours,planned_qty:manualQty}) : Math.min(n(chosenSource.qty)||n(row?.order_qty), n(manualQty)||n(chosenSource.qty)||n(row?.order_qty));
-  function addPlan(){
-    if (!row) return;
-    const qty = n(manualQty) || recommended || n(chosenSource.qty) || Math.round(n(row.order_qty)*0.25);
-    const p = { id:uid("plan"), plan_date:date, dept:activeDept, line:activeDept==="stitching"?line:"", row_id:row.id, order_no:row.order_no, style_no:row.style_no, buyer:row.buyer, colour:row.colour, component:row.component, source:source, source_label:chosenSource.label, source_type:chosenSource.readyType, available_qty:chosenSource.qty, planned_qty:qty, eight_hr_target:n(eightHr), changeover, remaining_hours:n(remainingHours), difficulty:row.difficulty || "Normal", priority:"Normal", status: chosenSource.readyType?.includes("Manual") ? "Manual future / risk" : "Draft", remarks: chosenSource.readyType?.includes("Manual") ? "Manual style + quantity selected; readiness may be pending." : "" };
-    setPlanRows(prev=>[...prev,p]);
-    setManualQty("");
-  }
-  function updatePlan(id, patch){ setPlanRows(prev=>prev.map(p=>p.id===id?{...p,...patch}:p)); }
+  const normalizedWeekStart = lineBoardWeekStart(weekStart);
+  const weekDays = planningSixDays(normalizedWeekStart);
   const visiblePlans = (planRows||[]).filter(p=>p.dept===activeDept).sort((a,b)=>String(a.plan_date).localeCompare(String(b.plan_date)) || String(a.line).localeCompare(String(b.line)));
+  const weekPlanRows = visiblePlans.filter(p=>weekDays.includes(String(p.plan_date||"").slice(0,10)));
   const pva = planVsAchievedRows(visiblePlans, rows, ledger);
-  const weekDays = planningSixDays(date);
-  const gridRows = useMemo(()=>{
-    const map = new Map();
-    visiblePlans.forEach(p=>{
-      const key = `${p.row_id}|${p.line||"dept"}`;
-      if(!map.has(key)) map.set(key,{ row: rows.find(r=>r.id===p.row_id), row_id:p.row_id, line:p.line||"", dept:p.dept, style_no:p.style_no, order_no:p.order_no, buyer:p.buyer, colour:p.colour, component:p.component });
-    });
-    if(row){
-      const key = `${row.id}|${activeDept==="stitching"?line:"dept"}`;
-      if(!map.has(key)) map.set(key,{ row, row_id:row.id, line:activeDept==="stitching"?line:"", dept:activeDept, style_no:row.style_no, order_no:row.order_no, buyer:row.buyer, colour:row.colour, component:row.component });
-    }
-    return Array.from(map.values()).filter(x=>x.row);
-  }, [visiblePlans, rows, row, activeDept, line]);
-  function setWeekQty(base, day, raw){
-    const qty = n(String(raw).replace(/[^0-9]/g,""));
-    setPlanRows(prev=>{
-      const exists = (prev||[]).find(p=>samePlanRow(p,base,day));
-      if (exists) return prev.map(p=>p.id===exists.id?{...p, planned_qty:qty, eight_hr_target:qty, status: qty?"Draft":"Zero / no plan"}:p);
-      if (!qty) return prev;
-      const r = base.row;
-      return [...prev,{ id:uid("plan"), plan_date:day, dept:activeDept, line:activeDept==="stitching"?base.line:"", row_id:r.id, order_no:r.order_no, style_no:r.style_no, buyer:r.buyer, colour:r.colour, component:r.component, source:"manual_future", source_label:"Manual Excel-style day target", source_type:"Manual / not yet ready", available_qty:0, planned_qty:qty, eight_hr_target:qty, changeover:false, remaining_hours:8, difficulty:"Normal", priority:r.priority||"Normal", status:"Draft", remarks:"Entered from 6-day planning grid; SMV/OPS not required." }];
-    });
+  function exportWeekDetail(){
+    exportXlsx(`production_${activeDept}_plan_detail_${normalizedWeekStart}.xlsx`, [
+      { name:"Plan Detail", rows:weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Style:p.style_no || p.style_input, Buyer:p.buyer, Qty:p.planned_qty, End_Date:p.stitching_end_date, OPS:p.ops, Short_Close:p.short_close?"Yes":"No", Remarks:p.remarks, Status:p.status })) },
+      { name:"Plan vs Achieved", rows:pva }
+    ]);
   }
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Planning</h3><div className="mt-panel-sub">Rolling plan. Stitching is line-wise; other departments are day-wise. Manual means you can select style + quantity even if upstream is not ready yet, and the row is marked as Manual Future / Risk.</div></div>
-    <div className="mt-section no-print"><div className="mt-filter-row"><button className={`mt-btn ${mode==="stitching"?"primary":"ghost"}`} onClick={()=>setMode("stitching")}>Stitching line-wise</button><button className={`mt-btn ${mode==="dept"?"primary":"ghost"}`} onClick={()=>setMode("dept")}>Other dept day-wise</button>{mode==="dept" && <select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.filter(s=>!["stitching"].includes(s.key)).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>}<span className="mt-chip mt-info">Changeover rule · next style = 70% of remaining run hours</span><span className="mt-chip mt-muted">Actuals will roll shortfall forward</span></div></div>
-    <div className="mt-two"><div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">{stageLabel(activeDept)} Planning Pool</h3><div className="mt-panel-sub">Department-specific pool. Ready quantities come from route/WIP; manual future planning is allowed but marked at risk.</div></div><div className="mt-table-wrap"><table className="mt-table"><thead><tr><th>Style</th><th>Source</th><th>Available</th><th>Planned</th><th>Status</th><th>Action</th></tr></thead><tbody>{pool.map(p=><tr key={p.row.id} onClick={()=>setSelectedRow(p.row.id)} className={selectedRow===p.row.id?"drillable":""}><td><b>{p.Style}</b><div className="mt-small">{p.Order} · {p.Buyer} · {p.Colour} · {p.Component}</div></td><td>{p.Source}<div className="mt-small">{p.Source_Type}</div></td><td>{fmt(p.Available)}</td><td>{fmt(p.Already_Planned)}</td><td>{p.Status}</td><td><button className="mt-btn ghost" onClick={(e)=>{e.stopPropagation();setSelectedRow(p.row.id);}}>Select</button></td></tr>)}</tbody></table></div></div>
-      <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Add / Manual Plan Row</h3><div className="mt-panel-sub">Fast add. For manual future plan, choose source = Manual Future Plan and enter quantity. This can place a style in printing plan even if cutting is not done yet.</div></div><div className="mt-section" style={{display:"grid", gap:8}}><label className="mt-small">Plan date</label><input className="mt-input" type="date" value={date} onChange={e=>setDate(e.target.value)}/>{activeDept==="stitching" && <><label className="mt-small">Line</label><select className="mt-select" value={line} onChange={e=>setLine(e.target.value)}>{productionLineNames().map(l=><option key={l} value={l}>{l}</option>)}</select><div className="mt-small">Edit/add line names in Settings → Production Rules.</div></>}<label className="mt-small">Style</label><select className="mt-select" value={selectedRow} onChange={e=>setSelectedRow(e.target.value)}>{rows.map(r=><option key={r.id} value={r.id}>{r.style_no} · {r.buyer} · {r.colour} · {r.component}</option>)}</select><label className="mt-small">Source</label><select className="mt-select" value={source} onChange={e=>setSource(e.target.value)}>{sourceOptions.map(s=><option key={s.key} value={s.key}>{s.label} · {fmt(s.qty)} · {s.readyType}</option>)}</select><div className="mt-two"><div><label className="mt-small">Plan qty</label><input className="mt-input" value={manualQty} onChange={e=>setManualQty(e.target.value.replace(/[^0-9]/g,""))} placeholder={`Suggested ${fmt(recommended)}`}/></div><div><label className="mt-small">8hr target</label><input className="mt-input" value={eightHr} onChange={e=>setEightHr(e.target.value.replace(/[^0-9]/g,""))}/></div></div><div className="mt-two"><label className="mt-small"><input type="checkbox" checked={changeover} onChange={e=>setChangeover(e.target.checked)}/> Changeover after previous style</label><div><label className="mt-small">Remaining hours after current style completes</label><input className="mt-input" value={remainingHours} onChange={e=>setRemainingHours(e.target.value.replace(/[^0-9.]/g,""))}/></div></div><div className="mt-speed-note">If changeover is checked: target = (8hr target ÷ 8) × remaining run hours × 70%. Current suggested qty: <b>{fmt(recommended)}</b>.</div><button className="mt-btn primary" onClick={addPlan}>Add to {stageLabel(activeDept)} plan</button></div></div></div>
-    <div className="mt-section"><h3 className="mt-panel-title">Printable 6-Day Planning Grid</h3><div className="mt-panel-sub">Excel-style printable plan entry. Six days are split 3 on top and 3 below for clean printouts. Applies to Stitching and all other departments; Stitching uses editable line names from Settings.</div><PlanPrintGrid gridRows={gridRows} weekDays={weekDays} activeDept={activeDept} line={line} planRows={planRows} setWeekQty={setWeekQty}/></div>
-    <div className="mt-section"><SimpleTable title={`${stageLabel(activeDept)} Plan Rows`} sub="Detailed plan rows remain available for source/risk/changeover notes; daily targets can be edited faster in the 6-day grid above." rows={visiblePlans.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Style:p.style_no, Buyer:p.buyer, Source:p.source_label, Source_Type:p.source_type, Plan_Qty:p.planned_qty, Target_8hr:p.eight_hr_target||"—", Changeover:p.changeover?"Yes":"No", Remaining_Hours:p.remaining_hours, Status:p.status, Remarks:p.remarks }))} empty="No plan rows for this department yet." /></div>
-    <div className="mt-section"><SimpleTable title="Plan vs Achieved / Style Adherence" sub="Production is not only total qty. If easier styles are produced instead of the planned style, this table exposes style/mix adherence gaps." rows={pva} empty="No plan rows yet." /></div>
-    <div className="mt-section"><h3 className="mt-panel-title">Bulk Order / Style Update</h3><div className="mt-panel-sub">Planned workflow: upload/copy order sheet with Order, Style, Buyer, Colour, Component, Size, Qty, Route, Print/Emb toggles, SMV/8hr target. This will update the planning pool and production orders in one go. Full parser comes with the next Supabase import patch.</div><div className="mt-speed-note">For now this screen defines the format and workflow; keep using GitHub/Supabase seed for demo rows until the importer is added.</div></div>
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Planning — Excel Weekly Board</h3><div className="mt-panel-sub">This replaces the rigid pool-first model. Plan like the factory sheet: line × day cells, direct typing, Qty/End Date/OPS, auto totals, continue-running carry, and cascade warnings for previous running styles and previous-department finish plans.</div></div>
+    <div className="mt-section no-print"><div className="mt-filter-row"><button className={`mt-btn ${mode==="stitching"?"primary":"ghost"}`} onClick={()=>setMode("stitching")}>Stitching line board</button><button className={`mt-btn ${mode==="dept"?"primary":"ghost"}`} onClick={()=>setMode("dept")}>Other dept board</button>{mode==="dept" && <select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.filter(s=>!['stitching'].includes(s.key)).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>}<span className="mt-toolbar-label">Week</span><input className="mt-input" type="date" value={weekStart} onChange={e=>setWeekStart(e.target.value)}/><button className="mt-btn ghost" onClick={()=>setWeekStart(lineBoardWeekStart(today()))}>This week</button><button className="mt-btn ghost" onClick={()=>setWeekStart(nextProductionMonday(today()))}>Next week</button><button className={`mt-btn ${fitBoard?"active":"ghost"}`} onClick={()=>setFitBoard(v=>!v)}>Fit board</button><button className={`mt-btn ${showTargets?"active":"ghost"}`} onClick={()=>setShowTargets(v=>!v)}>Show hidden targets</button><button className="mt-btn primary" onClick={exportWeekDetail}><Download size={14}/>Export plan detail</button></div><div className="mt-plan-cascade-note"><b>Cascade rule now used:</b> when you are sitting on Thursday and planning Monday, earlier Thu/Fri/Sat running styles on the same line consume balance first. The next style is flagged until prior quantity is finished or <b>short close</b> is marked. For Printing/Stitching/Checking/Packing, previous department actual output + previous department planned finish by the date is used as the as-of feed.</div></div>
+    <div className="mt-section"><PlanExcelLineBoard rows={rows} planRows={planRows} setPlanRows={setPlanRows} activeDept={activeDept} weekDays={weekDays} showTargets={showTargets} fit={fitBoard}/></div>
+    <div className="mt-section"><SimpleTable title={`${stageLabel(activeDept)} Week Plan Rows`} sub="Every filled line/day cell becomes a plan row underneath, so plan-vs-achieved and reports keep working without making the board rigid." rows={weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Style:p.style_no || p.style_input, Buyer:p.buyer, Plan_Qty:p.planned_qty, End_Date:p.stitching_end_date||"", OPS:p.ops||"", Short_Close:p.short_close?"Yes":"No", Source:p.source_label, Status:p.status, Remarks:p.remarks }))} empty="No weekly plan cells filled yet." /></div>
+    <div className="mt-section"><SimpleTable title="Plan vs Achieved / Style Adherence" sub="Compares planned style/date/line against actual production ledger. This keeps style adherence separate from total quantity achievement." rows={pva} empty="No plan rows yet." /></div>
   </div>;
 }
 function ReviewView({ rows, ledger, planRows }){
@@ -5468,6 +5714,7 @@ function PermissionGate({ permission, children, label }){
 }
 function LoginDialog({ open, profile, onSave, onClose, force=false }){
   const [mode,setMode] = useState("login");
+  const [remember,setRemember] = useState(true);
   const [form,setForm] = useState(()=>({ ...defaultUserProfile(), ...profile, email:normalizeUserEmail(profile?.email || ""), password:"", requested_role:profile?.requested_role || "Data Operator", requested_department:profile?.requested_department || profile?.department || "Production" }));
   const [msg,setMsg] = useState(null);
   const [busy,setBusy] = useState(false);
@@ -5485,9 +5732,9 @@ function LoginDialog({ open, profile, onSave, onClose, force=false }){
       const found = await fetchProductionUserByEmail(email);
       if (found.error) { setMsg({tone:"warn", text:`Could not read user registry: ${found.error.message}`}); return; }
       const user = found.data;
-      if (!user) { setMsg({tone:"warn", text:"No approved user found for this email. Use Request Access; Admin/Production Manager must approve role before login."}); setMode("request"); return; }
+      if (!user) { setMsg({tone:"warn", text:"No approved user found for this email. Create account / Request Access first."}); setMode("request"); return; }
       const status = String(user.access_status || (user.is_active === false ? "pending" : "approved")).toLowerCase();
-      if (status !== "approved") { setMsg({tone:"warn", text:`Access is ${status}. Wait for Admin/Production Manager approval or ask them to approve in Users/Audit.`}); return; }
+      if (status !== "approved") { setMsg({tone:"warn", text:`Access is ${status}. Ask Admin/Production Manager to approve in Users/Audit.`}); return; }
       const hash = await hashLoginPassword(email, form.password || "");
       if (user.password_hash && user.password_hash !== hash) { setMsg({tone:"warn", text:"Incorrect password for this email."}); return; }
       if (!user.password_hash) await updateProductionUserAccess(email, { password_hash:hash });
@@ -5497,7 +5744,8 @@ function LoginDialog({ open, profile, onSave, onClose, force=false }){
         requested_role:user.requested_role || user.role || "Data Operator", requested_department:user.requested_department || user.department || "Production",
         access_status:"approved", password_hash:hash, permissions:user.permissions || []
       });
-      await recordUserSession("login", clean, { force, note:"Production DPR proper email/password login" });
+      try { localStorage.setItem("production_login_remember", remember ? "1" : "0"); } catch {}
+      await recordUserSession("login", clean, { force, remember, note:"Production DPR Merch Tracker style login" });
       onSave?.(clean);
     } finally { setBusy(false); }
   }
@@ -5509,40 +5757,59 @@ function LoginDialog({ open, profile, onSave, onClose, force=false }){
     setBusy(true); setMsg({tone:"info", text:"Saving access request..."});
     try {
       const existing = await fetchProductionUserByEmail(email);
-      if (existing.data && String(existing.data.access_status || "approved").toLowerCase() === "approved") { setMsg({tone:"warn", text:"This email already has approved access. Use Login."}); setMode("login"); return; }
+      if (existing.data && String(existing.data.access_status || "approved").toLowerCase() === "approved") { setMsg({tone:"warn", text:"This email already has approved access. Sign in instead."}); setMode("login"); return; }
       const res = await requestProductionAccess({ ...form, email, requested_role:requestedRole, requested_department:form.requested_department || form.department || "Production" });
       if (res.error) { setMsg({tone:"warn", text:`Access request failed: ${res.error.message}`}); return; }
-      setMsg({tone:"ok", text:"Access request saved. Wait for Super Admin/Admin/Production Manager to approve role in Users/Audit."});
+      setMsg({tone:"ok", text:"Account request saved. Admin / Production Manager must approve your role in Users/Audit before login."});
     } finally { setBusy(false); }
   }
-  const shellStyle = force ? {position:"fixed", inset:0, zIndex:9999, background:"var(--paper)", display:"flex", alignItems:"center", justifyContent:"center", padding:24} : {};
-  const content = <div className="mt-update-popup" style={{maxWidth:860, width:"min(860px, 96vw)"}}>
-    <div className="head"><span>{mode === "login" ? "Production DPR Login" : "Request Production Access"}</span><span className="mt-chip mt-info">Email + password</span></div>
-    <div className="body">
-      <div style={{display:"flex", gap:8, flexWrap:"wrap", marginBottom:8}}>
-        <button className={`mt-btn ${mode==="login"?"active":"ghost"}`} onClick={()=>setMode("login")}>Login</button>
-        <button className={`mt-btn ${mode==="request"?"active":"ghost"}`} onClick={()=>setMode("request")}>Request access</button>
+  const isLogin = mode === "login";
+  const submit = isLogin ? doLogin : requestAccess;
+  return <div className="mt-login-page no-print">
+    <div className="mt-login-card">
+      <div className="mt-login-left">
+        <div>
+          <div className="mt-login-brand">KOTHARI SPORTS & APPARELS</div>
+          <div className="mt-login-product">Production DPR</div>
+          <div className="mt-login-copy">Live WIP command center for cutting, printing, embroidery, stitching, checking, packing, dispatch and review history.</div>
+          <div className="mt-login-feature-grid">
+            <div className="mt-login-feature"><b>WIP</b><span>Current status</span></div>
+            <div className="mt-login-feature"><b>DPR</b><span>Daily entry</span></div>
+            <div className="mt-login-feature"><b>REVIEW</b><span>Audit + reconcile</span></div>
+            <div className="mt-login-feature"><b>REPORTS</b><span>Management clarity</span></div>
+          </div>
+        </div>
+        <div className="mt-login-note">Use the same work email direction as Merch Tracker. Production entries are quantity truth: every save, correction, backdate and approval is stamped to the logged-in user.</div>
       </div>
-      <div><b>{mode === "login" ? "Use the same work email as Merch Tracker." : "New users request access first; Admin assigns role later."}</b></div>
-      <div className="mt-small">Production is quantity-critical. Every entry, correction, approval, reject/short-close and session is stamped by email. Users should not choose their own final role; Admin/Production Manager approves it in Users/Audit.</div>
-      <label className="mt-small">Work email *</label>
-      <input className="mt-input mandatory" value={form.email || ""} onChange={e=>setForm(f=>({ ...f, email:normalizeUserEmail(e.target.value), name:f.name || displayNameFromEmail(e.target.value) }))} placeholder="name@company.com" autoFocus/>
-      <label className="mt-small">Password *</label>
-      <input className="mt-input mandatory" type="password" value={form.password || ""} onChange={e=>setForm(f=>({ ...f, password:e.target.value }))} placeholder="Production login password"/>
-      {mode === "request" && <>
-        <label className="mt-small">Display name *</label>
-        <input className="mt-input mandatory" value={form.name || ""} onChange={e=>setForm(f=>({ ...f, name:e.target.value }))} placeholder="User name shown in history"/>
-        <div className="mt-two"><div><label className="mt-small">Requested role</label><select className="mt-select" value={requestedRole} onChange={e=>setForm(f=>({ ...f, requested_role:e.target.value }))}>{PRODUCTION_ROLES.filter(r=>r!=="Super Admin").map(r=><option key={r} value={r}>{r}</option>)}</select></div><div><label className="mt-small">Department</label><select className="mt-select" value={form.requested_department || form.department || "Production"} onChange={e=>setForm(f=>({ ...f, requested_department:e.target.value, department:e.target.value }))}>{departments.map(d=><option key={d} value={d}>{d}</option>)}</select></div></div>
-      </>}
-      <div className="mt-card"><div className="mt-section"><b>Access logic</b><div className="mt-small">Super Admin, Admin and Production Manager have full access. Data Operator can enter/correct daily production but cannot manage users/settings/delete. Pending users cannot open production screens until approved.</div><div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>{PRODUCTION_PERMISSIONS.map(([key,label])=><span key={key} className={`mt-chip ${(ROLE_PERMISSIONS[requestedRole]||[]).includes(key) || isFullAccessRole(requestedRole) ? "mt-ok" : "mt-muted"}`}>{label}</span>)}</div></div></div>
-      {msg && <div className={`mt-speed-note ${statusClass(msg.tone)}`} style={{marginTop:10}}>{msg.text}</div>}
+      <div className="mt-login-right">
+        <div className="mt-login-title">{isLogin ? "Welcome back" : "Create account"}</div>
+        <div className="mt-login-subcopy">{isLogin ? "Sign in to continue to the live production tracker." : "Request access first. Admin / Production Manager assigns the final role."}</div>
+        <label className="mt-login-field-label">Email</label>
+        <input className="mt-login-input" value={form.email || ""} onChange={e=>setForm(f=>({ ...f, email:normalizeUserEmail(e.target.value), name:f.name || displayNameFromEmail(e.target.value) }))} placeholder="name@company.com" autoFocus />
+        <label className="mt-login-field-label">Password</label>
+        <input className="mt-login-input" type="password" value={form.password || ""} onChange={e=>setForm(f=>({ ...f, password:e.target.value }))} placeholder="••••••••" onKeyDown={e=>{ if(e.key === "Enter") submit(); }} />
+        {!isLogin && <>
+          <label className="mt-login-field-label">Display name</label>
+          <input className="mt-login-input" value={form.name || ""} onChange={e=>setForm(f=>({ ...f, name:e.target.value }))} placeholder="User name shown in audit history" />
+          <div className="mt-login-access-grid">
+            <div><label className="mt-login-field-label">Requested role</label><select className="mt-select" style={{width:"100%"}} value={requestedRole} onChange={e=>setForm(f=>({ ...f, requested_role:e.target.value }))}>{PRODUCTION_ROLES.filter(r=>r!=="Super Admin").map(r=><option key={r} value={r}>{r}</option>)}</select></div>
+            <div><label className="mt-login-field-label">Department</label><select className="mt-select" style={{width:"100%"}} value={form.requested_department || form.department || "Production"} onChange={e=>setForm(f=>({ ...f, requested_department:e.target.value, department:e.target.value }))}>{departments.map(d=><option key={d} value={d}>{d}</option>)}</select></div>
+          </div>
+        </>}
+        {isLogin && <label className="mt-small" style={{display:"flex", alignItems:"center", gap:8, marginTop:12}}><input type="checkbox" checked={remember} onChange={e=>setRemember(e.target.checked)} /> Keep me signed in</label>}
+        {msg && <div className={`mt-login-msg ${statusClass(msg.tone)}`}>{msg.text}</div>}
+        <button className="mt-login-submit" disabled={busy} onClick={submit}>{busy ? "Please wait..." : isLogin ? "Sign in" : "Submit request"}</button>
+        <div className="mt-login-minor">
+          {isLogin ? <><span>New here?</span><button className="mt-login-link" onClick={()=>{ setMode("request"); setMsg(null); }}>Create account</button></> : <><span>Already approved?</span><button className="mt-login-link" onClick={()=>{ setMode("login"); setMsg(null); }}>Sign in</button></>}
+          {!force && <button className="mt-login-link" onClick={onClose}>Cancel</button>}
+        </div>
+        {!isLogin && <div className="mt-login-access-panel"><b>Access logic</b><div className="mt-small" style={{marginTop:5}}>Pending users cannot open production screens. Approval is done from Users/Audit by Super Admin, Admin or Production Manager.</div></div>}
+      </div>
     </div>
-    <div className="actions">{!force && <button className="mt-btn ghost" onClick={onClose}>Cancel</button>}<button className="mt-btn primary" disabled={busy} onClick={mode==="login" ? doLogin : requestAccess}><UserCheck size={14}/>{busy ? "Please wait..." : mode==="login" ? "Login" : "Submit request"}</button></div>
   </div>;
-  if (force) return <div className="no-print" style={shellStyle}>{content}</div>;
-  return <div className="mt-update-backdrop no-print">{content}</div>;
 }
-function UserAuditView({ profile, onSwitchUser, onLogout }){
+
+function UserAuditView({ profile, onSwitchUser, onLogout, presenceRows=[] }){
   const [audit,setAudit] = useState([]);
   const [users,setUsers] = useState([]);
   const [msg,setMsg] = useState(null);
@@ -5578,7 +5845,7 @@ function UserAuditView({ profile, onSwitchUser, onLogout }){
   }
   return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Users / Login Requests / Permissions / History</h3><div className="mt-panel-sub">Proper production login flow: users request access with email/password, then Super Admin/Admin/Production Manager assigns role. SQL patch V7.5.49 adds password/status columns.</div></div><div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-chip mt-info"><UserCheck size={12}/>{profile.name || "Not logged in"}</span><span className="mt-chip mt-muted">{profile.role}</span><span className="mt-chip mt-muted">{profile.department || "—"}</span><button className="mt-btn" onClick={refresh} disabled={loading}><RefreshCw size={14}/>Refresh History</button><button className="mt-btn ghost" onClick={onSwitchUser}><Users size={14}/>Switch User</button><button className="mt-btn ghost" onClick={onLogout}><LogOut size={14}/>Logout</button>{msg && <span className={`mt-chip ${statusClass(msg.tone)}`}>{msg.text}</span>}</div></div><div className="mt-section"><h3 className="mt-panel-title">Current Role Permissions</h3><div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>{PRODUCTION_PERMISSIONS.map(([key,label])=><span key={key} className={`mt-chip ${isFullAccessRole(profile.role) || perms.includes(key) ? "mt-ok" : "mt-muted"}`}>{label}</span>)}</div><div className="mt-small" style={{marginTop:8}}>Last local tab history: {localHistory.length ? localHistory.join(" → ") : "No tab history yet"}</div></div>
     <div className="mt-section"><h3 className="mt-panel-title">Pending login requests</h3><div className="mt-panel-sub">Approve user role here. Pending users cannot open production screens.</div><div className="mt-table-wrap"><table className="mt-table"><thead><tr><th>User</th><th>Email</th><th>Requested Role</th><th>Department</th><th>Status</th><th>Approve As</th><th>Action</th></tr></thead><tbody>{pendingUsers.length ? pendingUsers.map(u=>{ const role=u.requested_role || "Data Operator"; return <tr key={u.email}><td>{u.display_name || u.user_name || displayNameFromEmail(u.email)}</td><td>{u.email}</td><td>{role}</td><td>{u.requested_department || u.department}</td><td><span className="mt-chip mt-warn">{u.access_status || "pending"}</span></td><td><select className="mt-select" defaultValue={role} onChange={e=>u.__approveRole=e.target.value}>{PRODUCTION_ROLES.filter(r=>r!=="Super Admin").map(r=><option key={r} value={r}>{r}</option>)}</select></td><td><button className="mt-btn" disabled={!canManage} onClick={()=>approveUser(u, u.__approveRole || role)}>Approve</button><button className="mt-btn ghost" disabled={!canManage} onClick={()=>rejectUser(u)}>Reject</button></td></tr>; }) : <tr><td colSpan="7">No pending requests.</td></tr>}</tbody></table></div></div>
-    <SimpleTable title="Active / recent users" sub="From production_app_users. Shows approved users, requested users and recent browser access." rows={(users||[]).map(u=>({ User:u.display_name || u.user_name, Role:u.role, Requested_Role:u.requested_role, Department:u.department || u.requested_department, Email:u.email, Status:u.access_status || (u.is_active ? "approved" : "pending"), Current_Page:u.login_note || "—", Last_Seen:u.last_seen_at || u.created_at, Browser:u.browser_id }))} empty="No user rows yet. Run SQL patch and submit/approve one user." exportName="production_active_users"/><div style={{height:12}}/><SimpleTable title="Audit history — detailed" sub="Latest saves/corrections/sessions. Date column is production activity date where available; Time is when user actually typed/saved it." rows={(audit||[]).map(a=>({ Time:a.created_at, Activity_Date:a.entry_date || String(a.created_at||"").slice(0,10), User:a.user_name, Role:a.user_role, Action:a.action || a.event_type, Table:a.table_name, Order:a.order_no, Style:a.style_no, Colour:a.colour, Component:a.component, Dept:stageLabel(a.stage || ""), Activity:a.entry_type, Qty:a.qty, Source:a.source }))} empty="No audit rows yet or SQL patch not run." exportName="production_audit_history"/></div>;
+    <SimpleTable title="Live presence — who is where now" sub="Supabase realtime presence. Shows current page/context, selected style/stage/drawer where available." rows={presenceRows.map(p=>({ User:p.User, Role:p.Role, Page:p.Page, Context:p.Context, Order:p.Order, Style:p.Style, Stage:p.Stage, Email:p.Email, Browser:p.Browser, Seen:p.Seen }))} empty="No live peers yet. Presence appears when multiple approved users keep the app open." exportName="production_live_presence"/><div style={{height:12}}/><SimpleTable title="Active / recent users" sub="From production_app_users. Shows approved users, requested users and recent browser access." rows={(users||[]).map(u=>({ User:u.display_name || u.user_name, Role:u.role, Requested_Role:u.requested_role, Department:u.department || u.requested_department, Email:u.email, Status:u.access_status || (u.is_active ? "approved" : "pending"), Current_Page:u.login_note || "—", Last_Seen:u.last_seen_at || u.created_at, Browser:u.browser_id }))} empty="No user rows yet. Run SQL patch and submit/approve one user." exportName="production_active_users"/><div style={{height:12}}/><SimpleTable title="Audit history — detailed" sub="Latest saves/corrections/sessions. Date column is production activity date where available; Time is when user actually typed/saved it." rows={(audit||[]).map(a=>({ Time:a.created_at, Activity_Date:a.entry_date || String(a.created_at||"").slice(0,10), User:a.user_name, Role:a.user_role, Action:a.action || a.event_type, Table:a.table_name, Order:a.order_no, Style:a.style_no, Colour:a.colour, Component:a.component, Dept:stageLabel(a.stage || ""), Activity:a.entry_type, Qty:a.qty, Source:a.source }))} empty="No audit rows yet or SQL patch not run." exportName="production_audit_history"/></div>;
 }
 
 export default function App(){
@@ -5604,6 +5871,8 @@ export default function App(){
   });
   const [userProfile,setUserProfile] = useState(()=>currentUserProfile());
   const [showLogin,setShowLogin] = useState(()=>{ const p=currentUserProfile(); return !p.name || !emailLooksValid(p.email) || (p.access_status && p.access_status !== "approved"); });
+  const [presenceRows,setPresenceRows] = useState([]);
+  const presenceChannelRef = useRef(null);
   useEffect(()=>{ safeJsonSave(LOCAL_ROWS_KEY, rows); }, [rows]);
   useEffect(()=>{ if (userProfile?.name && emailLooksValid(userProfile.email) && (!userProfile.access_status || userProfile.access_status === "approved")) { saveCurrentUserProfile(userProfile); upsertProductionAppUser(userProfile); recordUserSession("app_open", userProfile, { tab }); } }, [userProfile?.name, userProfile?.role, userProfile?.department, userProfile?.access_status]);
   useEffect(()=>{ safeJsonSave(LOCAL_LEDGER_KEY, ledger); }, [ledger]);
@@ -5623,6 +5892,36 @@ export default function App(){
     if (!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved") || !hasValidSupabaseEnv()) return;
     updateProductionUserAccess(userProfile.email, { login_note:`Active page: ${tab}`, browser_id:productionBrowserId(), last_seen_at:new Date().toISOString() });
   }, [tab, userProfile?.email, userProfile?.access_status]);
+  useEffect(()=>{
+    if (!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved") || !isSupabaseConfigured || !supabase || !hasValidSupabaseEnv()) return;
+    let cancelled=false;
+    const key = `${normalizeUserEmail(userProfile.email)}:${productionBrowserId()}`;
+    const channel = supabase.channel("production-dpr-live-presence", { config:{ presence:{ key } } });
+    presenceChannelRef.current = channel;
+    const syncPresence = ()=>{ if (!cancelled) setPresenceRows(flattenProductionPresenceState(channel.presenceState())); };
+    channel.on("presence", { event:"sync" }, syncPresence);
+    channel.on("presence", { event:"join" }, syncPresence);
+    channel.on("presence", { event:"leave" }, syncPresence);
+    channel.subscribe(async (status)=>{
+      if (status === "SUBSCRIBED") {
+        await channel.track(buildProductionPresencePayload(userProfile, tab, drawer, dashboardDrill));
+        syncPresence();
+      }
+    });
+    const timer=setInterval(()=>channel.track(buildProductionPresencePayload(userProfile, tab, drawer, dashboardDrill)), 15000);
+    return ()=>{
+      cancelled=true; clearInterval(timer); setPresenceRows([]);
+      try { channel.untrack(); } catch {}
+      if (supabase?.removeChannel) supabase.removeChannel(channel);
+      if (presenceChannelRef.current === channel) presenceChannelRef.current = null;
+    };
+  }, [userProfile?.email, userProfile?.name, userProfile?.role, userProfile?.access_status]);
+  useEffect(()=>{
+    const channel = presenceChannelRef.current;
+    if (!channel || !userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")) return;
+    channel.track(buildProductionPresencePayload(userProfile, tab, drawer, dashboardDrill));
+    updateProductionUserAccess(userProfile.email, { login_note:`Active page: ${productionPresenceContext(tab, drawer, dashboardDrill)}`, browser_id:productionBrowserId(), last_seen_at:new Date().toISOString() });
+  }, [tab, drawer?.row?.id, drawer?.stage, dashboardDrill?.title, userProfile?.email, userProfile?.access_status]);
   const sharedLedgerRows = useMemo(()=>applySharedLedgerTotalsToRows(rows, ledger), [rows, ledger]);
   const calcRows = useMemo(()=>withLiveIdle(sharedLedgerRows, ledger, today()), [sharedLedgerRows, ledger]);
   const buyers = ["All", ...Array.from(new Set(calcRows.map(r=>r.buyer).filter(Boolean))).sort()];
@@ -5811,8 +6110,8 @@ export default function App(){
   return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
     <style>{FONT + CSS}</style>
     <LoginDialog open={showLogin} force={!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
-    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Review/history control room, collapsible left navigation, Excel-like WIP exports/filters, actual-date log grouping, and cleaner current-status summary. P0 quantity truth remains strict.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
-    <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Review · Reports. Supabase-first autosave · email login · audit/cell history · Excel-like exports.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${navCollapsed?"active":"ghost"}`} onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand left navigation"><Layers size={14}/>{navCollapsed?"Expand tabs":"Collapse tabs"}</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div></div></div>
+    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Excel-style weekly line planning, cascade consumption checks, short-close override, realtime presence, WIP/grid parity and dashboard hyperlink audit notes. P0 quantity truth remains strict.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
+    <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Review · Reports. Supabase-first autosave · email login · audit/cell history · Excel-like exports.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className="mt-chip mt-info">{presenceSummaryText(presenceRows)}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${navCollapsed?"active":"ghost"}`} onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand left navigation"><Layers size={14}/>{navCollapsed?"Expand tabs":"Collapse tabs"}</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div></div><PresenceStrip peers={presenceRows}/></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
       <div className={`mt-layout ${navCollapsed?"nav-collapsed":""}`}>
@@ -5832,7 +6131,7 @@ export default function App(){
       <div className="mt-tab-panel" style={{display:tab==="routes"?"block":"none"}} aria-hidden={tab!=="routes"}><ProcessRoutes rows={visibleRows} setRows={setRows}/></div>
       <div className="mt-tab-panel" style={{display:tab==="photos"?"block":"none"}} aria-hidden={tab!=="photos"}><PhotoManager rows={visibleRows} setRows={setRows} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="reports"?"block":"none"}} aria-hidden={tab!=="reports"}>{currentUserCan("production.export") ? <Reports rows={visibleRows} ledger={ledger}/> : <PermissionGate permission="production.export" label="Reports"/>}</div>
-      <div className="mt-tab-panel" style={{display:tab==="users"?"block":"none"}} aria-hidden={tab!=="users"}>{currentUserCan("production.audit_view") ? <UserAuditView profile={userProfile} onSwitchUser={()=>setShowLogin(true)} onLogout={logoutUser}/> : <PermissionGate permission="production.audit_view" label="Users / Audit"/>}</div>
+      <div className="mt-tab-panel" style={{display:tab==="users"?"block":"none"}} aria-hidden={tab!=="users"}>{currentUserCan("production.audit_view") ? <UserAuditView profile={userProfile} presenceRows={presenceRows} onSwitchUser={()=>setShowLogin(true)} onLogout={logoutUser}/> : <PermissionGate permission="production.audit_view" label="Users / Audit"/>}</div>
       <div className="mt-tab-panel" style={{display:tab==="settings"?"block":"none"}} aria-hidden={tab!=="settings"}>{currentUserCan("production.manage_settings") ? <SettingsView onChanged={()=>setSettingsTick(t=>t+1)}/> : <PermissionGate permission="production.manage_settings" label="Settings"/>}</div>
         </main>
       </div>
