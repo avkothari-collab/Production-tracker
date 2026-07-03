@@ -26,8 +26,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.36";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.36 register filter fix";
+const APP_VERSION = "V7.5.37";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.37 inline register correction and clear filters";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -290,6 +290,15 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-order-size-cell { min-width:96px; border:1px solid var(--line-2); background:white; border-radius:10px; padding:8px; }
 .mt-order-size-cell label { display:block; font-size:9px; color:var(--muted-2); font-weight:800; text-transform:uppercase; letter-spacing:.3px; margin-bottom:5px; }
 
+.mt-correction-row td { background:#fff8eb; border-top:2px solid var(--accent); border-bottom:2px solid var(--accent); }
+.mt-inline-correction { padding:12px; border:1px dashed var(--accent); border-radius:14px; background:#fffaf1; }
+.mt-correction-head { display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; margin-bottom:10px; }
+.mt-correction-controls { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:12px; }
+.mt-correction-controls label { display:flex; flex-direction:column; gap:4px; font-size:11px; text-transform:uppercase; color:var(--muted-3); font-weight:800; letter-spacing:.03em; }
+.mt-correction-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr)); gap:10px; }
+.mt-correction-size { border:1px solid var(--line-2); border-radius:12px; padding:8px; background:#fffdf8; }
+.mt-correction-size .sz { font-weight:900; font-size:16px; margin-bottom:4px; }
+.mt-small.warn { color:var(--danger); font-weight:900; }
 @media print { .mt-top,.mt-toolbar,.no-print,.mt-tabs { display:none !important; } .mt-page{padding:0;} .mt-card,.mt-table-wrap{border:0; box-shadow:none;} .mt-table th{background:#111 !important; color:#fff !important;} }
 @media (max-width:1180px){ .mt-dash-grid{grid-template-columns:repeat(3,minmax(0,1fr));} .mt-mini-board{grid-template-columns:1fr;} .mt-summary-strip,.mt-month-grid{grid-template-columns:repeat(2,minmax(0,1fr));} }
 @media (max-width:980px){ .mt-grid{grid-template-columns:repeat(2,minmax(0,1fr));} .mt-two{grid-template-columns:1fr;} }
@@ -2073,7 +2082,7 @@ function DonutCard({ title, sub, rows, labelKey="label", valueKey="value", onRow
   const gradient = total ? rows.map((r,i)=>{ const start=acc; const deg=(n(r[valueKey])*360)/total; acc += deg; return `${colors[i%colors.length]} ${start}deg ${acc}deg`; }).join(", ") : "#efe9df 0deg 360deg";
   return <div className="mt-context-card"><div className="mt-context-head"><div><h3 className="mt-context-title">{title}</h3><div className="mt-context-sub">{sub}</div></div><span className="mt-chip mt-info">{fmt(total)}</span></div><div className="mt-donut-wrap"><div className="mt-donut" style={{background:`conic-gradient(${gradient})`}}/><div className="mt-legend">{rows.slice(0,6).map((r,i)=><div key={i} className="mt-legend-row" onClick={()=>onRowClick?.(r)} style={{cursor:onRowClick?"pointer":"default"}}><span><span className="mt-dot" style={{background:colors[i%colors.length]}}/> {String(r[labelKey]).slice(0,20)}</span><b>{fmt(r[valueKey])}</b></div>)}</div></div></div>;
 }
-function Dashboard({ rows, ledger=[], onDrill }){
+function Dashboard({ rows, ledger=[], onDrill, clearTick=0 }){
   const activityDate = latestActivityDate(ledger);
   const [selectedDate, setSelectedDate] = useState(()=>safeJsonLoad(uiStorageKey("dashboard_selected_date"), activityDate));
   useEffect(()=>{ setSelectedDate(d => d || activityDate); }, [activityDate]);
@@ -2102,6 +2111,7 @@ function Dashboard({ rows, ledger=[], onDrill }){
   const orderRows = orderSummaryRows(rows);
   const [dashView, setDashView] = useState(()=>safeJsonLoad(uiStorageKey("dashboard_view"), "summary"));
   useEffect(()=>safeJsonSave(uiStorageKey("dashboard_view"), dashView), [dashView]);
+  useEffect(()=>{ if (!clearTick) return; setDashView("summary"); setSelectedDate(activityDate); }, [clearTick]);
   const issueMixRows = [
     { Issue:"With Dept", Qty:receivedNotProcessed, kind:"received_not_processed" },
     { Issue:"Ready / Not Issued", Qty:completedNotIssued, kind:"completed_not_issued" },
@@ -2219,12 +2229,12 @@ function DashboardDrillDrawer({ drill, rows, ledger=[], onClose }){
         <button className="mt-btn" onClick={clearFilters}>Clear</button>
       </div>
       {drillSummaryRows(filteredRows).length > 1 && <div style={{marginBottom:10}}><SimpleTable title="Drill Subtotals — Dept / Owner / Buyer" sub="Quick meeting summary of the filtered drilldown before the style-size detail." rows={drillSummaryRows(filteredRows)} empty="No subtotal rows." /></div>}
-      <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{columns.map(c=><th key={c} className="mt-clickable-cell" onClick={()=>sortBy(c)} title="Click to sort">{c}{sortMark(c)}</th>)}</tr></thead><tbody>{filteredRows.length ? filteredRows.map((r,i)=><tr key={i}>{columns.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] ?? "")}</td>)}</tr>) : <tr><td style={{padding:18}} colSpan={columns.length}>No rows for this drilldown/filter.</td></tr>}</tbody></table></div>
+      <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{columns.map(c=><th key={c} className="mt-clickable-cell" onClick={()=>sortBy(c)} title="Click to sort">{c}{sortMark(c)}</th>)}</tr></thead><tbody>{filteredRows.length ? filteredRows.map((r,i)=><tr key={i}>{columns.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] === undefined || r[c] === null ? "" : r[c])}</td>)}</tr>) : <tr><td style={{padding:18}} colSpan={columns.length}>No rows for this drilldown/filter.</td></tr>}</tbody></table></div>
     </div>
   </div>;
 }
 
-function WipStatus({ rows, onOpen }){
+function WipStatus({ rows, onOpen, clearTick=0 }){
   const [localSearch,setLocalSearch] = useState(()=>safeJsonLoad(uiStorageKey("wip_search"), ""));
   const [dept,setDept] = useState(()=>safeJsonLoad(uiStorageKey("wip_dept"), "all"));
   const [issue,setIssue] = useState(()=>safeJsonLoad(uiStorageKey("wip_issue"), "all"));
@@ -2237,6 +2247,7 @@ function WipStatus({ rows, onOpen }){
   useEffect(()=>safeJsonSave(uiStorageKey("wip_owner"), owner), [owner]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_route"), route), [route]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_view_mode"), viewMode), [viewMode]);
+  useEffect(()=>{ if (!clearTick) return; setLocalSearch(""); setDept("all"); setIssue("all"); setOwner("all"); setRoute("all"); setViewMode("matrix"); setSort({key:"open",dir:"desc"}); }, [clearTick]);
   const [showCutActivity,setShowCutActivity] = useState(false);
   const [sizeBreak,setSizeBreak] = useState(false);
   const [sort,setSort] = useState({ key:"open", dir:"desc" });
@@ -2914,6 +2925,7 @@ function outputRegisterRows(rows, ledger=[], filters={}){
         R_A_M_Total:0,
         Total_Activity:0,
         _sizes:{},
+        _fieldSizes:{ output:{}, issued:{}, received:{}, reject:{}, missing:{}, alter:{}, alter_clear:{} },
         _stage:stage,
         Created_At:entry.created_at || entry.createdAt || "",
         By:entry.changed_by || entry.created_by || entry.user || "—",
@@ -2923,15 +2935,18 @@ function outputRegisterRows(rows, ledger=[], filters={}){
     const g = map.get(groupKey);
     const size = String(entry.size || "NO_SIZE").toUpperCase();
     const qty = n(entry.qty ?? entry.delta ?? entry.good_qty ?? entry.reject_qty ?? entry.alter_qty ?? entry.missing_qty);
-    if (["Completed / Output"].includes(label)) g.Completed_Output += qty;
-    else if (label === "Dept Issue Forward") g.Issue_Forward += qty;
-    else if (label === "Dept Receive") g.Receive += qty;
-    else if (label === "Rejection") { g.Rejection += qty; g.R_A_M_Total += qty; }
-    else if (label === "Missing") { g.Missing += qty; g.R_A_M_Total += qty; }
-    else if (label === "Alter Defect") { g.Alter_Defect += qty; g.R_A_M_Total += qty; }
-    else if (label === "Alter Clear") g.Alter_Clear += qty;
+    let fieldKey = "output";
+    if (["Completed / Output"].includes(label)) { g.Completed_Output += qty; fieldKey = "output"; }
+    else if (label === "Dept Issue Forward") { g.Issue_Forward += qty; fieldKey = "issued"; }
+    else if (label === "Dept Receive") { g.Receive += qty; fieldKey = "received"; }
+    else if (label === "Rejection") { g.Rejection += qty; g.R_A_M_Total += qty; fieldKey = "reject"; }
+    else if (label === "Missing") { g.Missing += qty; g.R_A_M_Total += qty; fieldKey = "missing"; }
+    else if (label === "Alter Defect") { g.Alter_Defect += qty; g.R_A_M_Total += qty; fieldKey = "alter"; }
+    else if (label === "Alter Clear") { g.Alter_Clear += qty; fieldKey = "alter_clear"; }
     g.Total_Activity += qty;
     g._sizes[size] = n(g._sizes[size]) + qty;
+    g._fieldSizes[fieldKey] = g._fieldSizes[fieldKey] || {};
+    g._fieldSizes[fieldKey][size] = n(g._fieldSizes[fieldKey][size]) + qty;
     if (!g.Created_At || String(entry.created_at || entry.createdAt || "") < g.Created_At) g.Created_At = entry.created_at || entry.createdAt || g.Created_At;
   });
   return Array.from(map.values()).map(r=>{
@@ -2940,18 +2955,56 @@ function outputRegisterRows(rows, ledger=[], filters={}){
     return { ...core, ...sizeCols };
   }).sort((a,b)=>String(a.Entry_Date).localeCompare(String(b.Entry_Date)) || String(a.Department).localeCompare(String(b.Department)) || String(a.Style).localeCompare(String(b.Style)));
 }
-function OutputRegisterView({ rows, setRows, ledger, setLedger, focus }){
+
+function defaultCorrectionFieldForRegisterRow(row){
+  if (n(row.Completed_Output)) return "output";
+  if (n(row.Issue_Forward)) return "issued";
+  if (n(row.Receive)) return "received";
+  if (n(row.Rejection)) return "reject";
+  if (n(row.Missing)) return "missing";
+  if (n(row.Alter_Defect)) return "alter";
+  if (n(row.Alter_Clear)) return "alter_clear";
+  return "output";
+}
+function registerFieldSizeMap(row, field, sizes=[]){
+  const fieldSizes = row?._fieldSizes?.[field] || {};
+  const out = {};
+  (sizes || []).forEach(sz=>{ { const primary = fieldSizes[String(sz).toUpperCase()]; const fallback = fieldSizes[sz]; out[sz] = n(primary !== undefined && primary !== null ? primary : (fallback !== undefined && fallback !== null ? fallback : 0)); } });
+  Object.entries(fieldSizes || {}).forEach(([sz, qty])=>{ out[String(sz).toUpperCase()] = n(qty); });
+  return out;
+}
+function registerCorrectionRowKey(row, index){
+  return [row.Entry_Date, row.Department, row.Order, row.Style, row.Colour, row.Component, row.Source, index].join("|::|");
+}
+function registerCorrectionOriginalTotal(row, field, sizes=[]){
+  return Object.values(registerFieldSizeMap(row, field, sizes)).reduce((a,b)=>a+n(b),0);
+}
+function fieldLabelCompact(field){
+  return fieldLabel(field).replace("Dept ", "").replace("Completed / ", "");
+}
+
+function OutputRegisterView({ rows, setRows, ledger, setLedger, focus, clearTick=0 }){
   const defaultFrom = today().slice(0,7) + "-01";
   const [from,setFrom] = useState(()=>safeJsonLoad(uiStorageKey("register_from"), defaultFrom));
   const [to,setTo] = useState(()=>safeJsonLoad(uiStorageKey("register_to"), today()));
   const [dept,setDept] = useState(()=>safeJsonLoad(uiStorageKey("register_dept"), "all"));
   const [activity,setActivity] = useState(()=>safeJsonLoad(uiStorageKey("register_activity"), "all"));
   const [query,setQuery] = useState(()=>safeJsonLoad(uiStorageKey("register_query"), ""));
+  const [correction,setCorrection] = useState(null);
   useEffect(()=>safeJsonSave(uiStorageKey("register_from"), from), [from]);
   useEffect(()=>safeJsonSave(uiStorageKey("register_to"), to), [to]);
   useEffect(()=>safeJsonSave(uiStorageKey("register_dept"), dept), [dept]);
   useEffect(()=>safeJsonSave(uiStorageKey("register_activity"), activity), [activity]);
   useEffect(()=>safeJsonSave(uiStorageKey("register_query"), query), [query]);
+  useEffect(()=>{
+    if (!clearTick) return;
+    setFrom(defaultFrom);
+    setTo(today());
+    setDept("all");
+    setActivity("all");
+    setQuery("");
+    setCorrection(null);
+  }, [clearTick]);
   useEffect(()=>{
     if (!focus) return;
     const nextDept = focus.stage || "all";
@@ -2971,6 +3024,7 @@ function OutputRegisterView({ rows, setRows, ledger, setLedger, focus }){
       setFrom(matchingDates[0]);
       setTo(matchingDates[matchingDates.length - 1] > today() ? matchingDates[matchingDates.length - 1] : today());
     }
+    setCorrection(null);
   }, [focus?.id]);
   const activities = useMemo(()=>["all", ...Array.from(new Set((ledger||[]).map(e=>registerActivityLabel(e.entry_type || e.entryType || e.type)).filter(Boolean))).sort()], [ledger]);
   const registerRows = useMemo(()=>outputRegisterRows(rows, ledger, {from,to,dept,activity,query}), [rows, ledger, from, to, dept, activity, query]);
@@ -2978,36 +3032,87 @@ function OutputRegisterView({ rows, setRows, ledger, setLedger, focus }){
   const totalIssue = registerRows.reduce((a,r)=>a+n(r.Issue_Forward),0);
   const totalRAM = registerRows.reduce((a,r)=>a+n(r.R_A_M_Total),0);
   const allSizes = allReportSizes(rows);
-  function exportRegister(){ exportXlsx(`production_output_register_${from}_to_${to}.xlsx`, [{name:"Output Register", rows:registerRows.map(({_stage, ...r})=>r)}]); }
-  function correctOldEntry(r){
+  const fieldOptions = [
+    ["output", "Completed / Output"],
+    ["issued", "Dept Issue Forward"],
+    ["received", "Dept Receive"],
+    ["reject", "Rejection"],
+    ["missing", "Missing"],
+    ["alter", "Alter Defect"],
+    ["alter_clear", "Alter Clear"],
+  ];
+  function exportRegister(){
+    exportXlsx(`production_output_register_${from}_to_${to}.xlsx`, [{name:"Output Register", rows:registerRows.map(({_stage, _fieldSizes, ...r})=>r)}]);
+  }
+  function clearRegisterFilters(){
+    setFrom(defaultFrom);
+    setTo(today());
+    setDept("all");
+    setActivity("all");
+    setQuery("");
+    setCorrection(null);
+  }
+  function beginInlineCorrection(r, index){
+    const key = registerCorrectionRowKey(r, index);
+    const field = defaultCorrectionFieldForRegisterRow(r);
+    setCorrection({
+      key,
+      field,
+      entryDate:r.Entry_Date || today(),
+      reason:"Register correction",
+      values:registerFieldSizeMap(r, field, allSizes),
+    });
+  }
+  function changeCorrectionField(r, index, field){
+    const key = registerCorrectionRowKey(r, index);
+    setCorrection(c=>({
+      key,
+      field,
+      entryDate:c?.entryDate || r.Entry_Date || today(),
+      reason:c?.reason || "Register correction",
+      values:registerFieldSizeMap(r, field, allSizes),
+    }));
+  }
+  function setCorrectionQty(size, value){
+    const clean = String(value || "").replace(/[^0-9.]/g, "");
+    setCorrection(c=>({ ...(c || {}), values:{ ...(c?.values || {}), [size]:clean } }));
+  }
+  function saveInlineCorrection(r, index){
+    if (!correction) return;
     const stage = r._stage || STAGES.find(s=>s.label===r.Department)?.key || "cutting";
-    const field = (window.prompt(`Correction field for ${r.Style} on ${r.Entry_Date}: output / issued / received / reject / missing / alter / alter_clear`, "output") || "").trim().toLowerCase();
-    if (!["output","issued","received","reject","missing","alter","alter_clear"].includes(field)) { alert("Correction cancelled: invalid field."); return; }
-    const text = window.prompt(`Enter size corrections for ${r.Style} (${stageLabel(stage)} ${fieldLabel(field)}). Use + or - by size, e.g. S=+10, M=-5`, "");
-    const sizeMap = parseRegisterSizeQtyText(text || "");
-    const total = Object.values(sizeMap).reduce((a,b)=>a+n(b),0);
-    if (!Object.keys(sizeMap).length || !total) { alert("No correction quantity entered."); return; }
-    const reason = window.prompt("Reason / approval note for editing old entry:", "Register correction") || "Register correction";
-    if (!window.confirm(`Create audit-safe correction?\n\nDate: ${r.Entry_Date}\nDept: ${stageLabel(stage)}\nField: ${fieldLabel(field)}\nCorrection total: ${fmt(total)}\nReason: ${reason}\n\nThis adds a correction ledger row and updates current WIP immediately; it does not silently overwrite history.`)) return;
+    const field = correction.field || defaultCorrectionFieldForRegisterRow(r);
+    const original = registerFieldSizeMap(r, field, allSizes);
+    const sizeMap = {};
+    allSizes.forEach(sz=>{
+      const oldQty = n(original[sz]);
+      const newQty = n(correction.values?.[sz]);
+      const delta = newQty - oldQty;
+      if (delta) sizeMap[sz] = delta;
+    });
+    const totalDelta = Object.values(sizeMap).reduce((a,b)=>a+n(b),0);
+    if (!Object.keys(sizeMap).length) { alert("No correction difference found. Change at least one size quantity."); return; }
+    const reason = correction.reason || "Register correction";
+    if (!window.confirm(`Create audit-safe correction?\n\nDate: ${correction.entryDate || r.Entry_Date}\nDept: ${stageLabel(stage)}\nField: ${fieldLabel(field)}\nNet correction: ${fmt(totalDelta)}\nReason: ${reason}\n\nYou entered the corrected final quantity below the original row. The app will save only the difference as a correction ledger row; old history remains visible.`)) return;
     const targetRow = rows.find(x=>String(x.order_no||"")===String(r.Order||"") && String(x.style_no||"")===String(r.Style||"") && String(x.colour||"")===String(r.Colour||"") && String(x.component||"")===String(r.Component||""));
-    if (!targetRow) { alert("Matching style row not found in current filtered rows."); return; }
+    if (!targetRow) { alert("Matching style row not found in current data."); return; }
     const changes = Object.entries(sizeMap).map(([size, delta])=>{
       const baseField = field === "alter_clear" ? "output" : field;
       const oldQty = sizeMatrix(targetRow, stage, baseField).find(x=>String(x.size).toUpperCase()===String(size).toUpperCase())?.qty || 0;
       return { row:targetRow, size:String(size).toUpperCase(), oldQty:n(oldQty), newQty:n(oldQty)+n(delta), delta:n(delta), entryQty:n(delta) };
     });
-    const newLedger = buildLedgerRows({ changes, stage, field, entryDate:r.Entry_Date, reason, source:"register_old_entry_correction" });
+    const newLedger = buildLedgerRows({ changes, stage, field, entryDate:correction.entryDate || r.Entry_Date, reason, source:"register_inline_corrected_qty" });
     setRows(prev=>applyRegisterCorrectionToRows({ rows:prev, target:r, stage, field, sizeMap }));
     setLedger(prev=>[...newLedger, ...(prev||[])]);
+    setCorrection(null);
     saveLedgerToSupabase(newLedger, field);
   }
-  const displayRows = registerRows.map(({_stage, ...r})=>r);
+  const displayRows = registerRows.map(({_stage, _fieldSizes, ...r})=>r);
   const cols = displayRows.length ? Object.keys(displayRows[0]) : ["Entry_Date","Department","Order","Style","Completed_Output","Issue_Forward","R_A_M_Total"];
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Output / Issue-Receive Register</h3><div className="mt-panel-sub">Precise horizontal register for all departments. One row per date + department + order/style/component. R/A/M is shown in simple columns, not separate rows. Old entries are corrected through audit-safe correction rows.</div>{focus && <div className="mt-context-strip" style={{marginTop:8}}><span className="mt-chip mt-info">Opened from WIP</span><span className="mt-chip mt-muted">{focus.order_no}</span><span className="mt-chip mt-muted">{focus.style_no}</span><span className="mt-chip mt-muted">{stageLabel(focus.stage)}</span><span className="mt-small">Use Correct on the matching row to edit by audit-safe correction.</span></div>}</div>
-    <div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-toolbar-label">From</span><input className="mt-input" type="date" value={from} onChange={e=>setFrom(e.target.value)} /><span className="mt-toolbar-label">To</span><input className="mt-input" type="date" value={to} onChange={e=>setTo(e.target.value)} /><span className="mt-toolbar-label">Dept</span><select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}><option value="all">All departments</option>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select><span className="mt-toolbar-label">Activity</span><select className="mt-select" value={activity} onChange={e=>setActivity(e.target.value)}>{activities.map(a=><option key={a} value={a}>{a==="all"?"All activities":a}</option>)}</select><input className="mt-input" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search order / style / buyer / colour" style={{minWidth:260}}/><button className="mt-btn" onClick={()=>{setDept("all");setActivity("all");setQuery("");}}>Clear</button><button className="mt-btn" onClick={exportRegister}><Download size={14}/>Export</button></div></div>
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Output / Issue-Receive Register</h3><div className="mt-panel-sub">Horizontal department register. Date-first rows; R/A/M stays in simple columns. To fix an old entry, click Correct and enter the corrected quantity in the row that opens below.</div>{focus && <div className="mt-context-strip" style={{marginTop:8}}><span className="mt-chip mt-info">Opened from WIP</span><span className="mt-chip mt-muted">{focus.order_no}</span><span className="mt-chip mt-muted">{focus.style_no}</span><span className="mt-chip mt-muted">{stageLabel(focus.stage)}</span><span className="mt-small">Register is filtered to this style/dept. Correct rows inline below the date.</span></div>}</div>
+    <div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-toolbar-label">From</span><input className="mt-input" type="date" value={from} onChange={e=>setFrom(e.target.value)} /><span className="mt-toolbar-label">To</span><input className="mt-input" type="date" value={to} onChange={e=>setTo(e.target.value)} /><span className="mt-toolbar-label">Dept</span><select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}><option value="all">All departments</option>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select><span className="mt-toolbar-label">Activity</span><select className="mt-select" value={activity} onChange={e=>setActivity(e.target.value)}>{activities.map(a=><option key={a} value={a}>{a==="all"?"All activities":a}</option>)}</select><input className="mt-input" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search order / style / buyer / colour" style={{minWidth:260}}/><button className="mt-btn" onClick={clearRegisterFilters}><X size={14}/>Clear filters</button><button className="mt-btn" onClick={exportRegister}><Download size={14}/>Export</button></div></div>
     <div className="mt-section"><div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">Rows</div><div className="value">{fmt(registerRows.length)}</div><div className="note">date first</div></div><div className="mt-entry-metric"><div className="label">Completed / Output</div><div className="value">{fmt(totalOutput)}</div><div className="note">filtered period</div></div><div className="mt-entry-metric"><div className="label">Issue Forward</div><div className="value">{fmt(totalIssue)}</div><div className="note">filtered period</div></div><div className="mt-entry-metric"><div className="label">R/A/M</div><div className="value">{fmt(totalRAM)}</div><div className="note">simple columns</div></div></div></div>
-    <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}<th className="no-print">Edit</th></tr></thead><tbody>{displayRows.length ? displayRows.map((r,i)=><tr key={`${r.Entry_Date}-${r.Order}-${r.Style}-${i}`}>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] ?? "")}</td>)}<td className="no-print"><button className="mt-btn ghost" onClick={()=>correctOldEntry(registerRows[i])}>Correct</button></td></tr>) : <tr><td colSpan={cols.length+1} style={{padding:18}}>No activity entries found for this filter.</td></tr>}</tbody></table></div>
-    <div className="mt-speed-note"><b>Correction rule:</b> old output/issue/R/A/M entries are edited by adding a dated correction ledger row, so history remains auditable and WIP updates immediately.</div>
+    <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}<th className="no-print">Edit</th></tr></thead><tbody>{displayRows.length ? displayRows.map((r,i)=>{ const fullRow = registerRows[i]; const rowKey = registerCorrectionRowKey(fullRow, i); const isEditing = correction?.key === rowKey; return <React.Fragment key={rowKey}><tr>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] === undefined || r[c] === null ? "" : r[c])}</td>)}<td className="no-print"><button className={`mt-btn ${isEditing?"active":"ghost"}`} onClick={()=>isEditing ? setCorrection(null) : beginInlineCorrection(fullRow, i)}>{isEditing ? "Close" : "Correct"}</button></td></tr>{isEditing && <tr className="mt-correction-row"><td colSpan={cols.length+1}><div className="mt-inline-correction"><div className="mt-correction-head"><b>Correct quantity below original date</b><span className="mt-small">Enter the final correct qty by size. System saves only the difference as an audit correction.</span></div><div className="mt-correction-controls"><label>Correction Date <input className="mt-input" type="date" value={correction.entryDate || fullRow.Entry_Date} onChange={e=>setCorrection(c=>({ ...(c||{}), entryDate:e.target.value }))}/></label><label>Field <select className="mt-select" value={correction.field || defaultCorrectionFieldForRegisterRow(fullRow)} onChange={e=>changeCorrectionField(fullRow, i, e.target.value)}>{fieldOptions.map(([k,l])=><option key={k} value={k}>{l}</option>)}</select></label><label>Reason <input className="mt-input" value={correction.reason || ""} onChange={e=>setCorrection(c=>({ ...(c||{}), reason:e.target.value }))} placeholder="Correction reason" style={{minWidth:240}}/></label><button className="mt-btn primary" onClick={()=>saveInlineCorrection(fullRow, i)}><CheckCircle2 size={14}/>Save correction</button><button className="mt-btn ghost" onClick={()=>setCorrection(null)}>Cancel</button></div><div className="mt-correction-grid">{allSizes.map(sz=>{ const original = n(registerFieldSizeMap(fullRow, correction.field || defaultCorrectionFieldForRegisterRow(fullRow), allSizes)[sz]); const next = n(correction.values?.[sz]); const delta = next - original; return <div className="mt-correction-size" key={sz}><div className="sz">{sz}</div><div className="mt-small">Old {fmt(original)}</div><input className="mt-cell-input" value={Object.prototype.hasOwnProperty.call(correction.values || {}, sz) ? correction.values[sz] : ""} onChange={e=>setCorrectionQty(sz, e.target.value)} placeholder="Correct qty"/><div className={`mt-small ${delta?"warn":""}`}>Diff {delta>0?"+":""}{fmt(delta)}</div></div>; })}</div></div></td></tr>}</React.Fragment>; }) : <tr><td colSpan={cols.length+1} style={{padding:18}}>No activity entries found for this filter.</td></tr>}</tbody></table></div>
+    <div className="mt-speed-note"><b>Correction rule:</b> Register does not overwrite old rows. You enter the corrected quantity below the original date, and the app posts the difference as a correction ledger row so WIP updates immediately.</div>
   </div>;
 }
 
@@ -3323,7 +3428,7 @@ function ReviewView({ rows, ledger, planRows }){
   return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Review — Coordinator Control Room</h3><div className="mt-panel-sub">Review is not normal WIP viewing. It is where the Production Coordinator clears closures, open balances, reconcile, R/A/M, risky entries, and plan deviations after daily entries are done.</div></div><div className="mt-section no-print"><div className="mt-summary-strip">{Object.entries(sectionMap).map(([k,v])=><button key={k} className={`mt-summary-tile ${section===k?"active":""}`} onClick={()=>setSection(k)}><div className="label">{v.title}</div><div className="value">{v.rows.length}</div><div className="mt-small">drill review</div></button>)}</div></div><div className="mt-section"><SimpleTable title={active.title} sub={active.sub} rows={active.rows} empty="Nothing pending in this review section." /></div><div className="mt-section"><span className="mt-chip mt-info">Closing owner: Production Coordinator</span> <span className="mt-chip mt-muted">Department HOD owns work completion</span> <span className="mt-chip mt-muted">Production Manager only WIP escalation / approvals</span></div></div>;
 }
 
-function MonthlyComparison({ rows, ledger=[] }){
+function MonthlyComparison({ rows, ledger=[], clearTick=0 }){
   const [month,setMonth] = useState(()=>safeJsonLoad(uiStorageKey("monthly_month"), latestActivityDate(ledger).slice(0,7)));
   const [buyer,setBuyer] = useState(()=>safeJsonLoad(uiStorageKey("monthly_buyer"), "All"));
   const [focus,setFocus] = useState(()=>safeJsonLoad(uiStorageKey("monthly_focus"), "all"));
@@ -3332,6 +3437,7 @@ function MonthlyComparison({ rows, ledger=[] }){
   useEffect(()=>safeJsonSave(uiStorageKey("monthly_buyer"), buyer), [buyer]);
   useEffect(()=>safeJsonSave(uiStorageKey("monthly_focus"), focus), [focus]);
   useEffect(()=>safeJsonSave(uiStorageKey("monthly_route"), route), [route]);
+  useEffect(()=>{ if (!clearTick) return; setBuyer("All"); setFocus("all"); setRoute("all"); }, [clearTick]);
   const [sizeBreak,setSizeBreak] = useState(true);
   const buyers = ["All", ...uniqueList(rows.map(r=>r.buyer))];
   const { start, end, label } = monthRangeFromYm(month);
@@ -3393,7 +3499,7 @@ function MonthlyComparison({ rows, ledger=[] }){
       <div className="mt-summary-strip">{tiles.map(t=><button key={t.key} className={`mt-summary-tile ${focus===t.key?"active":""}`} onClick={()=>setFocus(t.key)}><div className="label">{t.label}</div><div className="value">{typeof t.value === "number" && t.key!=="all" ? fmt(t.value) : t.value}</div><div className="mt-small">{t.note}</div></button>)}</div>
     </div>
     {noLedger && <div className="mt-section"><span className="mt-chip mt-warn">No production activity entries found for this month</span> <span className="mt-small">Cumulative style totals are intentionally not shown here, because duration reports must show only activity posted in the selected period.</span></div>}
-    <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{(tableRows[0] ? Object.keys(tableRows[0]) : ["Note"]).map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{tableRows.length ? tableRows.map((r,i)=><tr key={i}>{Object.keys(tableRows[0]).map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] ?? "")}</td>)}</tr>) : <tr><td style={{padding:18}}>No period activity rows for this filter.</td></tr>}</tbody></table></div>
+    <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{(tableRows[0] ? Object.keys(tableRows[0]) : ["Note"]).map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{tableRows.length ? tableRows.map((r,i)=><tr key={i}>{Object.keys(tableRows[0]).map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] === undefined || r[c] === null ? "" : r[c])}</td>)}</tr>) : <tr><td style={{padding:18}}>No period activity rows for this filter.</td></tr>}</tbody></table></div>
   </div>;
 }
 
@@ -3474,7 +3580,7 @@ function PrintableHodSheet({ rows }){
 
 function SimpleTable({ title, sub, rows, empty, onRowClick }){
   const cols = rows.length ? Object.keys(rows[0]) : [];
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{sub}</div></div><div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{rows.length ? rows.map((r,i)=><tr key={i} className={onRowClick ? "drillable" : ""} onClick={()=>onRowClick?.(r)}>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] ?? "")}</td>)}</tr>) : <tr><td style={{padding:18}}>{empty}</td></tr>}</tbody></table></div></div>;
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{sub}</div></div><div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{rows.length ? rows.map((r,i)=><tr key={i} className={onRowClick ? "drillable" : ""} onClick={()=>onRowClick?.(r)}>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] === undefined || r[c] === null ? "" : r[c])}</td>)}</tr>) : <tr><td style={{padding:18}}>{empty}</td></tr>}</tbody></table></div></div>;
 }
 
 function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose, onOpenRegister }){
@@ -3564,7 +3670,7 @@ async function compressImageFile(file, maxSide=900, quality=0.76){
   }
 }
 
-function PhotoManager({ rows, setRows }){
+function PhotoManager({ rows, setRows, clearTick=0 }){
   const [draft, setDraft] = useState({});
   const [folderDraft, setFolderDraft] = useState({});
   const [uploading, setUploading] = useState({});
@@ -4048,7 +4154,7 @@ function styleTemplateRows(){
   ];
 }
 
-function StyleManager({ rows, allRows, setRows, ledger, setLedger }){
+function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0 }){
   const emptyForm = {
     id:"", order_no:"", style_no:"", buyer:"", colour:"", component:"", order_qty:"", order_size_qty:{}, size_set:"alpha", set_id:"", line:"",
     print_required:false, embroidery_required:false, priority:"Normal", difficulty:"Normal", photo_url:"", photo_folder_url:""
@@ -4059,6 +4165,7 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger }){
   const [busy,setBusy] = useState(false);
   const [bulkMsg,setBulkMsg] = useState(null);
   const [allowHardDelete,setAllowHardDelete] = useState(true);
+  useEffect(()=>{ if (!clearTick) return; setQ(""); }, [clearTick]);
   const editing = !!form.id;
   const tableRows = (rows||[]).filter(row=>{
     const s = q.trim().toLowerCase();
@@ -4386,6 +4493,7 @@ export default function App(){
   const [dashboardDrill,setDashboardDrill] = useState(null);
   const [registerFocus,setRegisterFocus] = useState(null);
   const [notice,setNotice] = useState(null);
+  const [clearFiltersTick,setClearFiltersTick] = useState(0);
   const [showUpdatePopup,setShowUpdatePopup] = useState(()=>{
     try { return localStorage.getItem("production_app_seen_version") !== APP_VERSION; } catch { return true; }
   });
@@ -4456,6 +4564,23 @@ export default function App(){
     setDrawer(null);
     setTab("register");
   }
+  function clearAllScreenFilters(){
+    setQuery("");
+    setBuyer("All");
+    setOrder("All");
+    setRegisterFocus(null);
+    setDashboardDrill(null);
+    const keys = [
+      "global_query","global_buyer","global_order",
+      "wip_search","wip_dept","wip_issue","wip_owner","wip_route","wip_view_mode",
+      "register_from","register_to","register_dept","register_activity","register_query",
+      "monthly_buyer","monthly_focus","monthly_route",
+      "chase_q","chase_issue","chase_dept"
+    ];
+    try { keys.forEach(k=>localStorage.removeItem(uiStorageKey(k))); } catch {}
+    setClearFiltersTick(t=>t+1);
+    setNotice({tone:"ok", text:"Cleared filters across screens. Draft entry quantities are kept unless you clear them inside the entry screen."});
+  }
   function exportAll(){
     const pack = buildReportSheets(visibleRows, ledger);
     exportXlsx(`production_dpr_${APP_VERSION.toLowerCase().replace(/[^a-z0-9]+/g,"_")}_horizontal_quick_export.xlsx`,[
@@ -4472,22 +4597,22 @@ export default function App(){
   const tabs = [
     ["dashboard","Dashboard",BarChart3], ["planning","Planning",ClipboardList], ["wip","Live WIP",Warehouse], ["entry","DPR Entry",ClipboardList], ["register","Register",FileSpreadsheet], ["review","Review",ShieldCheck], ["owners","Who to Chase",Users], ["monthly","Monthly",FileSpreadsheet], ["styles","Styles",Shirt], ["routes","Routes",Filter], ["photos","Photos",ImageIcon], ["reports","Reports",FileSpreadsheet], ["settings","Settings",Settings]
   ];
-  return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}><style>{FONT + CSS}</style>{showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Cleaner precise screens, remembered active tab/filters/drafts, cumulative totals, horizontal output register, WIP-to-Register edit links, and fixed Register filtering so WIP links show all matching department entries.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}<div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Reports. Precise views, horizontal data, remembered tab/drafts.</div></div><div className="mt-actions"><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase} title="Manual backup/sync of current browser rows. Normal Add/Edit Style and DPR Entry save to Supabase when you press their Save buttons."><Upload size={14}/>Sync Browser Rows</button><button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
+  return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}><style>{FONT + CSS}</style>{showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Cleaner precise screens, remembered active tab/filters/drafts, cumulative totals, horizontal output register, WIP-to-Register edit links, and fixed Register filtering so WIP links show all matching department entries.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}<div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Reports. Precise views, horizontal data, remembered tab/drafts.</div></div><div className="mt-actions"><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Pull</button><button className="mt-btn primary" onClick={seedSupabase} title="Manual backup/sync of current browser rows. Normal Add/Edit Style and DPR Entry save to Supabase when you press their Save buttons."><Upload size={14}/>Sync Browser Rows</button><button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button><button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button></div></div><div className="mt-tabs">{tabs.map(([k,label,Icon])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}><Icon size={14}/> {label}</button>)}</div></div></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
       <PageFilters tab={tab} query={query} setQuery={setQuery} buyer={buyer} setBuyer={setBuyer} buyers={buyers} order={order} setOrder={setOrder} orders={orders} visibleRows={visibleRows}/>
       <div className="mt-keepalive-note slim no-print"><span className="mt-chip mt-info">Remembered tab/draft</span><span className="mt-small">This browser remembers your last tab and DPR entry draft by user until saved or cleared.</span></div>
-      <div className="mt-tab-panel" style={{display:tab==="dashboard"?"block":"none"}} aria-hidden={tab!=="dashboard"}><Dashboard rows={visibleRows} ledger={ledger} onDrill={setDashboardDrill}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="dashboard"?"block":"none"}} aria-hidden={tab!=="dashboard"}><Dashboard rows={visibleRows} ledger={ledger} onDrill={setDashboardDrill} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="planning"?"block":"none"}} aria-hidden={tab!=="planning"}><PlanningView rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} ledger={ledger}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="wip"?"block":"none"}} aria-hidden={tab!=="wip"}><WipStatus rows={visibleRows} onOpen={(row,stage)=>setDrawer({row,stage})}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="wip"?"block":"none"}} aria-hidden={tab!=="wip"}><WipStatus rows={visibleRows} onOpen={(row,stage)=>setDrawer({row,stage})} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="entry"?"block":"none"}} aria-hidden={tab!=="entry"}><QuickEntry rows={visibleRows} setRows={setRows} ledger={ledger} setLedger={setLedger}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="register"?"block":"none"}} aria-hidden={tab!=="register"}><OutputRegisterView rows={rows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={registerFocus}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="register"?"block":"none"}} aria-hidden={tab!=="register"}><OutputRegisterView rows={rows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={registerFocus} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="review"?"block":"none"}} aria-hidden={tab!=="review"}><ReviewView rows={visibleRows} ledger={ledger} planRows={planRows}/></div>
       <div className="mt-tab-panel" style={{display:tab==="owners"?"block":"none"}} aria-hidden={tab!=="owners"}><WhoToChase rows={visibleRows}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="monthly"?"block":"none"}} aria-hidden={tab!=="monthly"}><MonthlyComparison rows={visibleRows} ledger={ledger}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="styles"?"block":"none"}} aria-hidden={tab!=="styles"}><StyleManager rows={visibleRows} allRows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="monthly"?"block":"none"}} aria-hidden={tab!=="monthly"}><MonthlyComparison rows={visibleRows} ledger={ledger} clearTick={clearFiltersTick}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="styles"?"block":"none"}} aria-hidden={tab!=="styles"}><StyleManager rows={visibleRows} allRows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="routes"?"block":"none"}} aria-hidden={tab!=="routes"}><ProcessRoutes rows={visibleRows} setRows={setRows}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="photos"?"block":"none"}} aria-hidden={tab!=="photos"}><PhotoManager rows={visibleRows} setRows={setRows}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="photos"?"block":"none"}} aria-hidden={tab!=="photos"}><PhotoManager rows={visibleRows} setRows={setRows} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="reports"?"block":"none"}} aria-hidden={tab!=="reports"}><Reports rows={visibleRows} ledger={ledger}/></div>
       <div className="mt-tab-panel" style={{display:tab==="settings"?"block":"none"}} aria-hidden={tab!=="settings"}><SettingsView onChanged={()=>setSettingsTick(t=>t+1)}/></div>
     </div>
