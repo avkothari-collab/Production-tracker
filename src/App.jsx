@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V7.5.87";
-const APP_COMMIT_MESSAGE = "Production DPR V7.5.83 tail closure not idle based";
+const APP_VERSION = "V7.5.88";
+const APP_COMMIT_MESSAGE = "Production DPR V7.5.88 planning balance status cleanup";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -4817,6 +4817,11 @@ function planHours(p){ return Math.max(0, Math.min(8, n(p?.remaining_hours || p?
 function usedPlanHours(list=[], excludeId="", beforeSlot=999){ return (list||[]).filter(p=>p?.id!==excludeId && planSlotNo(p)<beforeSlot).reduce((a,p)=>a+planHours(p),0); }
 function remainingHoursBeforeSlot(list=[], p={}){ return Math.max(0, 8 - usedPlanHours(list, p?.id || "", planSlotNo(p))); }
 function totalUsedPlanHours(list=[], excludeId=""){ return (list||[]).filter(p=>p?.id!==excludeId).reduce((a,p)=>a+planHours(p),0); }
+function planDayHoursCovered(list=[]){ return totalUsedPlanHours(list) >= 7.75; }
+function planRowLooksManuallyCovered(p={}){
+  const text = String([p?.remarks, p?.source, p?.source_label, p?.source_type, p?.status].filter(Boolean).join(" ")).toLowerCase();
+  return /manual|cover|covered|continue|cascade|recovery/.test(text) || !p?.qty_auto_mode;
+}
 function dayRemainingAfterSlot(list=[], p={}){ return Math.max(0, 8 - (usedPlanHours(list, p?.id || "", planSlotNo(p)) + planHours(p))); }
 function planStyleText(p){ return String(p?.style_input || p?.style_no || "").trim(); }
 function styleKeyOf(row){ return [row?.order_no,row?.style_no,row?.colour,row?.component].map(x=>String(x||"").trim().toUpperCase()).join("|"); }
@@ -5040,19 +5045,25 @@ function planCellSignal(plan, rows, planRows, activeDept, line, day, ledger=[]){
   if (plan.short_close) return { tone:"purple", level:"override", text:"Short close override marked — next style can roll even if balance remains." };
   if (!linked) return { tone:"warn", level:"manual_unlinked", text:"Free text style — allowed, but no master qty/cascade check until linked to Styles." };
   const thisRemain = remainingForStyleAsOf(linked, activeDept, day, planRows, ledger);
+  const sameDayRowsForCapacity = lineDayPlanRows(planRows, activeDept, line, day);
+  const dayHoursAreCovered = planDayHoursCovered(sameDayRowsForCapacity);
+  const manualOrCascadeCover = planRowLooksManuallyCovered(plan) || dayHoursAreCovered;
   const previous = (planRows||[]).filter(p=>String(p.dept)===String(activeDept) && String(p.line||"")===String(planCellLineKey(activeDept,line)) && String(p.plan_date||"").slice(0,10)<String(day||"").slice(0,10) && planStyleText(p)).sort((a,b)=>String(b.plan_date).localeCompare(String(a.plan_date)))[0];
   if (previous && !previous.short_close) {
     const prevLinked = resolvePlanStyle(rows, planStyleText(previous)) || rows.find(r=>r.id===previous.row_id);
     const different = planStyleText(previous).toUpperCase() !== planStyleText(plan).toUpperCase();
     if (prevLinked && different) {
       const prevRemain = remainingForStyleAsOf(prevLinked, activeDept, day, planRows, ledger);
-      if (prevRemain.remaining > 0) return { tone:"late", level:"p0_line_cascade_block", text:`Line still has ${fmt(prevRemain.remaining)} of ${previous.style_no || previous.style_input}. Finish / consume / short-close before rolling to ${plan.style_no || plan.style_input}.` };
+      if (prevRemain.remaining > 0 && !manualOrCascadeCover) return { tone:"late", level:"p0_line_cascade_block", text:`Previous style still has ${fmt(prevRemain.remaining)} open. Check only if the line has not already covered it with planned hours/manual output.` };
+      if (prevRemain.remaining > 0 && manualOrCascadeCover) return { tone:"ok", level:"covered_by_plan_hours", text:`Line/day hours are already covered by plan/manual cascade. No manager alert needed for previous style balance.` };
     }
   }
   const dependsOnPlan = thisRemain.note && thisRemain.note.includes("projected from");
   if (!qty) return { tone:"warn", level:"missing_qty", text:`Style linked, but Qty is blank. ${planNeedMessage(plan, rows, planRows, activeDept, line, day, ledger)}` };
-  if (qty > thisRemain.remaining && thisRemain.remaining > 0) return { tone:"warn", level:"over_available_balance", text:`Qty above available cascade balance. ${planNeedMessage(plan, rows, planRows, activeDept, line, day, ledger)}` };
-  if (thisRemain.remaining <= 0 && qty > 0) return { tone:"late", level:"no_open_balance", text:`No open cascade balance for this slot. ${planNeedMessage(plan, rows, planRows, activeDept, line, day, ledger)}. Mark short close only if management overrides.` };
+  if (qty > thisRemain.remaining && thisRemain.remaining > 0 && manualOrCascadeCover) return { tone:"ok", level:"covered_by_plan_hours", text:`Plan hours/manual output cover this slot. Keep balance detail in drilldown only.` };
+  if (qty > thisRemain.remaining && thisRemain.remaining > 0) return { tone:"warn", level:"over_available_balance", text:`Check style balance only if no manual/line cover exists. ${planNeedMessage(plan, rows, planRows, activeDept, line, day, ledger)}` };
+  if (thisRemain.remaining <= 0 && qty > 0 && manualOrCascadeCover) return { tone:"ok", level:"covered_by_plan_hours", text:`Plan hours/manual output cover this slot. No open-balance warning on main screen.` };
+  if (thisRemain.remaining <= 0 && qty > 0) return { tone:"late", level:"no_open_balance", text:`No open style balance found for this slot. ${planNeedMessage(plan, rows, planRows, activeDept, line, day, ledger)}. Mark short close only if management overrides.` };
   if (dependsOnPlan && thisRemain.feed > thisRemain.actualDone) return { tone:"warn", level:"depends_on_upstream_plan", text:`Projected feed can cover this slot only if upstream plan is achieved. ${planNeedMessage(plan, rows, planRows, activeDept, line, day, ledger)}` };
   return { tone:"ok", level:"ok", text:`Cascade/feed OK for this slot. ${planNeedMessage(plan, rows, planRows, activeDept, line, day, ledger)}` };
 }
@@ -6235,9 +6246,10 @@ function compactPlanStatusText(v){
   const s = String(v || "").trim();
   if (!s) return "—";
   if (/actual ready|ok/i.test(s)) return "Ready";
-  if (/depends_on_upstream_plan|depends/i.test(s)) return "Depends upstream";
-  if (/over_available_balance|over projected|over/i.test(s)) return "Balance review";
-  if (/p0_line_cascade_block/i.test(s)) return "Cascade blocked";
+  if (/covered_by_plan_hours|covered/i.test(s)) return "Covered by plan";
+  if (/depends_on_upstream_plan|depends/i.test(s)) return "Needs upstream";
+  if (/over_available_balance|over projected|over/i.test(s)) return "Check balance";
+  if (/p0_line_cascade_block/i.test(s)) return "Auto fill stopped";
   if (/draft\s*\/\s*review/i.test(s)) return "Review";
   if (/draft/i.test(s)) return "Draft";
   return s.replace(/_/g," ");
@@ -6251,6 +6263,7 @@ function compactPlanReadingFromRow(r){
   const done = n(r.Achieved ?? r.Achieved_Qty ?? r.Done);
   const bal = n(r.Balance);
   const status = compactPlanStatusText(r.Feed_Status || r.P0_Status || r.Plan_Status || r.Status);
+  if (/covered by plan/i.test(status)) return "Covered by line plan/manual output · no action";
   if (need || ready || expected || avail || after) {
     if (need && ready >= need) return `Need ${fmt(need)} · ready now ${fmt(ready)} · after ${fmt(Math.max(0, after))}`;
     if (need && avail >= need) return `Need ${fmt(need)} · uses expected feed ${fmt(expected)} · after ${fmt(Math.max(0, after))}`;
