@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V6";
+const APP_VERSION = "V6 FINAL-PENDING8";
 const APP_COMMIT_MESSAGE = "Production DPR V6 dashboard and reports readability overhaul";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
@@ -795,16 +795,25 @@ function stableProductionOrderId(row){
 function parseComponentList(text){
   return Array.from(new Set(String(text || "").split(/[,/|+]+/).map(x=>String(x||"").trim().toUpperCase()).filter(Boolean)));
 }
-function today(){ return new Date().toISOString().slice(0,10); }
+function todayIST(){
+  return new Intl.DateTimeFormat("en-CA", { timeZone:"Asia/Kolkata", year:"numeric", month:"2-digit", day:"2-digit" }).format(new Date());
+}
+function today(){ return todayIST(); }
 function dateDiff(a,b){
   const da = new Date(`${a}T00:00:00`);
   const db = new Date(`${b}T00:00:00`);
   return Math.round((db - da) / 86400000);
 }
+function dateToYMDLocal(d){
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,"0");
+  const day = String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
 function previousWorkingDay(from=today()){
-  const d = new Date(`${from}T00:00:00`);
+  const d = new Date(`${from}T12:00:00`);
   do { d.setDate(d.getDate() - 1); } while (d.getDay() === 0); // Sunday normally non-working
-  return d.toISOString().slice(0,10);
+  return dateToYMDLocal(d);
 }
 const PRODUCTION_PERMISSIONS = [
   ["production.view", "View production app"],
@@ -1077,11 +1086,10 @@ function defaultEntryDate(ledger=[]){
 }
 function backdateRisk(entryDate){
   const d = dateDiff(entryDate, today());
-  if (d < 0) return { days:d, label:"Future date", tone:"late", approval:"blocked_future_date", locked:true, sameDay:false, future:true };
-  if (d === 0) return { days:d, label:"Same-day entry — unusual", tone:"warn", approval:"same_day_confirmation_required", locked:false, sameDay:true, future:false };
-  if (d === 1) return { days:d, label:"Normal next-day entry", tone:"ok", approval:"not_required", locked:false, sameDay:false, future:false };
-  if (d <= 3) return { days:d, label:`Backdated ${d} days`, tone:"warn", approval:"production_head_review", locked:false, sameDay:false, future:false };
-  return { days:d, label:`Backdated ${d} days`, tone:"late", approval:"manager_approval_required", locked:true, sameDay:false, future:false };
+  if (d < 0) return { days:d, label:"Future date", tone:"late", approval:"blocked_future_date", locked:true, sameDay:false, future:true, reportOnly:false };
+  if (d === 0) return { days:d, label:"Same-day flag", tone:"warn", approval:"date_flag_report_only", locked:false, sameDay:true, future:false, reportOnly:true };
+  if (d === 1) return { days:d, label:"Normal next-day entry", tone:"ok", approval:"not_required", locked:false, sameDay:false, future:false, reportOnly:false };
+  return { days:d, label:`Backdate flag ${d}d`, tone:d>3?"warn":"info", approval:"date_flag_report_only", locked:false, sameDay:false, future:false, reportOnly:true };
 }
 function entryTypeForField(field){
   if (field === "received") return "receive";
@@ -1486,6 +1494,20 @@ function dispatchHoldInfo(row){
   }
   return { blocked:reasons.length>0, reasons, reconcileQty, ramQty, totalRamQty:totalRam, dispatchableRejectQty, ramLimit };
 }
+function fileReleaseQty(row){ return n(row.file_released_qty || row.production_file_released_qty || row.cutting_file_released_qty || 0); }
+function fileReleaseDate(row){ return row.file_released_date || row.production_file_released_date || row.cutting_file_released_date || ""; }
+function cuttingBaseQty(row){
+  const released = fileReleaseQty(row);
+  return released > 0 ? released : n(row.order_qty);
+}
+function hasFileReleaseGate(row){ return fileReleaseQty(row) > 0 || !!fileReleaseDate(row); }
+function fileReleaseStatusText(row){
+  const rel = fileReleaseQty(row);
+  if (!hasFileReleaseGate(row)) return "File release not entered";
+  if (rel <= 0) return "File not released";
+  return `File released ${fmt(rel)}${fileReleaseDate(row)?` · ${fileReleaseDate(row)}`:""}`;
+}
+
 function issueBuckets(row){
   const route = routeFor(row);
   const buckets = [];
@@ -1496,10 +1518,11 @@ function issueBuckets(row){
     const idle = n(st.idle);
     if (key === "cutting") {
       const shortClose = cuttingShortCloseQty(row);
-      const overCut = Math.max(0, n(st.output) - n(row.order_qty));
-      const cutPending = cuttingAccountableOpen(row);
+      const cutBase = cuttingBaseQty(row);
+      const overCut = Math.max(0, n(st.output) - cutBase);
+      const cutPending = Math.max(0, cutBase - n(st.output) - loss(st) - cuttingShortCloseQty(row));
       if (cutPending > 0) {
-        buckets.push({ type:"cutting_pending", status:"Cutting Pending", qty:cutPending, owner:stageOwner(key), support:"Production Coordinator follow-up; option to short close genuine balance", stage:key, tone:idle >= 3 ? "warn" : "info", action:"Cut remaining order quantity or short close approved balance from Cutting detail.", idle });
+        buckets.push({ type:"cutting_pending", status:hasFileReleaseGate(row) && !fileReleaseQty(row) ? "File not released" : "Cut open", qty:cutPending, owner:stageOwner(key), support:"Production Coordinator follow-up; option to short close genuine balance", stage:key, tone:idle >= 3 ? "warn" : "info", action:hasFileReleaseGate(row) && !fileReleaseQty(row) ? "Release production file to Cutting before cutting output." : "Cut remaining released/order quantity or short close approved tail.", idle });
       }
       if (shortClose > 0) {
         buckets.push({ type:"short_closed", status:"Cutting Short Closed", qty:shortClose, owner:hodAndCoordinator(key), support:"Keep reason/approval until governance queue is added", stage:key, tone:"purple", action:"Short-closed balance is removed from cutting pending, not treated as produced.", idle });
@@ -1592,13 +1615,20 @@ function statusBreakdown(row){
   return [reconcile, current, ...rest].filter(Boolean);
 }
 function shortStatusLabel(bucket){
-  if (!bucket) return "Closed / Balanced";
+  if (!bucket) return "Balanced";
+  const st = String(bucket.stage || "");
+  if (bucket.type === "completed_not_issued") return `${STAGE_BY_KEY[st]?.short || stageLabel(st)} open`;
+  if (bucket.type === "received_not_processed") return `${STAGE_BY_KEY[st]?.short || stageLabel(st)} open`;
+  if (bucket.type === "tail_balance") return `Tail`;
+  if (bucket.type === "cutting_pending") return bucket.status === "File not released" ? "File not released" : "Cut open";
+  if (bucket.type === "ram") return `R/A/M ${STAGE_BY_KEY[st]?.short || stageLabel(st)}`;
+  if (bucket.type === "reconcile") return "P0 check";
   return bucket.status;
 }
 function statusText(row){
   const parts = statusBreakdown(row);
-  if (!parts.length) return "Closed / Balanced";
-  return parts.map(b => `${shortStatusLabel(b)} ${fmt(b.qty)} (${bucketPct(row,b)}%)`).join(" | ");
+  if (!parts.length) return "Balanced";
+  return parts.map(b => `${shortStatusLabel(b)} ${fmt(b.qty)}`).join(" · ");
 }
 function StatusCell({ row, onOpen }){
   const parts = statusDistribution(row);
@@ -1660,15 +1690,15 @@ function currentMovementStatusParts(row){
   const parts = [];
   const cut = sdata(row, "cutting");
   const cutPending = cuttingAccountableOpen(row);
-  if (cutPending > 0) parts.push({ type:"cutting_pending", stage:"cutting", label:"Cutting Pending", qty:cutPending, tone:"warn", field:"output", note:"Enter cutting output / short close" });
+  if (cutPending > 0) parts.push({ type:"cutting_pending", stage:"cutting", label:hasFileReleaseGate(row) && !fileReleaseQty(row) ? "File not released" : "Cut open", qty:cutPending, tone:cutPending <= Math.max(10, Math.round(cuttingBaseQty(row)*0.05)) ? "warn" : "info", field:"output", note:"Enter cutting output / short close" });
   // Cutting is also an active movement stage. If cut output is complete but not issued,
   // current status must say Ready for Stitching, not Closed/Balanced.
   const cutNextStage = route[route.indexOf("cutting") + 1];
   const cutReadyNext = Math.max(0, n(cut.output) - n(cut.issued));
-  if (cutReadyNext > 0 && cutNextStage) parts.push({ type:"ready_next", stage:"cutting", toStage:cutNextStage, label:`Ready for ${stageLabel(cutNextStage)}`, qty:cutReadyNext, tone:"info", field:"issued", note:`Issue cut quantity to ${stageLabel(cutNextStage)}` });
+  if (cutReadyNext > 0 && cutNextStage) parts.push({ type:"ready_next", stage:"cutting", toStage:cutNextStage, label:`Cut open`, qty:cutReadyNext, tone:"info", field:"issued", note:`Issue cut quantity to ${stageLabel(cutNextStage)}` });
   if (n(cut.issued) > 0 && cutNextStage) {
     const nextOutput = n(sdata(row,cutNextStage).output) + n(sdata(row,cutNextStage).reject) + n(sdata(row,cutNextStage).alter) + n(sdata(row,cutNextStage).missing);
-    if (nextOutput < n(cut.issued)) parts.push({ type:"issued_forward", stage:"cutting", toStage:cutNextStage, label:"Cutting Issued", qty:n(cut.issued), tone:"purple", field:"issued", note:`Issued to ${stageLabel(cutNextStage)}` });
+    if (nextOutput < n(cut.issued)) parts.push({ type:"issued_forward", stage:"cutting", toStage:cutNextStage, label:"Cut issued", qty:n(cut.issued), tone:"purple", field:"issued", note:`Issued to ${stageLabel(cutNextStage)}` });
   }
   // Show active production positions only. Tail / short-close / closure buckets are intentionally ignored here.
   route.forEach((stage, idx)=>{
@@ -1680,15 +1710,15 @@ function currentMovementStatusParts(row){
     const issued = n(st.issued);
     const accountedPct = feed > 0 ? ((output + loss) / feed) * 100 : 0;
     const withDept = Math.max(0, feed - output - loss);
-    if (withDept > 0 && accountedPct < 95) parts.push({ type:"with_dept", stage, label:`With ${stageLabel(stage)}`, qty:withDept, tone:"info", field:"output", note:"Enter department output" });
+    if (withDept > 0) parts.push({ type:"with_dept", stage, label: withDept <= Math.max(10, Math.round(feed*0.05)) ? "Tail" : `${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} open`, qty:withDept, tone:withDept <= Math.max(10, Math.round(feed*0.05)) ? "warn" : "info", field:"output", note:"Enter department output" });
     const nextStage = route[idx+1];
     const readyNext = Math.max(0, output - issued);
-    if (readyNext > 0 && nextStage) parts.push({ type:"ready_next", stage, toStage:nextStage, label:`Ready for ${stageLabel(nextStage)}`, qty:readyNext, tone:"info", field:"issued", note:"Enter issue forward" });
+    if (readyNext > 0 && nextStage) parts.push({ type:"ready_next", stage, toStage:nextStage, label:`${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} open`, qty:readyNext, tone:"info", field:"issued", note:"Enter issue forward" });
     // User asked current status to show real movement like Stitching issued also. Keep this as movement evidence, not closure.
     if (issued > 0 && nextStage) {
       const nextOutput = n(sdata(row,nextStage).output) + n(sdata(row,nextStage).reject) + n(sdata(row,nextStage).alter) + n(sdata(row,nextStage).missing);
       const stillRelevant = nextOutput < issued;
-      if (stillRelevant) parts.push({ type:"issued_forward", stage, toStage:nextStage, label:`${stageLabel(stage)} Issued`, qty:issued, tone:"purple", field:"issued", note:`Issued to ${stageLabel(nextStage)}` });
+      if (stillRelevant) parts.push({ type:"issued_forward", stage, toStage:nextStage, label:`${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} issued`, qty:issued, tone:"purple", field:"issued", note:`Issued to ${stageLabel(nextStage)}` });
     }
   });
   // If there is no active position but there are blocking errors, show reconcile/RAM from issue buckets as the action.
@@ -1699,22 +1729,31 @@ function currentMovementStatusParts(row){
 }
 function routeProgressSnapshot(row){
   const route = routeFor(row);
-  const cutQty = Math.max(n(sdata(row,"cutting").output), n(sdata(row,"cutting").issued), n(sdata(row,"cutting").received));
+  const orderQty = n(row.order_qty);
+  const cutSt = sdata(row,"cutting");
+  const cutQty = Math.max(n(cutSt.output), n(cutSt.received));
+  const cutBase = cuttingBaseQty(row);
   const parts = [];
-  if (cutQty > 0) parts.push({ stage:"cutting", label:`Cut ${fmt(cutQty)}`, qty:cutQty, tone:"info", title:"Actual cut quantity" });
+  if (hasFileReleaseGate(row)) parts.push({ stage:"cutting", label:fileReleaseStatusText(row), qty:fileReleaseQty(row), tone:fileReleaseQty(row)>0?"info":"warn", title:"Production file release controls what Cutting is allowed to start." });
+  if (cutQty > 0) parts.push({ stage:"cutting", label:`Cut done ${fmt(cutQty)}`, qty:cutQty, tone:"ok", title:`${pctOf(cutQty, cutBase)}% of released/cut base · ${pctOf(cutQty, orderQty)}% of order` });
+  const cutOpen = Math.max(0, cutQty - n(cutSt.issued));
+  if (cutOpen > 0) parts.push({ stage:"cutting", label:`Cut open ${fmt(cutOpen)}`, qty:cutOpen, tone:cutOpen <= Math.max(10, Math.round((cutQty||orderQty)*0.05))?"warn":"info", title:"Cut quantity not yet issued forward; small balance appears as tail." });
   route.filter(stage=>stage!=="cutting").forEach(stage=>{
     const st = sdata(row, stage);
-    const output = n(st.output);
+    const feed = stageFeed(row, stage);
+    const good = n(st.output);
+    const ram = n(st.reject)+n(st.alter)+n(st.missing);
+    const accounted = good + ram;
     const issued = n(st.issued);
-    if (output > 0) parts.push({ stage, label:`${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} done ${fmt(output)}`, qty:output, tone:"ok", title:`${stageLabel(stage)} completed/output` });
-    if (issued > 0) parts.push({ stage, label:`${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} issued ${fmt(issued)}`, qty:issued, tone:"purple", title:`${stageLabel(stage)} issued forward` });
+    if (feed > 0) parts.push({ stage, label:`${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} feed ${fmt(feed)}`, qty:feed, tone:"info", title:`${pctOf(feed, cutQty||orderQty)}% of cut/order base` });
+    if (accounted > 0) parts.push({ stage, label:`${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} acct ${fmt(accounted)}`, qty:accounted, tone:ram?"warn":"ok", title:`Good ${fmt(good)} + R/A/M ${fmt(ram)} = accounted ${fmt(accounted)} · local ${pctOf(accounted, feed)}% · overall ${pctOf(accounted, cutQty||orderQty)}%` });
+    if (issued > 0) parts.push({ stage, label:`${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} issue ${fmt(issued)}`, qty:issued, tone:"purple", title:`Issued forward from ${stageLabel(stage)}` });
+    const open = Math.max(0, feed - accounted);
+    if (open > 0) parts.push({ stage, label:`${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} open ${fmt(open)}`, qty:open, tone:open <= Math.max(10, Math.round(feed*0.05))?"warn":"late", title:`Pending to receive/output/account for ${fmt(open)} from ${stageLabel(stage)}` });
   });
-  const pack = sdata(row,"packing");
-  const packAccounted = n(pack.output) + n(pack.reject) + n(pack.alter) + n(pack.missing);
-  const packBalance = Math.max(0, cutQty - packAccounted);
-  if (packBalance > 0) parts.push({ stage:"packing", label:`Pack balance ${fmt(packBalance)}`, qty:packBalance, tone:"late", title:"Cut qty not yet packed/accounted" });
   return parts;
 }
+
 function CurrentStatusLinks({ row, onEntry, onOpen, compact=false }){
   const allParts = currentMovementStatusParts(row);
   const parts = allParts.slice(0, compact ? 1 : 8);
@@ -2092,30 +2131,35 @@ function flowBottleneckRows(rows, ledger=[], referenceDate=today(), lookbackDays
     return { stage:stage.key, Dept:stage.label, Inflow_or_Feed:inflow, Received:received, Output:output, Issued_Forward:issued, Queue_WIP:queue, Reconcile_Qty:reconcile, RAM_Qty:ram, Recent_Output_7d:recentOutput, Daily_Rate:Math.round(dailyRate*10)/10, Days_Cover: queue ? Math.round((queue / dailyRate)*10)/10 : 0, Bottleneck_Score: queue + reconcile*2 + ram };
   }).filter(r=>r.Queue_WIP || r.Reconcile_Qty || r.RAM_Qty || r.Received || r.Output).sort((a,b)=>b.Bottleneck_Score-a.Bottleneck_Score);
 }
-function lineEfficiencyRows(rows, ledger=[], start=today(), end=today()){
-  const period = (ledger || []).filter(x => inDateRange(x.entry_date || x.entryDate || x.date, start, end) && String(x.stage)==="stitching" && ["good_output","output","receive"].includes(String(x.entry_type || x.entryType || "")));
+function lineEfficiencyRows(rows, ledger=[], start=today(), end=today(), planRows=[]){
   const map = new Map();
-  if (period.length) {
-    period.forEach(e => {
-      const row = findRowForLedger(rows, e) || {};
-      const line = e.line || row.line || "Unassigned";
-      const curr = map.get(line) || { Line:line, Plan_Target:n(e.plan_qty || e.target_qty), Achieved:0, Styles:new Set(), Dept:"Stitching" };
-      const entryQty = e.qty ?? e.delta;
-      curr.Achieved += Math.max(0,n(entryQty));
-      curr.Plan_Target += n(e.plan_qty || e.target_qty);
-      curr.Styles.add(row.id || e.style_no || e.style);
-      map.set(line,curr);
-    });
-  } else {
+  (planRows || []).filter(p=>String(p.dept||"")==="stitching" && inDateRange(String(p.plan_date||"").slice(0,10), start, end)).forEach(p=>{
+    const line = p.line || "Unassigned";
+    const curr = map.get(line) || { Line:line, Plan_Target:0, Achieved:0, Styles:new Set(), Dept:"Stitching" };
+    curr.Plan_Target += coverAdjustedPlanQty ? n(coverAdjustedPlanQty(p, planRows, rows, ledger)) : n(p.planned_qty);
+    curr.Styles.add(p.style_no || p.style_input || p.row_id || line);
+    map.set(line,curr);
+  });
+  const period = (ledger || []).filter(x => inDateRange(x.entry_date || x.entryDate || x.date, start, end) && String(x.stage)==="stitching" && ["good_output","output","receive"].includes(String(x.entry_type || x.entryType || "")));
+  period.forEach(e => {
+    const row = findRowForLedger(rows, e) || {};
+    const line = e.line || e.stitching_line || row.line || "Unassigned";
+    const curr = map.get(line) || { Line:line, Plan_Target:0, Achieved:0, Styles:new Set(), Dept:"Stitching" };
+    curr.Achieved += Math.max(0,n(e.qty ?? e.delta));
+    curr.Styles.add(row.id || e.style_no || e.style || line);
+    map.set(line,curr);
+  });
+  if (!map.size) {
     rows.forEach(row => {
       const line = row.line || "Unassigned";
       const curr = map.get(line) || { Line:line, Plan_Target:n(row.plan_qty || row.daily_target || 0), Achieved:0, Styles:new Set(), Dept:"Stitching" };
-      curr.Achieved += n(sdata(row,"stitching").output); curr.Plan_Target += n(row.plan_qty || row.daily_target || 0); curr.Styles.add(row.id);
+      curr.Achieved += n(sdata(row,"stitching").output); curr.Styles.add(row.id);
       map.set(line,curr);
     });
   }
   return Array.from(map.values()).map(x=>({ Line:x.Line, Dept:x.Dept, Plan_Target:x.Plan_Target || "Set plan", Achieved:x.Achieved, Variance: x.Plan_Target ? x.Achieved - x.Plan_Target : "—", Efficiency: x.Plan_Target ? `${Math.round((x.Achieved*1000)/x.Plan_Target)/10}%` : "Plan pending", Styles:x.Styles.size })).sort((a,b)=>n(b.Achieved)-n(a.Achieved));
 }
+
 function drillSummaryRows(rows){
   const map = new Map();
   rows.forEach(r => {
@@ -2224,6 +2268,9 @@ function orderToSupabase(row){
   stageQty.__embroidery_required = !!row.embroidery_required;
   stageQty.__dispatch_reject_allowed = !!row.dispatch_reject_allowed;
   stageQty.__size_ratio = row.size_ratio || "";
+  stageQty.__file_released_qty = n(row.file_released_qty || row.production_file_released_qty || row.cutting_file_released_qty || 0);
+  stageQty.__file_released_date = row.file_released_date || row.production_file_released_date || row.cutting_file_released_date || "";
+  stageQty.__set_piece_count = n(row.set_piece_count || 0);
   return {
     // production_orders.id is NOT NULL in the current Supabase schema.
     // Always send a stable text id derived from Order+Style+Colour+Component for manual/demo rows.
@@ -2270,6 +2317,7 @@ function supabaseToOrder(row){
     id:row.id, order_no:row.order_no, style_no:row.style_no, buyer:row.buyer || row.brand || "", colour:row.colour || "", component:row.component || "",
     photo_url:row.photo_url || "", photo_thumb_url:row.photo_thumb_url || row.photo_url || "", photo_folder_url:row.photo_folder_url || "",
     order_qty:n(row.order_qty), order_size_qty:normalizeSizeQtyMap(orderSizeRaw, sizeList), size_set:sizeSet, size_ratio:row.size_ratio || raw.__size_ratio || "", set_id:row.set_id || "",
+    file_released_qty:n(row.file_released_qty || raw.__file_released_qty || 0), file_released_date:row.file_released_date || raw.__file_released_date || "", set_piece_count:n(row.set_piece_count || raw.__set_piece_count || 0),
     line:row.default_line || raw.__default_line || "", difficulty:row.difficulty || raw.__difficulty || "Normal", priority:row.priority || raw.__priority || "Normal",
     daily_target:n(dailyTargetRaw), cutting_short_close_qty:n(row.cutting_short_close_qty || raw.__cutting_short_close_qty), cutting_short_close_reason:row.cutting_short_close_reason || raw.__cutting_short_close_reason || "",
     print_required:(printRequiredRaw ?? printFallback),
@@ -2883,7 +2931,7 @@ function monthlyComparisonRows(rows, ledger=[], month=today().slice(0,7)){
     .sort((a,b)=>String(a.Buyer).localeCompare(String(b.Buyer)) || String(a.Order).localeCompare(String(b.Order)) || String(a.Style).localeCompare(String(b.Style)));
 }
 
-function buildReportSheets(rows, ledger){
+function buildReportSheets(rows, ledger, planRows=[]){
   const allSizes = allReportSizes(rows);
   const allBuckets = (rows || []).flatMap(row => issueBuckets(row).map(bucket => ({ row, bucket })));
   const activeStageRows = STAGES.flatMap(stage => (rows || []).filter(row => routeFor(row).includes(stage.key)).map(row => horizontalStageRow(row, stage.key, allSizes)));
@@ -2947,6 +2995,7 @@ function buildReportSheets(rows, ledger){
     New_Qty: x.new_qty ?? x.newQty ?? "",
     Delta: x.qty ?? x.delta ?? "",
     Backdated: x.is_backdated ?? x.isBackdated ?? "",
+    Line: x.line || x.stitching_line || "",
     Reason: x.backdate_reason || x.reason || "",
     Approval: x.approval_status || x.approval || "",
   }));
@@ -2962,7 +3011,7 @@ function buildReportSheets(rows, ledger){
     dispatchHold: bucketSheet("dispatch_hold"),
     ramRows,
     ownerRows,
-    lineEfficiencyRows: lineEfficiencyRows(rows, ledger),
+    lineEfficiencyRows: lineEfficiencyRows(rows, ledger, undefined, undefined, planRows),
     bottleneckRows: flowBottleneckRows(rows, ledger),
     agingRows: agingStuckRows(rows),
     qualityRows: qualityLossRows(rows),
@@ -2978,18 +3027,24 @@ function buildReportSheets(rows, ledger){
   };
 }
 function ProcessRoutes({ rows, setRows }){
-  function toggle(rowId, key){
-    setRows(prev=>prev.map(r=>{
-      if (r.id !== rowId) return r;
-      const next = { ...r, [key]:!r[key] };
-      next.route = routeFor(next);
-      next.stages = { ...next.stages };
-      next.route.forEach(k=>{ if(!next.stages[k]) next.stages[k]=blankStage(); });
-      return next;
-    }));
+  const [routeMsg,setRouteMsg] = useState(null);
+  async function toggle(rowId, key){
+    const row = (rows||[]).find(r=>String(r.id)===String(rowId));
+    if (!row) return;
+    const next = { ...row, [key]:!row[key] };
+    next.route = routeFor(next);
+    next.stages = { ...(next.stages || {}) };
+    next.route.forEach(k=>{ if(!next.stages[k]) next.stages[k]=blankStage(); });
+    next.route_toggle_updated_at = new Date().toISOString();
+    next.route_toggle_updated_by = currentUserName();
+    setRows(prev=>prev.map(r=>String(r.id)===String(rowId)?next:r));
+    const res = await upsertOneStyleToSupabase(next);
+    recordProductionAudit("route_toggle_update", { table_name:"production_orders", order_no:next.order_no, style_no:next.style_no, colour:next.colour, component:next.component, source:"Routes", before_data:{ print_required:row.print_required, embroidery_required:row.embroidery_required, route:routeFor(row) }, after_data:{ print_required:next.print_required, embroidery_required:next.embroidery_required, route:next.route } });
+    setRouteMsg(res?.error ? {tone:"late", text:`Route changed locally, Supabase failed: ${res.error.message}`} : res?.warning ? {tone:"warn", text:`Route changed locally. ${res.warning}`} : {tone:"ok", text:`Route saved for ${next.style_no} · history kept`});
   }
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Style-wise Print / Embroidery Route Toggles</h3><div className="mt-panel-sub">Optional process stages. Validation follows the active route: Cutting → optional Print/Emb → Stitching → Checking → Packing → Dispatch.</div></div><div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style</th><th>Print Required</th><th>Embroidery Required</th><th>Active Route</th><th>Rule</th></tr></thead><tbody>{(rows||[]).map(row=><tr key={row.id}><td className="mt-sticky"><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.colour} · {row.component}</div></td><td><button className={`mt-btn ${row.print_required?"primary":"ghost"}`} onClick={()=>toggle(row.id,"print_required")}>{row.print_required?"Print ON":"Print OFF"}</button></td><td><button className={`mt-btn ${row.embroidery_required?"primary":"ghost"}`} onClick={()=>toggle(row.id,"embroidery_required")}>{row.embroidery_required?"Emb ON":"Emb OFF"}</button></td><td>{routeFor(row).map(k=><span className="mt-chip mt-muted" key={k} style={{marginRight:4}}>{STAGE_BY_KEY[k]?.short || k}</span>)}</td><td>Next stage checks use the previous active route stage.</td></tr>)}</tbody></table></div></div>;
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Style-wise / Component-wise Print & Embroidery Route Toggles</h3><div className="mt-panel-sub">Optional stages are controlled per style component. Turning a route OFF removes it from active WIP but keeps old history/audit; turning it ON again reuses history.</div>{routeMsg && <span className={`mt-chip ${statusClass(routeMsg.tone)}`}>{routeMsg.text}</span>}</div><div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style / Component</th><th>Print Required</th><th>Embroidery Required</th><th>Active Route</th><th>History Rule</th></tr></thead><tbody>{(rows||[]).map(row=><tr key={row.id}><td className="mt-sticky"><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.colour} · {row.component}{row.set_id?` · Set ${row.set_id}`:""}</div></td><td><button className={`mt-btn ${row.print_required?"primary":"ghost"}`} onClick={()=>toggle(row.id,"print_required")}>{row.print_required?"Print ON":"Print OFF"}</button></td><td><button className={`mt-btn ${row.embroidery_required?"primary":"ghost"}`} onClick={()=>toggle(row.id,"embroidery_required")}>{row.embroidery_required?"Emb ON":"Emb OFF"}</button></td><td>{routeFor(row).map(k=><span className="mt-chip mt-muted" key={k} style={{marginRight:4}}>{STAGE_BY_KEY[k]?.short || k}</span>)}</td><td><span className="mt-chip mt-info">Old data retained</span><div className="mt-small">Next-stage checks use the active route only.</div></td></tr>)}</tbody></table></div></div>;
 }
+
 
 function bucketRowsForDrill(rows, predicate){
   const allSizes = allReportSizes(rows);
@@ -3164,7 +3219,7 @@ function DashboardBarPanel({ title, sub, rows, labelKey="label", valueKey="value
 function DashboardQuickTable({ title, sub, rows, empty, onRowClick, exportName }){
   return <details className="mt-fold"><summary>{title} <span className="mt-small" style={{fontFamily:"JetBrains Mono, monospace", marginLeft:8}}>{Array.isArray(rows)?rows.length:0} rows</span></summary><SimpleTable title={title} sub={sub} rows={rows} empty={empty} onRowClick={onRowClick} exportName={exportName}/></details>;
 }
-function Dashboard({ rows, ledger=[], onDrill, clearTick=0 }){
+function Dashboard({ rows, ledger=[], planRows=[], onDrill, clearTick=0 }){
   const activityDate = latestActivityDate(ledger);
   const [selectedDate, setSelectedDate] = useState(()=>safeJsonLoad(uiStorageKey("dashboard_selected_date"), activityDate));
   useEffect(()=>{ setSelectedDate(d => d || activityDate); }, [activityDate]);
@@ -3184,7 +3239,7 @@ function Dashboard({ rows, ledger=[], onDrill, clearTick=0 }){
   const periodRows = dailyWeeklyMonthlyRows(rows, ledger, selectedDate || activityDate);
   const reconciliationRows = reconciliationBoardRows(rows, ledger);
   const meetingRows = meetingFocusRows(rows);
-  const lineRows = lineEfficiencyRows(rows, ledger, cal.weekStart, cal.weekEnd);
+  const lineRows = lineEfficiencyRows(rows, ledger, cal.weekStart, cal.weekEnd, planRows);
   const bottleneckRows = flowBottleneckRows(rows, ledger);
   const agingRows = agingStuckRows(rows);
   const qualityRows = qualityLossRows(rows);
@@ -3218,18 +3273,52 @@ function Dashboard({ rows, ledger=[], onDrill, clearTick=0 }){
     { Dept:"Packing", Qty:n(daily.Packing), kind:"period" },
     { Dept:"Dispatch", Qty:n(daily.Dispatch), kind:"period" },
   ].filter(x=>x.Qty>0);
+  const ramTypes = new Set(["reject","rejection","missing","alter","alter_issue"]);
+  function ramPeriodRows(start,end){
+    const map = new Map();
+    (ledger||[]).filter(e=>ramTypes.has(ledgerType(e)) && inDateRange(ledgerDate(e), start, end)).forEach(e=>{
+      const row = findRowForLedger(rows,e) || {};
+      const dept = stageLabel(ledgerStage(e));
+      const curr = map.get(dept) || { Dept:dept, Qty:0, Styles:new Set(), stage:ledgerStage(e) };
+      curr.Qty += Math.max(0,n(e.qty ?? e.delta ?? e.reject_qty ?? e.alter_qty ?? e.missing_qty));
+      curr.Styles.add(row.id || e.style_no || e.style || "?");
+      map.set(dept,curr);
+    });
+    return Array.from(map.values()).map(x=>({ Dept:x.Dept, Qty:x.Qty, Styles:x.Styles.size, stage:x.stage })).sort((a,b)=>n(b.Qty)-n(a.Qty));
+  }
+  function ramStyleRows(start,end){
+    const map = new Map();
+    (ledger||[]).filter(e=>ramTypes.has(ledgerType(e)) && inDateRange(ledgerDate(e), start, end)).forEach(e=>{
+      const row = findRowForLedger(rows,e) || {};
+      const key = [e.order_no || row.order_no, e.style_no || row.style_no, e.colour || row.colour, e.component || row.component].join("|::|");
+      const curr = map.get(key) || { Order:e.order_no || row.order_no || "", Style:e.style_no || row.style_no || "", Buyer:row.buyer || e.buyer || "", Colour:e.colour || row.colour || "", Component:e.component || row.component || "", RAM_Qty:0, Rows:0 };
+      curr.RAM_Qty += Math.max(0,n(e.qty ?? e.delta ?? e.reject_qty ?? e.alter_qty ?? e.missing_qty));
+      curr.Rows += 1;
+      map.set(key,curr);
+    });
+    return Array.from(map.values()).sort((a,b)=>n(b.RAM_Qty)-n(a.RAM_Qty));
+  }
+  const todayRamRows = ramPeriodRows(selectedDate || activityDate, selectedDate || activityDate);
+  const weekRamRows = ramPeriodRows(cal.weekStart, cal.weekEnd);
+  const weekRamStyleRows = ramStyleRows(cal.weekStart, cal.weekEnd);
+  const todayRamTotal = todayRamRows.reduce((a,r)=>a+n(r.Qty),0);
+  const weekRamTotal = weekRamRows.reduce((a,r)=>a+n(r.Qty),0);
+  const weekGapRows = lineRows.map(r=>({ Line:r.Line, Dept:r.Dept, Gap:Math.max(0,n(r.Plan_Target)-n(r.Achieved)), Plan_Target:r.Plan_Target, Achieved:r.Achieved, Efficiency:r.Efficiency })).filter(r=>n(r.Gap)>0).sort((a,b)=>n(b.Gap)-n(a.Gap));
+  const pushFocus = weekGapRows[0] || null;
   return <>
     <div className="mt-card" style={{marginBottom:12}}><div className="mt-section">
-      <div className="mt-drill-head"><div><h3 className="mt-panel-title">Dashboard</h3><div className="mt-panel-sub"><b>Summary</b> = what to act on now. <b>Graphs</b> = easy visual comparison. <b>Tables</b> = expandable detail for audit/export. Every card and row is drillable.</div></div><div className="mt-toggle-row"><button className={`mt-btn ${dashView==="summary"?"active":""}`} onClick={()=>setDashView("summary")}>Summary</button><button className={`mt-btn ${dashView==="charts"?"active":""}`} onClick={()=>setDashView("charts")}>Graphs</button><button className={`mt-btn ${dashView==="tables"?"active":""}`} onClick={()=>setDashView("tables")}>Tables</button></div></div>
+      <div className="mt-drill-head"><div><h3 className="mt-panel-title">Factory Whiteboard</h3><div className="mt-panel-sub"><b>WHITEBOARD MODE ACTIVE</b> · floor-glance summary first. Normal WIP is separate from manager action. Every card and row is drillable.</div></div><div className="mt-toggle-row"><button className={`mt-btn ${dashView==="summary"?"active":""}`} onClick={()=>setDashView("summary")}>Whiteboard</button><button className={`mt-btn ${dashView==="charts"?"active":""}`} onClick={()=>setDashView("charts")}>Graphs</button><button className={`mt-btn ${dashView==="tables"?"active":""}`} onClick={()=>setDashView("tables")}>Tables</button></div></div>
       <div className="mt-toolbar" style={{marginTop:10}}><span className="mt-toolbar-label">Activity date</span><input className="mt-input mt-entry-date" type="date" value={selectedDate || activityDate} onChange={e=>setSelectedDate(e.target.value)} /><span className="mt-chip mt-info">{cal.fullLabel}</span><span className="mt-chip mt-muted">Month {fullMonthLabel(parseYmd(selectedDate || activityDate))}</span></div>
     </div></div>
 
     {dashView === "summary" && <>
       <div className="mt-grid" style={{marginBottom:12}}>
-        <DashboardActionCard title="Needs action" value={fmt(hardActionQty)} sub={hardActionQty ? "Reconcile, R/A/M or set mismatch. Open before meeting." : "No hard blocker in current filter."} tone={hardActionQty?"late":"ok"} onClick={()=>onDrill?.(hardActionQty ? {kind:"meeting_focus", title:"Dashboard Action List"} : {kind:"all_styles", title:"All Styles"})}/>
-        <DashboardActionCard title="Normal WIP / info" value={fmt(normalInfoQty)} sub="With department / ready to move. Monitor, not automatically a manager task." tone="info" onClick={()=>onDrill?.({kind:"open_qty", title:"Normal WIP / Current Bins"})}/>
-        <DashboardActionCard title="Today output" value={fmt(todayOutputRows.reduce((a,r)=>a+n(r.Qty),0))} sub={`${selectedDate || activityDate}. Click for daily ledger rows.`} tone="ok" onClick={()=>onDrill?.({kind:"period", period:"daily", start:selectedDate || activityDate, end:selectedDate || activityDate, title:`Daily Activity — ${selectedDate || activityDate}`})}/>
-        <DashboardActionCard title="Active styles" value={rows.length} sub="All styles in current filter. Use drilldown for style detail." tone="info" onClick={()=>onDrill?.({kind:"all_styles", title:"Active Styles"})}/>
+        <DashboardActionCard title="Today vs plan" value={fmt(todayOutputRows.reduce((a,r)=>a+n(r.Qty),0))} sub={`${selectedDate || activityDate} actual output. Plan comparison appears line-wise below.`} tone="ok" onClick={()=>onDrill?.({kind:"period", period:"daily", start:selectedDate || activityDate, end:selectedDate || activityDate, title:`Daily Activity — ${selectedDate || activityDate}`})}/>
+        <DashboardActionCard title="Week vs target" value={pushFocus ? `${fmt(pushFocus.Achieved)} / ${fmt(pushFocus.Plan_Target)}` : fmt(lineRows.reduce((a,r)=>a+n(r.Achieved),0))} sub={pushFocus ? `Push ${pushFocus.Line}: gap ${fmt(pushFocus.Gap)}` : "Weekly line target OK / not set."} tone={pushFocus?"warn":"ok"} onClick={()=>onDrill?.({kind:"line_efficiency", start:cal.weekStart, end:cal.weekEnd, title:`Line Output — ${cal.fullLabel}`})}/>
+        <DashboardActionCard title="Push focus" value={pushFocus ? fmt(pushFocus.Gap) : "OK"} sub={pushFocus ? `${pushFocus.Line} is most behind weekly target` : "No weekly push gap found."} tone={pushFocus?"late":"ok"} onClick={()=>onDrill?.({kind:"line_efficiency", start:cal.weekStart, end:cal.weekEnd, title:`Where to push this week`})}/>
+        <DashboardActionCard title="Today R/A/M" value={fmt(todayRamTotal)} sub={todayRamRows[0] ? `${todayRamRows[0].Dept} highest today` : "No R/A/M posted today."} tone={todayRamTotal?"warn":"ok"} onClick={()=>onDrill?.({kind:"quality_loss", title:"R/A/M today by department"})}/>
+        <DashboardActionCard title="Week R/A/M" value={fmt(weekRamTotal)} sub={weekRamStyleRows[0] ? `${weekRamStyleRows[0].Style} highest this week` : "No R/A/M this week."} tone={weekRamTotal?"warn":"ok"} onClick={()=>onDrill?.({kind:"quality_loss", title:"R/A/M highest styles this week"})}/>
+        <DashboardActionCard title="Action items" value={fmt(hardActionQty)} sub={hardActionQty ? "True exceptions only: P0/reconcile/RAM/set mismatch." : "No hard blocker in current filter."} tone={hardActionQty?"late":"ok"} onClick={()=>onDrill?.(hardActionQty ? {kind:"meeting_focus", title:"Dashboard Action List"} : {kind:"all_styles", title:"All Styles"})}/>
       </div>
       <div className="mt-two" style={{marginBottom:12}}>
         <div className="mt-card"><div className="mt-section"><div className="mt-drill-head"><div><h3 className="mt-panel-title">Today’s factory reading</h3><div className="mt-panel-sub">Plain-language meeting list. These are summaries; click for rows.</div></div><span className="mt-chip mt-muted">{topActionRows.length || 1} items</span></div>
@@ -3239,8 +3328,9 @@ function Dashboard({ rows, ledger=[], onDrill, clearTick=0 }){
       </div>
       <div className="mt-two">
         <SimpleTable title="Order summary" sub="Order-level first so many styles do not become noise. Click order for style rows." rows={orderRows.slice(0,10)} empty="No orders in current dashboard scope." onRowClick={(r)=>onDrill?.({kind:"order", order:r.Order, title:`Order — ${r.Order}`})}/>
-        <SimpleTable title="Line output summary" sub="Stitching line plan/actual reading for selected production week." rows={lineRows.slice(0,10)} empty="No line output yet." onRowClick={()=>onDrill?.({kind:"line_efficiency", start:cal.weekStart, end:cal.weekEnd, title:`Line Output — ${cal.fullLabel}`})}/>
+        <SimpleTable title="Where to push this week" sub="Line-wise plan vs actual. Stitching DPR line entry updates this." rows={lineRows.slice(0,10)} empty="No line output yet." onRowClick={()=>onDrill?.({kind:"line_efficiency", start:cal.weekStart, end:cal.weekEnd, title:`Line Output — ${cal.fullLabel}`})}/>
       </div>
+      <div className="mt-two" style={{marginTop:12}}><SimpleTable title="R/A/M today by department" sub="Daily R/A/M by department for quick floor reading." rows={todayRamRows} empty="No R/A/M today."/><SimpleTable title="R/A/M highest styles this week" sub="Style-wise weekly R/A/M ranking." rows={weekRamStyleRows.slice(0,10)} empty="No R/A/M this week."/></div>
     </>}
 
     {dashView === "charts" && <>
@@ -3855,7 +3945,7 @@ function applyDailySizeEntries({ rows, targetRows, stage, field, getVal }){
     return { ...row, stages, size_stage:sizeStage };
   });
 }
-function buildLedgerRows({ changes, stage, field, entryDate, reason, source, validationOverride=null }){
+function buildLedgerRows({ changes, stage, field, entryDate, reason, source, line="", validationOverride=null }){
   const risk = backdateRisk(entryDate);
   const created = new Date().toISOString();
   const profile = currentUserProfile();
@@ -3882,6 +3972,8 @@ function buildLedgerRows({ changes, stage, field, entryDate, reason, source, val
     changed_by_role:profile.role || "",
     changed_by_department:profile.department || "",
     entry_source:source,
+    line: line || c.row.line || "",
+    stitching_line: stage === "stitching" ? (line || c.row.line || "") : "",
     validation_scope:validationOverride?.validation_scope || "size_wise_as_of_entry_date",
     validation_status:validationOverride?.validation_status || "ok",
     validation_messages:validationOverride?.validation_messages || [],
@@ -3914,7 +4006,7 @@ async function saveLedgerToSupabase(newLedger, field){
   if(!result?.error && !result?.skipped && !result?.warning) {
     const first = payload[0] || {};
     recordProductionAudit(isCorrection ? "ledger_correction" : "ledger_insert", {
-      table_name:"production_entries", order_no:first.order_no, style_no:first.style_no, colour:first.colour, component:first.component, stage:first.stage, entry_type:first.entry_type, entry_date:first.entry_date, qty:payload.reduce((a,b)=>a+n(b.qty),0), source:first.entry_source || "DPR Entry", metadata:{ row_count:payload.length, field, via:result.via || "supabase" }
+      table_name:"production_entries", order_no:first.order_no, style_no:first.style_no, colour:first.colour, component:first.component, stage:first.stage, entry_type:first.entry_type, entry_date:first.entry_date, qty:payload.reduce((a,b)=>a+n(b.qty),0), source:first.entry_source || "DPR Entry", metadata:{ row_count:payload.length, field, via:result.via || "supabase", line:first.line || first.stitching_line || "" }
     });
   }
   return result;
@@ -4067,8 +4159,8 @@ function SizeCumulativeEditor({ row, rows, setRows, ledger, setLedger, stage, in
   if (!row) return null;
   const sizes = sizesFor(row);
   const risk = backdateRisk(entryDate);
-  const needsReason = risk.days > 1;
-  const reasonMissing = needsReason && !reason.trim();
+  const needsReason = false;
+  const reasonMissing = false;
   function getVal(_, size){ const key = `${row.id}|${size}`; return draft[key] !== undefined ? draft[key] : ""; }
   function setVal(size, value){ setDraft(d=>({ ...d, [`${row.id}|${size}`]:String(value).replace(/[^0-9]/g,"") })); }
   const validation = validateDailyEntry(row, stage, field, getVal, ledger, entryDate);
@@ -4102,7 +4194,7 @@ Save locally in this browser anyway? Other users will not see it until Supabase 
   }
   return <div className="mt-edit-panel">
     <div className="mt-edit-panel-head"><h3 className="mt-panel-title">{stageLabel(stage)} — {fieldLabel(field)}</h3><div className="mt-panel-sub">Selected department only. Enter new quantity by size for the selected date. The updated total is shown as a cross-check, not as editable cumulative entry.</div></div>
-    <div className="mt-section no-print"><div className="mt-backdate-box"><span className="mt-toolbar-label">Entry Date</span><input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /><span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span><span className="mt-toolbar-label">Dept</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-toolbar-label">Entry Field</span><select className="mt-select" value={field} onChange={e=>setField(e.target.value)}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>{needsReason && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate reason required" style={{minWidth:250}} />}</div><div className="mt-ram-action-bar"><span className="mt-toolbar-label">R/A/M closure rows</span>{RAM_ENTRY_FIELDS.map(f=><button key={f.key} className={`mt-btn ghost ${field===f.key?"active":""}`} onClick={()=>{setField(f.key); setDraft({});}}>{f.label}</button>)}<span className="mt-small">Use these only to close/explain small balances; normal production entry stays Output / Issue.</span></div>{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated date: validated against stock/WIP as-of this entry date and stamped manager-approval-required. Requires explicit approval confirmation before save.</div>}</div>
+    <div className="mt-section no-print"><div className="mt-backdate-box"><span className="mt-toolbar-label">Entry Date</span><input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /><span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span><span className="mt-toolbar-label">Dept</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-toolbar-label">Entry Field</span><select className="mt-select" value={field} onChange={e=>setField(e.target.value)}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>{risk.days>1 && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate note optional/report flag" style={{minWidth:250}} />}</div><div className="mt-ram-action-bar"><span className="mt-toolbar-label">R/A/M closure rows</span>{RAM_ENTRY_FIELDS.map(f=><button key={f.key} className={`mt-btn ghost ${field===f.key?"active":""}`} onClick={()=>{setField(f.key); setDraft({});}}>{f.label}</button>)}<span className="mt-small">Use these only to close/explain small balances; normal production entry stays Output / Issue.</span></div>{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated date: report flag only. Quantity/feed/P0 sequence clashes still require reconcile review.</div>}</div>
     <div className="mt-section"><div className="mt-entry-hero"><div className="mt-entry-hero-title"><span>{row.style_no}</span><span className="mt-chip mt-muted">{row.order_no}</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-chip mt-warn">{fieldLabel(field)}</span></div><div className="mt-entry-hero-sub">{ctx.note} Reductions/corrections are not normal entry and must go through approval.</div>{orderVariance.diff !== 0 && <div className={`mt-chip ${statusClass(orderVariance.tone)}`} style={{marginTop:8}}>{orderVariance.text}</div>}<div className="mt-mandatory-note"><AlertTriangle size={14}/> Highlighted size boxes are open/mandatory when entering this row. Blank means no quantity entered for that size.</div></div><div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">{ctx.availableLabel}</div><div className="value">{fmt(ctx.available)}</div><div className="note">source / feed</div></div><div className="mt-entry-metric"><div className="label">{ctx.previousLabel}</div><div className="value">{fmt(ctx.previous)}</div><div className="note">already entered</div></div><div className="mt-entry-metric"><div className="label">{ctx.openLabel}</div><div className="value">{fmt(ctx.open)}</div><div className="note">balance before entry</div></div><div className="mt-entry-metric"><div className="label">New Entry</div><div className="value">{fmt(newQty)}</div><div className="note">selected date</div></div><div className="mt-entry-metric"><div className="label">Cumulative After</div><div className="value">{fmt(validation.updatedTotal)}</div><div className="note">{fmt(validation.updatedTotal)} / {fmt(ctx.available)} total</div></div><div className="mt-entry-metric"><div className="label">Remaining After</div><div className="value">{fmt(Math.max(0, n(ctx.open)-newQty))}</div><div className="note">after saving</div></div></div><div className="mt-entry-row-actions"><button className="mt-btn" onClick={fillOpen}>Auto-fill open qty</button><button className="mt-btn ghost" onClick={clear}>Clear entry</button><button className="mt-btn primary" onClick={save} disabled={!changes.length || validation.blocked || reasonMissing}><CheckCircle2 size={14}/>Save Day Entry</button></div></div>
     <div className="mt-section"><div className="mt-dept-size-grid">{sizeContexts.map(x=>{ const remaining=Math.max(0,n(x.open)-n(x.entry)); const baseField=field==="alter_clear"?"output":field; const prev=n(sizeMatrix(row,stage,baseField).find(v=>v.size===x.size)?.qty); const updated=prev+n(x.entry); const blocked=field==="alter_clear" && n(x.entry)>n(x.open); return <div key={x.size} className="mt-dept-size-box"><div className="size">{x.size}</div><div className="line"><span>Open</span><b>{fmt(x.open)}</b></div><input className={`mt-cell-input ${n(x.open)>0?"mandatory":""} ${draft[`${row.id}|${x.size}`]!==undefined?"dirty":""} ${blocked||validation.blocked?"blocked":""}`} value={getVal(row,x.size)} onChange={e=>setVal(x.size,e.target.value)} placeholder="0" style={{width:"100%", marginTop:6}}/><div className="line"><span>Remaining</span><b>{fmt(remaining)}</b></div><div className="line"><span>Updated total</span><b>{fmt(updated)}</b></div></div>;})}</div>{validation.blocked && <div className="mt-locked-note" style={{marginTop:10}}>Blocked: {validation.messages.join("; ")}</div>}</div>
   </div>;
@@ -4113,11 +4205,13 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
   const [field, setField] = useState(()=>safeJsonLoad(uiStorageKey("entry_field"), "output"));
   const [entryDate, setEntryDate] = useState(()=>safeJsonLoad(uiStorageKey("entry_date"), defaultEntryDate(ledger)));
   const [reason, setReason] = useState(()=>safeJsonLoad(uiStorageKey("entry_reason"), ""));
+  const [entryLine, setEntryLine] = useState(()=>safeJsonLoad(uiStorageKey("entry_line"), productionLineNames()[0] || "STF-1"));
   const [draft, setDraft] = useState(()=>safeJsonLoad(uiStorageKey("entry_draft"), {}));
   useEffect(()=>safeJsonSave(uiStorageKey("entry_stage"), stage), [stage]);
   useEffect(()=>safeJsonSave(uiStorageKey("entry_field"), field), [field]);
   useEffect(()=>safeJsonSave(uiStorageKey("entry_date"), entryDate), [entryDate]);
   useEffect(()=>safeJsonSave(uiStorageKey("entry_reason"), reason), [reason]);
+  useEffect(()=>safeJsonSave(uiStorageKey("entry_line"), entryLine), [entryLine]);
   useEffect(()=>safeJsonSave(uiStorageKey("entry_draft"), draft), [draft]);
   useEffect(()=>{
     if (!focus?.id) return;
@@ -4147,11 +4241,10 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
       const msg = p0Rows.slice(0,5).map(x=>`${x.row.style_no}: ${p0DateViolationText(x.validation,2)}`).join("\n");
       if (!window.confirm(`P0 DATE-SEQUENCE VIOLATION\n\n${p0Rows.length} row(s) are dated before enough upstream/same-department quantity.\n\n${msg}\n\nConfirm override? These entries will save as reconcile exceptions until corrected from Register.`)) return;
     }
-    if (risk.days > 1 && !reason.trim()) { alert("Backdated entry older than normal next-day needs a reason before save."); return; }
     if (!changed.length) { alert("No new size-wise quantity entered."); return; }
     if (!confirmEntryChecks({ entryDate, changes:changed, stage, field, reason })) return;
     const override = p0Rows.length ? { validation_status:"p0_date_sequence_override", validation_scope:"p0_date_sequence_confirmed_reconcile", validation_messages:p0Rows.flatMap(x=>x.validation.dateMessages || []), requires_reconcile:true } : null;
-    const newLedger = buildLedgerRows({ changes:changed, stage, field, entryDate, reason, source:"dpr_quick_entry", validationOverride:override });
+    const newLedger = buildLedgerRows({ changes:changed, stage, field, entryDate, reason, source:"dpr_quick_entry", line: stage === "stitching" ? entryLine : "", validationOverride:override });
     const sharedResult = await saveLedgerToSupabase(newLedger, field);
     if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
       const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
@@ -4169,7 +4262,7 @@ Save locally in this browser anyway? Other users will not see it until Supabase 
   const totals = entryContextTotals(activeRows, stage, field);
   const remainingAfter = Math.max(0, totalOpenForField - totalNewEntry);
   return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">DPR Quick Entry — Open Styles Only</h3><div className="mt-panel-sub">Select date, department and entry field. The sheet shows only rows with open quantity for that exact action. Enter new quantity by size; updated totals are shown only for cross-check.</div></div>
-    <div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-toolbar-label">Entry Date</span><input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /><span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span><span className="mt-toolbar-label">Dept</span><select className="mt-select" value={stage} onChange={e=>{setStage(e.target.value); setDraft({});}}>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select><span className="mt-toolbar-label">Entry Field</span><select className="mt-select" value={field} onChange={e=>{setField(e.target.value); setDraft({});}}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>{risk.days>1 && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate reason required" style={{minWidth:240}}/>}<button className="mt-btn" onClick={fillAllOpen}>Auto-fill all open</button><button className="mt-btn primary" onClick={save}><CheckCircle2 size={14}/>Save Day Entry</button></div><div className="mt-ram-action-bar"><span className="mt-toolbar-label">R/A/M closure rows</span>{RAM_ENTRY_FIELDS.map(f=><button key={f.key} className={`mt-btn ghost ${field===f.key?"active":""}`} onClick={()=>{setField(f.key); setDraft({});}}>{f.label}</button>)}<span className="mt-small">Rejection / Missing / Alter are not in the main dropdown; use these rows when closing/explaining balance.</span></div>{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated entries are validated as-of the selected date and stamped manager-approval-required; explicit approval confirmation is required before save.</div>}
+    <div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-toolbar-label">Entry Date</span><input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /><span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span><span className="mt-toolbar-label">Dept</span><select className="mt-select" value={stage} onChange={e=>{setStage(e.target.value); setDraft({});}}>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select><span className="mt-toolbar-label">Entry Field</span><select className="mt-select" value={field} onChange={e=>{setField(e.target.value); setDraft({});}}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>{stage === "stitching" && <><span className="mt-toolbar-label">Line</span><select className="mt-select" value={entryLine} onChange={e=>setEntryLine(e.target.value)}>{productionLineNames().map(l=><option key={l} value={l}>{l}</option>)}</select><span className="mt-chip mt-info">line-wise performance</span></>}{risk.days>1 && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate reason optional/report flag" style={{minWidth:240}}/>}<button className="mt-btn" onClick={fillAllOpen}>Auto-fill all open</button><button className="mt-btn primary" onClick={save}><CheckCircle2 size={14}/>Save Day Entry</button></div><div className="mt-ram-action-bar"><span className="mt-toolbar-label">R/A/M closure rows</span>{RAM_ENTRY_FIELDS.map(f=><button key={f.key} className={`mt-btn ghost ${field===f.key?"active":""}`} onClick={()=>{setField(f.key); setDraft({});}}>{f.label}</button>)}<span className="mt-small">Rejection / Missing / Alter are not in the main dropdown; use these rows when closing/explaining balance.</span></div>{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated entries are report flags only. Quantity/feed/P0 sequence clashes still appear in Reconcile Review.</div>}
     <div className="mt-entry-hero" style={{marginTop:10}}><div className="mt-entry-hero-title"><span>{entryDate}</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-chip mt-warn">{fieldLabel(field)}</span><span className="mt-chip mt-muted">{activeRows.length} open rows</span></div><div className="mt-entry-hero-sub">{fieldHelp(field)} Showing only styles where this action still has open quantity. Normal entry is positive/new quantity only; reductions go to approval.</div><div className="mt-mandatory-note"><AlertTriangle size={14}/> Mandatory entry context: confirm Date, Dept and Action before saving. Highlighted cells are open quantities.</div></div>
     <div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">Available / source</div><div className="value">{fmt(totals.available)}</div><div className="note">previous dept or feed</div></div><div className="mt-entry-metric"><div className="label">Already entered</div><div className="value">{fmt(totals.previous)}</div><div className="note">same field before entry</div></div><div className="mt-entry-metric"><div className="label">Open now</div><div className="value">{fmt(totalOpenForField)}</div><div className="note">only shown rows</div></div><div className="mt-entry-metric"><div className="label">New entry</div><div className="value">{fmt(totalNewEntry)}</div><div className="note">selected date</div></div><div className="mt-entry-metric"><div className="label">Cumulative after</div><div className="value">{fmt(totals.previous + totalNewEntry)}</div><div className="note">{fmt(totals.previous + totalNewEntry)} / {fmt(totals.available)} total</div></div><div className="mt-entry-metric"><div className="label">Remaining after</div><div className="value">{fmt(remainingAfter)}</div><div className="note">after save</div></div></div></div>
     <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Open Style / Order</th><th>Open Qty</th>{allSizes.map(sz=><th key={sz}>{sz}</th>)}<th>New Entry</th><th>Remaining</th><th>Save Status</th></tr></thead><tbody>{activeRows.length ? activeRows.map(row=>{ const sizes = sizesFor(row); const v=validate(row); const ctx=entryFieldContext(row,stage,field); const rowNew=v.entryTotal; const rowRemaining=Math.max(0,n(ctx.open)-rowNew); return <tr key={row.id}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{(()=>{ const ov=sizeVarianceInfo(row.order_qty, normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row))); return ov.diff!==0 ? <div className={`mt-chip ${statusClass(ov.tone)}`} style={{marginTop:4}}>{ov.text}</div> : null; })()}<div className="mt-entry-row-actions"><button className="mt-btn" onClick={()=>fillRowOpen(row)}>Fill row open</button><button className="mt-btn ghost" onClick={()=>clearRow(row)}>Clear</button></div></div></div></td><td><div className="mt-open-big">{fmt(ctx.open)}</div><div className="mt-small">{ctx.openLabel}</div><div className="mt-small">{ctx.availableLabel}: {fmt(ctx.available)}</div></td>{allSizes.map(sz=> sizes.includes(sz) ? <td key={sz} className="mt-entry-size-cell">{(()=>{ const szCtx=entryFieldSizeContext(row,stage,field,sz); const entry=n(getVal(row,sz)); const remain=Math.max(0,n(szCtx.open)-entry); return <><div className="mt-entry-size-open">Open <b>{fmt(szCtx.open)}</b><br/>Prev {fmt(szCtx.previous)} · Avl {fmt(szCtx.available)}</div><input className={`mt-cell-input ${n(szCtx.open)>0?"mandatory":""} ${draft[`${row.id}|${sz}`]!==undefined?"dirty":""} ${v.blocked?"blocked":""}`} value={getVal(row,sz)} onChange={e=>setVal(row,sz,e.target.value)} placeholder="0" /><div className={`mt-entry-remain ${entry?"warn":""}`}>Rem {fmt(remain)}</div></>; })()}</td> : <td key={sz} className="mt-small">—</td>)}<td><b>{fmt(rowNew)}</b></td><td><b>{fmt(rowRemaining)}</b><div className="mt-small">cumulative after {fmt(v.updatedTotal)} / {fmt(ctx.available)}</div></td><td>{v.blocked ? <span className="mt-chip mt-late">Blocked</span> : v.overCut ? <span className="mt-chip mt-purple">Extra cut warning</span> : v.entryTotal ? <span className="mt-chip mt-warn">Ready to save</span> : <span className="mt-chip mt-ok">OK</span>}<div className="mt-small">{v.messages?.join("; ") || "Positive day entry only"}</div></td></tr>;}) : <tr><td colSpan={allSizes.length+5} style={{padding:18}}>No open styles for {stageLabel(stage)} · {fieldLabel(field)} in the current filter.</td></tr>}</tbody></table></div>
@@ -4739,7 +4832,7 @@ function reviewBuckets(rows, ledger=[], planRows=[]){
   });
   const risky = riskyLedger.filter(e=>e.is_backdated || e.backdate_reason || e.approval_status || e.validation_snapshot?.backdate_reason || String(e.validation_status || e.validation_snapshot?.validation_status || "").includes("p0_date_sequence")).map(e=>{
     const qtyVal = e.qty ?? e.delta;
-    return { Entry_Date:e.entry_date, Created_At:e.created_at, User:e.changed_by || e.created_by || e.validation_snapshot?.changed_by || "—", Dept:stageLabel(e.stage), Style:e.style_no || e.style, Size:e.size || "Total", Qty:qtyVal, Reason:e.backdate_reason || e.validation_snapshot?.backdate_reason || "", Approval:e.approval_status || e.validation_snapshot?.approval_status || e.validation_status || e.validation_snapshot?.validation_status || "" };
+    return { Entry_Date:e.entry_date, Created_At:e.created_at, User:e.changed_by || e.created_by || e.validation_snapshot?.changed_by || "—", Dept:stageLabel(e.stage), Line:e.line || e.stitching_line || "", Style:e.style_no || e.style, Size:e.size || "Total", Qty:qtyVal, Reason:e.backdate_reason || e.validation_snapshot?.backdate_reason || "", Flag:e.approval_status || e.validation_snapshot?.approval_status || e.validation_status || e.validation_snapshot?.validation_status || "date_flag_report_only" };
   });
   return { ready, cannotClose, reconcile, ram, risky, planDev:planDeviationRows(planRows, rows, ledger) };
 }
@@ -6103,7 +6196,7 @@ function ReviewView({ rows, ledger, planRows }){
     cannotClose:{ title:"Cannot Close — Open Balance", sub:"Main daily closure pain list. Department has unexplained/open balance; coordinator follows until explained/closed.", rows:rb.cannotClose },
     reconcile:{ title:"Reconcile Review", sub:"Impossible sequences or total jumps. These are data-integrity blockers, not normal WIP.", rows:rb.reconcile },
     ram:{ title:"Reject / Alter / Missing Review", sub:"Quality/loss/recovery control. Main list is horizontal/summary; reason breakup comes next.", rows:rb.ram },
-    risky:{ title:"Backdated / Risky Entry Review", sub:"Entry date is production activity date; created_at is actual typing time. Same-day/old backdated/corrections are reviewed here.", rows:rb.risky },
+    risky:{ title:"Backdate / Same-Day Entry Report", sub:"Date-only backdate/same-day entries are monitor flags, not approval blockers. P0 feed/sequence clashes stay in Reconcile Review.", rows:rb.risky },
     planDev:{ title:"Plan Deviation Review", sub:"Catches shortfalls and planned difficult styles being replaced by easier/unplanned output.", rows:rb.planDev },
   };
   const active = sectionMap[section];
@@ -7084,15 +7177,15 @@ function styleTemplateRows(){
   const allSizes = Array.from(new Set(Object.values(getSizeSets()).flat())).slice(0,40);
   const blankSizeCols = Object.fromEntries(allSizes.map(size=>[`Size ${size}`, ""]));
   return [
-    { Action:"ADD_UPDATE", "Order No":"SO/25-26/100", "Style No":"STYLE-001", Buyer:"VMM", Colour:"BLACK", Component:"TOP", "Order Qty":1200, "Size Set":"alpha", "Size Ratio":"1:2:3:3:2:1", ...blankSizeCols, "Size XS":100, "Size S":200, "Size M":300, "Size L":300, "Size XL":200, "Size XXL":100, "Set ID":"", "Planning Line Override":"", "Print Required":"No", "Embroidery Required":"No", Priority:"Normal", Difficulty:"Normal", "Photo URL":"", "OneDrive Folder URL":"" },
-    { Action:"ADD_UPDATE", "Order No":"SO/25-26/101", "Style No":"KIDS-001", Buyer:"HOPSCOTCH", Colour:"PINK", Component:"TOP", "Order Qty":400, "Size Set":"kids", "Size Ratio":"1:1:1:1:1:0", ...blankSizeCols, "Size 2-3Y":80, "Size 3-4Y":80, "Size 4-5Y":80, "Size 5-6Y":80, "Size 7-8Y":80, "Order Size Breakup":"", "Set ID":"", "Planning Line Override":"", "Print Required":"No", "Embroidery Required":"Yes", Priority:"Normal", Difficulty:"Normal", "Photo URL":"", "OneDrive Folder URL":"" },
-    { Action:"HARD_DELETE", "Order No":"SO/25-26/OLD", "Style No":"WRONG-STYLE", Buyer:"", Colour:"BLACK", Component:"TOP", "Order Qty":"", "Size Set":"", "Size Ratio":"", ...blankSizeCols, "Order Size Breakup":"", "Set ID":"", "Planning Line Override":"", "Print Required":"", "Embroidery Required":"", Priority:"", Difficulty:"", "Photo URL":"", "OneDrive Folder URL":"" },
+    { Action:"ADD_UPDATE", "Order No":"SO/25-26/100", "Style No":"STYLE-001", Buyer:"VMM", Colour:"BLACK", Component:"TOP", "Order Qty":1200, "File Released Qty":1200, "File Released Date":"", "Set Piece Count":"", "Size Set":"alpha", "Size Ratio":"1:2:3:3:2:1", ...blankSizeCols, "Size XS":100, "Size S":200, "Size M":300, "Size L":300, "Size XL":200, "Size XXL":100, "Set ID":"", "Planning Line Override":"", "Print Required":"No", "Embroidery Required":"No", Priority:"Normal", Difficulty:"Normal", "Photo URL":"", "OneDrive Folder URL":"" },
+    { Action:"ADD_UPDATE", "Order No":"SO/25-26/101", "Style No":"KIDS-001", Buyer:"HOPSCOTCH", Colour:"PINK", Component:"TOP", "Order Qty":400, "File Released Qty":400, "File Released Date":"", "Set Piece Count":"", "Size Set":"kids", "Size Ratio":"1:1:1:1:1:0", ...blankSizeCols, "Size 2-3Y":80, "Size 3-4Y":80, "Size 4-5Y":80, "Size 5-6Y":80, "Size 7-8Y":80, "Order Size Breakup":"", "Set ID":"", "Planning Line Override":"", "Print Required":"No", "Embroidery Required":"Yes", Priority:"Normal", Difficulty:"Normal", "Photo URL":"", "OneDrive Folder URL":"" },
+    { Action:"HARD_DELETE", "Order No":"SO/25-26/OLD", "Style No":"WRONG-STYLE", Buyer:"", Colour:"BLACK", Component:"TOP", "Order Qty":"", "File Released Qty":"", "File Released Date":"", "Set Piece Count":"", "Size Set":"", "Size Ratio":"", ...blankSizeCols, "Order Size Breakup":"", "Set ID":"", "Planning Line Override":"", "Print Required":"", "Embroidery Required":"", Priority:"", Difficulty:"", "Photo URL":"", "OneDrive Folder URL":"" },
   ];
 }
 
 function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0, onSharedSave }){
   const emptyForm = {
-    id:"", order_no:"", style_no:"", buyer:"", colour:"", component:"", set_components:"", order_qty:"", order_size_qty:{}, size_set:"alpha", size_ratio:"", set_id:"", line:"", dispatch_reject_allowed:false,
+    id:"", order_no:"", style_no:"", buyer:"", colour:"", component:"", set_components:"", set_piece_count:"", order_qty:"", file_released_qty:"", file_released_date:"", order_size_qty:{}, size_set:"alpha", size_ratio:"", set_id:"", line:"", dispatch_reject_allowed:false,
     print_required:false, embroidery_required:false, priority:"Normal", difficulty:"Normal", photo_url:"", photo_folder_url:""
   };
   const [form,setForm] = useState(emptyForm);
@@ -7151,7 +7244,7 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0, 
   }
   function edit(row){
     setForm({
-      id:row.id || "", order_no:row.order_no || "", style_no:row.style_no || "", buyer:row.buyer || "", colour:row.colour || "", component:row.component || "", order_qty:String(n(row.order_qty)||""),
+      id:row.id || "", order_no:row.order_no || "", style_no:row.style_no || "", buyer:row.buyer || "", colour:row.colour || "", component:row.component || "", order_qty:String(n(row.order_qty)||""), file_released_qty:String(n(row.file_released_qty || row.production_file_released_qty || row.cutting_file_released_qty)||""), file_released_date:row.file_released_date || row.production_file_released_date || row.cutting_file_released_date || "", set_piece_count:row.set_piece_count || "",
       order_size_qty:normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row)),
       size_set:row.size_set || "alpha", size_ratio:row.size_ratio || "", set_id:row.set_id || "", line:row.line || "",
       print_required:!!row.print_required, embroidery_required:!!row.embroidery_required, priority:row.priority || "Normal", difficulty:row.difficulty || "Normal",
@@ -7178,6 +7271,9 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0, 
       size_ratio:String(form.size_ratio||"").trim().toUpperCase(),
       line:String(form.line||"").trim(),
       order_qty:n(form.order_qty),
+      file_released_qty:n(form.file_released_qty),
+      file_released_date:String(form.file_released_date||"").trim(),
+      set_piece_count:n(form.set_piece_count),
       order_size_qty:cleanSizeQty,
       photo_thumb_url:form.photo_url || ""
     };
@@ -7197,7 +7293,7 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0, 
       if (!componentList.includes(clean.component)) componentList.unshift(clean.component);
       componentList = Array.from(new Set(componentList));
       if (componentList.length < 2) {
-        setMsg({ tone:"late", text:"Set entry requires all components in one go. Enter components like TOP, BOTTOM in Set components." });
+        setMsg({ tone:"late", text:"Set entry requires all components in one go. Enter components like TOP, BOTTOM, JACKET, ACCESSORY in Set components." });
         return;
       }
     }
@@ -7418,8 +7514,9 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
         <div className="mt-two"><div><label className="mt-small">Buyer / Brand *</label><input className="mt-input" value={form.buyer} onChange={e=>setField("buyer",e.target.value.toUpperCase())}/></div><div><label className="mt-small">Order Qty *</label><input className="mt-input" value={form.order_qty} onChange={e=>setField("order_qty",e.target.value.replace(/[^0-9]/g,""))}/></div></div>
         <div className="mt-two"><div><label className="mt-small">Colour *</label><input className="mt-input" value={form.colour} onChange={e=>setField("colour",e.target.value.toUpperCase())}/></div><div><label className="mt-small">Component *</label><input className="mt-input" value={form.component} onChange={e=>setField("component",e.target.value.toUpperCase())}/></div></div>
         <div className="mt-two"><div><label className="mt-small">Size Set</label><select className="mt-select" value={form.size_set} onChange={e=>setField("size_set",e.target.value)}>{Object.entries(getSizeSets()).map(([k,arr])=><option key={k} value={k}>{k} · {arr.join(" / ")}</option>)}</select></div><div><label className="mt-small">Set ID</label><div style={{display:"flex", gap:6}}><input className="mt-input" style={{flex:1}} value={form.set_id} onChange={e=>setField("set_id",e.target.value.toUpperCase())} placeholder="Optional, TOP/BOTTOM set matching"/><button className="mt-btn ghost" type="button" onClick={()=>setField("set_id", suggestSetIdFor(form, allRows))}>Suggest</button></div>{duplicateSetId ? <div className="mt-small" style={{color:"var(--fg-warn)", fontWeight:800}}>Same Set ID exists on {naturalKeyLabel(duplicateSetId)}. Use same ID only for real set components.</div> : <div className="mt-small">System can suggest a clean Set ID so unrelated duplicates are avoided.</div>}</div></div>
-        {!editing && String(form.set_id||"").trim() ? <div className="mt-order-size-card"><b>Set components — create together</b><div className="mt-small">Because this is a set, enter all components in one go so TOP/BOTTOM pieces do not get missed. Example: TOP, BOTTOM.</div><input className="mt-input" style={{width:"100%", marginTop:6}} value={form.set_components || ""} onChange={e=>setField("set_components", e.target.value.toUpperCase())} placeholder="TOP, BOTTOM"/><div className="mt-small">Add Style will create/update one row per component using the same Order Qty, size breakup, route and Set ID.</div></div> : null}
+        {!editing && String(form.set_id||"").trim() ? <div className="mt-order-size-card"><b>Set components — create together</b><div className="mt-small">Because this is a set, enter all components in one go so TOP/BOTTOM pieces do not get missed. Example: TOP, BOTTOM, JACKET, ACCESSORY.</div><input className="mt-input" style={{width:"100%", marginTop:6}} value={form.set_components || ""} onChange={e=>setField("set_components", e.target.value.toUpperCase())} placeholder="TOP, BOTTOM, JACKET, ACCESSORY"/><div className="mt-small">Add Style will create/update one row per component using same Order Qty/size breakup/Set ID. After creation, set Print/Embroidery per component in Routes.</div></div> : null}
         <div className="mt-order-size-card"><div style={{display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center"}}><div><b>Order Size Breakup</b><div className="mt-small">Order Qty is master. Size entries subtract from it; missing balance is shown instead of changing Order Qty.</div></div><div style={{display:"flex", gap:6, flexWrap:"wrap"}}><span className={`mt-chip ${statusClass(formSizeVariance.tone)}`}>{formSizeVariance.text}</span><span className="mt-chip mt-muted">Size total {fmt(formSizeTotal)} / Order {fmt(form.order_qty)}</span><button className="mt-btn ghost" type="button" onClick={distributeFormOrderQty}>Distribute Order Qty</button><button className="mt-btn ghost" type="button" onClick={clearFormOrderSizes}>Clear Sizes</button></div></div><div className="mt-backdate-box" style={{alignItems:"flex-end"}}><div style={{minWidth:220, flex:"1 1 260px"}}><label className="mt-small">Size ratio</label><input className="mt-input" style={{width:"100%"}} value={form.size_ratio || ""} onChange={e=>setField("size_ratio", e.target.value.toUpperCase())} placeholder={`Example: ${(formSizes||[]).map((_,i)=>i===0||i===formSizes.length-1?1:2).join(":")}`} /></div><button className="mt-btn" type="button" onClick={applyFormSizeRatio}>Apply Ratio</button><button className="mt-btn ghost" type="button" onClick={useCurrentSizesAsRatio}>Use current sizes as ratio</button><span className="mt-chip mt-info">{form.size_ratio ? ratioSummaryText(form.size_ratio, formSizes) : "Ratio optional"}</span><div className="mt-small" style={{width:"100%"}}>Use simple ratio by size order, e.g. 1:2:3:3:2:1, or named ratio like XS=1,S=2,M=3. Apply ratio fills size quantities from Order Qty; manual size edits still win after that.</div></div><div className="mt-order-size-row">{formSizes.map(size=><div className="mt-order-size-cell" key={size}><label>{size}</label><input className="mt-cell-input" style={{width:"100%"}} value={formOrderSizeQty[size] || ""} onChange={e=>setOrderSizeQty(size,e.target.value)} placeholder="0" /></div>)}</div><div className="mt-small">Bulk Excel also accepts a Size Ratio column. Order Qty is mandatory; upload summary warns if size breakup is short/excess.</div></div>
+        <div className="mt-two"><div><label className="mt-small">File released to Cutting qty</label><input className="mt-input" type="number" value={form.file_released_qty || ""} onChange={e=>setField("file_released_qty", e.target.value)} placeholder="Blank = use order qty"/><div className="mt-small">Order can exist before Cutting starts. This is cutting permission/release qty.</div></div><div><label className="mt-small">File released date</label><input className="mt-input" type="date" value={form.file_released_date || ""} onChange={e=>setField("file_released_date", e.target.value)} /></div></div>
         <div className="mt-two"><div><label className="mt-small">Planning line override</label><select className="mt-select" value={form.line} onChange={e=>setField("line",e.target.value)}><option value="">Not fixed — decide in Planning</option>{productionLineNames().map(l=><option key={l} value={l}>{l}</option>)}</select><div className="mt-small">Stitching line is normally decided later in Planning, not locked in Style Master.</div></div><div><label className="mt-small">Priority</label><select className="mt-select" value={form.priority} onChange={e=>setField("priority",e.target.value)}>{["Low","Normal","High","Urgent"].map(x=><option key={x}>{x}</option>)}</select></div></div>
         <div className="mt-two"><label className="mt-small"><input type="checkbox" checked={!!form.print_required} onChange={e=>setField("print_required",e.target.checked)}/> Print required</label><label className="mt-small"><input type="checkbox" checked={!!form.embroidery_required} onChange={e=>setField("embroidery_required",e.target.checked)}/> Embroidery required</label></div>
         <label className="mt-small"><input type="checkbox" checked={!!form.dispatch_reject_allowed} onChange={e=>setField("dispatch_reject_allowed",e.target.checked)}/> Allow rejection dispatch for this order/style only</label>
@@ -7440,7 +7537,7 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
     </div>
     <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Style List / Edit / Hard Delete</h3><div className="mt-panel-sub">Search, edit, delete unused rows, or hard delete demo rows with activity. For live production, hard delete should be replaced by archive/approval governance.</div></div>
       <div className="mt-section no-print"><div className="mt-toolbar"><Search size={14}/><input className="mt-input" value={q} onChange={e=>setQ(e.target.value)} placeholder="Search order / style / buyer / colour"/><span className="mt-chip mt-muted">{tableRows.length} rows</span></div></div>
-      <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style</th><th>Order</th><th>Buyer</th><th>Colour</th><th>Component</th><th>Qty</th><th>Route</th><th>Activity</th><th>Action</th></tr></thead><tbody>{tableRows.map(row=>{ const hasLedger=(ledger||[]).some(x=>ledgerRowMatchesStyle(x,row)); const hasActivity=styleHasStageActivity(row)||hasLedger; return <tr key={row.id}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.set_id ? `Set ${row.set_id} · ` : ""}{row.size_set}{row.size_ratio ? ` · Ratio ${row.size_ratio}` : ""}</div></div></div></td><td>{row.order_no}</td><td>{row.buyer}</td><td>{row.colour}</td><td>{row.component}</td><td><b>{fmt(row.order_qty)}</b><div className="mt-small">{explicitOrderSizeQtyTotal(row) ? sizesFor(row).map(sz=>`${sz} ${fmt(normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row))[sz]||0)}`).join(" · ") : <span style={{color:"var(--fg-warn)", fontWeight:800}}>Size breakup missing</span>}</div></td><td>{routeFor(row).map(stageLabel).join(" → ")}</td><td>{hasActivity ? <span className="mt-chip mt-warn">Has activity</span> : <span className="mt-chip mt-ok">Unused</span>}</td><td><button className="mt-btn" onClick={()=>edit(row)}>Edit</button> <button className="mt-btn ghost" disabled={busy} onClick={()=>remove(row)}>{hasActivity ? "Hard Delete" : "Delete"}</button>{hasActivity && <div className="mt-small">Demo cleanup only; removes matching ledger locally.</div>}</td></tr>; })}</tbody></table></div>
+      <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style</th><th>Order</th><th>Buyer</th><th>Colour</th><th>Component</th><th>Qty</th><th>Route</th><th>Activity</th><th>Action</th></tr></thead><tbody>{tableRows.map(row=>{ const hasLedger=(ledger||[]).some(x=>ledgerRowMatchesStyle(x,row)); const hasActivity=styleHasStageActivity(row)||hasLedger; return <tr key={row.id}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.set_id ? `Set ${row.set_id} · ` : ""}{row.size_set}{row.size_ratio ? ` · Ratio ${row.size_ratio}` : ""}</div></div></div></td><td>{row.order_no}</td><td>{row.buyer}</td><td>{row.colour}</td><td>{row.component}</td><td><b>{fmt(row.order_qty)}</b><div className="mt-small">{fileReleaseStatusText(row)}</div><div className="mt-small">{explicitOrderSizeQtyTotal(row) ? sizesFor(row).map(sz=>`${sz} ${fmt(normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row))[sz]||0)}`).join(" · ") : <span style={{color:"var(--fg-warn)", fontWeight:800}}>Size breakup missing</span>}</div></td><td>{routeFor(row).map(stageLabel).join(" → ")}</td><td>{hasActivity ? <span className="mt-chip mt-warn">Has activity</span> : <span className="mt-chip mt-ok">Unused</span>}</td><td><button className="mt-btn" onClick={()=>edit(row)}>Edit</button> <button className="mt-btn ghost" disabled={busy} onClick={()=>remove(row)}>{hasActivity ? "Hard Delete" : "Delete"}</button>{hasActivity && <div className="mt-small">Demo cleanup only; removes matching ledger locally.</div>}</td></tr>; })}</tbody></table></div>
     </div>
   </div>;
 }
@@ -7972,7 +8069,7 @@ export default function App(){
         <main className="mt-main-area">
       <PageFilters tab={tab} query={query} setQuery={setQuery} buyer={buyer} setBuyer={setBuyer} buyers={buyers} order={order} setOrder={setOrder} orders={orders} visibleRows={visibleRows}/>
       <div className="mt-keepalive-note slim no-print"><span className="mt-chip mt-info">Remembered tab/draft</span><span className="mt-small">This browser remembers your tab/drafts. Saved production data is shared through Supabase and refreshes by realtime/polling.</span></div>
-      <div className="mt-tab-panel" style={{display:tab==="dashboard"?"block":"none"}} aria-hidden={tab!=="dashboard"}><Dashboard rows={visibleRows} ledger={ledger} onDrill={setDashboardDrill} clearTick={clearFiltersTick}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="dashboard"?"block":"none"}} aria-hidden={tab!=="dashboard"}><Dashboard rows={visibleRows} ledger={ledger} planRows={planRows} onDrill={setDashboardDrill} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="manager"?"block":"none"}} aria-hidden={tab!=="manager"}><ManagerActionCenter rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} ledger={ledger} onPlanUpsert={savePlanRowShared}/></div>
       <div className="mt-tab-panel" style={{display:tab==="planning"?"block":"none"}} aria-hidden={tab!=="planning"}><PlanningView rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} setRows={setRows} ledger={ledger} onPlanUpsert={savePlanRowShared} onPlanDelete={deletePlanCellShared} planSaveState={planSaveState}/></div>
       <div className="mt-tab-panel" style={{display:tab==="wip"?"block":"none"}} aria-hidden={tab!=="wip"}><WipStatus rows={visibleRows} onOpen={(row,stage)=>setDrawer({row,stage})} onEntry={openEntryFromWip} clearTick={clearFiltersTick}/></div>
