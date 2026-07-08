@@ -6162,16 +6162,19 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
                 const need = has && planStyleText(p) ? planNeedBreakdown({ ...p, changeover:effChange }, rows, planRows, activeDept, line, day, ledger) : null;
                 const chInfo = has && effChange ? changeoverHoursInfo(line, day, slotNo, p) : null;
                 const actualInfo = has ? cellActualInfo(p) : null;
+                const liveOpen = has && linked ? n(entryFieldContext(linked, activeDept, "output").open) : null;
+                const overOpen = has && liveOpen !== null ? Math.max(0, n(p.planned_qty) - liveOpen) : 0;
                 const daySummary = slotNo === 1 ? lineDayHoursSummary(line, day) : null;
                 const tone = need?.afterThisSlot < 0 ? "late" : need?.projectedFeed > 0 && need?.availableForThisSlot >= n(p.planned_qty) ? "warn" : has ? "ok" : "empty";
                 return <td key={`${line}-${day}-${slotNo}`} className={`compact-plan-cell ${tone} ${effChange ? "changeover" : ""}`}>
                   <button className="compact-plan-cell-btn" onClick={()=>{ setEditCell({ line, day, slotNo }); setEditorAutoOpen(false); }}>
                     {has ? <>
                       <div className="c-style">{planStyleText(p)}{p.cover_recovery_slot ? <span className="mt-chip mt-purple" style={{marginLeft:5}}>Cover</span> : null}</div>
-                      <div className="c-brand">{p.buyer || linked?.buyer || ""}</div>
+                      <div className="c-brand">{p.buyer || linked?.buyer || ""}{(linked?.colour || linked?.component) ? ` · ${[linked?.colour, linked?.component].filter(Boolean).join(" ")}` : ""}</div>
                       <div className="c-metrics"><b>{fmt(n(p.planned_qty))}</b><span>{fmt(n(p.ops))} ops</span></div>
                       <div className="c-note">{cellTinyText(p) || (effChange ? "changeover" : "")}</div>
                       {actualInfo && <div className={`c-ready ${actualInfo.tone}`}>Actual {fmt(actualInfo.achieved)} / Plan {fmt(actualInfo.planned)}{actualInfo.done ? " · done" : ""}</div>}
+                      {overOpen > 0 && <div className="c-ready late">Plan qty is {fmt(overOpen)} more than what's actually still open now — re-check/re-cascade.</div>}
                       {need && <div className={`c-ready ${planLoadReadyInfo({ ...p, changeover:effChange }, rows, planRows, activeDept, line, day, ledger).tone}`}>Load: {planLoadReadyShort({ ...p, changeover:effChange }, rows, planRows, activeDept, line, day, ledger)}</div>}
                       {effChange && chInfo && <div className="c-changeover">Changeover · <span className="lost">Lost {fmt(chInfo.lost)}h</span> · <span className="left">{fmt(chInfo.productive)}h production</span> · <span className="free">{fmt(chInfo.after)}h free</span></div>}
                       {showTargets && <div className="c-auto">{effChange ? "CO" : "100%"} · {fmt(planHours(p))}h · auto {fmt(planAutoQtyFromTarget({ ...p, changeover:effChange }))}</div>}
@@ -6187,7 +6190,8 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
       </table>
     </div>
     {editCell && editor && <div className="mt-plan-editor-backdrop" onClick={()=>setEditCell(null)}><div className="mt-plan-editor" onClick={e=>e.stopPropagation()}>
-      <div className="mt-plan-editor-head"><div><b>{editCell.line} · {shortDayLabel(editCell.day)}</b><span>Slot {editCell.slotNo}</span></div><button className="mt-btn" onClick={()=>setEditCell(null)}><X size={14}/></button></div>
+      <div className="mt-plan-editor-head"><div><b>{editCell.line} · {shortDayLabel(editCell.day)}</b><span>Slot {editCell.slotNo}{editorLinked ? ` · ${[editorLinked.colour, editorLinked.component].filter(Boolean).join(" · ")}` : ""}</span></div><button className="mt-btn" onClick={()=>setEditCell(null)}><X size={14}/></button></div>
+      {(() => { const liveOpen = editorLinked ? n(entryFieldContext(editorLinked, activeDept, "output").open) : null; const over = liveOpen !== null ? Math.max(0, n(editor?.planned_qty) - liveOpen) : 0; return liveOpen !== null ? <div className={`mt-plan-actual-sync ${over>0?"warn":"ok"}`}><div><b>Currently open in {stageLabel(activeDept)}:</b> {fmt(liveOpen)} pcs{over>0 ? <span className="mt-small"> — this cell plans {fmt(over)} more than that. It was likely cascaded before recent actuals came in; re-run Auto fill cascade to true it up.</span> : <span className="mt-small"> — this cell's qty fits within what's actually still open.</span>}</div></div> : null; })()}
       <div className="mt-plan-editor-body">
         <div className="mt-editor-fields-grid">
           <div className="mt-plan-field wide"><label>Style</label><input className="style-input" list={datalistId} value={planStyleText(editor)} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{style_input:e.target.value})} placeholder="TYPE / PICK STYLE" autoFocus/></div>
