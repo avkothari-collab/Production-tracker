@@ -242,6 +242,11 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-entry-size-open b { color:var(--ink); font-size:11px; }
 .mt-entry-remain { margin-top:3px; font-size:9px; color:var(--muted-2); }
 .mt-entry-remain.warn { color:var(--fg-warn); font-weight:800; }
+.mt-cell-input.today-entered { background:#eaf2ff; border-color:#3a72c4; }
+.mt-today-badge { display:inline-block; font-size:9px; font-weight:800; color:#2255a4; background:#eaf2ff; border:1px solid #b9d3f5; border-radius:6px; padding:1px 5px; margin-top:4px; }
+.mt-entry-summary { display:flex; flex-wrap:wrap; gap:14px; align-items:center; border:1px solid var(--line-2); background:var(--surface); border-radius:12px; padding:10px 12px; margin:10px 0; font-size:11.5px; }
+.mt-entry-summary b { font-family:'Archivo',sans-serif; font-size:15px; }
+.mt-entry-summary .sep { color:var(--muted-2); }
 .mt-entry-row-actions { display:flex; gap:5px; flex-wrap:wrap; margin-top:6px; }
 .mt-compact-wip-table td { padding:10px 8px; }
 .mt-action-pill { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--line-2); background:#fffaf1; border-radius:999px; padding:4px 8px; font-size:9.5px; font-weight:800; }
@@ -4207,6 +4212,8 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
   const [reason, setReason] = useState(()=>safeJsonLoad(uiStorageKey("entry_reason"), ""));
   const [entryLine, setEntryLine] = useState(()=>safeJsonLoad(uiStorageKey("entry_line"), productionLineNames()[0] || "STF-1"));
   const [draft, setDraft] = useState(()=>safeJsonLoad(uiStorageKey("entry_draft"), {}));
+  const [correctRowId, setCorrectRowId] = useState(null);
+  const [correctDraft, setCorrectDraft] = useState({});
   useEffect(()=>safeJsonSave(uiStorageKey("entry_stage"), stage), [stage]);
   useEffect(()=>safeJsonSave(uiStorageKey("entry_field"), field), [field]);
   useEffect(()=>safeJsonSave(uiStorageKey("entry_date"), entryDate), [entryDate]);
@@ -4219,14 +4226,37 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
     setField(focus.field || "output");
     setDraft({});
   }, [focus?.id]);
+  useEffect(()=>{ setCorrectRowId(null); setCorrectDraft({}); }, [entryDate, stage, field]);
+
   const allStageRows = rows.filter(r => routeFor(r).includes(stage));
   const activeRows = allStageRows.filter(r => entryOpenQty(r, stage, field) > 0);
+
+  function todayEntryMap(row){
+    const matchType = String(entryTypeForField(field)).toLowerCase();
+    const sizes = {};
+    let total = 0;
+    (ledger || []).forEach(e=>{
+      if (!ledgerMatchesRow(e, row)) return;
+      if (ledgerStage(e) !== stage) return;
+      if (ledgerDate(e) !== entryDate) return;
+      if (ledgerType(e) !== matchType) return;
+      const size = String(e.size || e.size_code || e.size_name || "").trim();
+      if (!size) return;
+      sizes[size] = n(sizes[size]) + n(e.qty ?? e.delta);
+      total += n(e.qty ?? e.delta);
+    });
+    return { sizes, total };
+  }
+
+  const activeIds = new Set(activeRows.map(r=>r.id));
+  const todayExtraRows = allStageRows.filter(r => !activeIds.has(r.id) && todayEntryMap(r).total !== 0);
+  const displayRows = [...activeRows, ...todayExtraRows];
+
   const risk = backdateRisk(entryDate);
-  const allSizes = Array.from(new Set(activeRows.flatMap(sizesFor)));
+  const allSizes = Array.from(new Set(displayRows.flatMap(sizesFor)));
   function getVal(row, size){ const key = `${row.id}|${size}`; return draft[key] !== undefined ? draft[key] : ""; }
   function setVal(row, size, val){ setDraft(d => ({ ...d, [`${row.id}|${size}`]: String(val).replace(/[^0-9]/g,"") })); }
   function validate(row){ return validateDailyEntry(row, stage, field, getVal, ledger, entryDate); }
-  function rowChanges(row){ return dailySizeRows(row, stage, field, getVal, ledger, entryDate); }
   function fillRowOpen(row){ setDraft(d=>{ const nd={...d}; sizesFor(row).forEach(sz=>{ nd[`${row.id}|${sz}`]=String(Math.max(0,n(entryFieldSizeContext(row,stage,field,sz).open))); }); return nd; }); }
   function clearRow(row){ setDraft(d=>{ const nd={...d}; sizesFor(row).forEach(sz=>delete nd[`${row.id}|${sz}`]); return nd; }); }
   function fillAllOpen(){ setDraft(d=>{ const nd={...d}; activeRows.forEach(row=>sizesFor(row).forEach(sz=>{ nd[`${row.id}|${sz}`]=String(Math.max(0,n(entryFieldSizeContext(row,stage,field,sz).open))); })); return nd; }); }
@@ -4257,15 +4287,147 @@ Save locally in this browser anyway? Other users will not see it until Supabase 
     setDraft({});
     onSharedSave?.(sharedResult, "DPR day entry");
   }
+
+  function beginCorrection(row){
+    const map = todayEntryMap(row);
+    const nd = {};
+    sizesFor(row).forEach(sz=>{ if (map.sizes[sz]) nd[`${row.id}|${sz}`] = String(map.sizes[sz]); });
+    setCorrectDraft(d=>({ ...d, ...nd }));
+    setCorrectRowId(row.id);
+  }
+  function correctVal(row, size){ const key = `${row.id}|${size}`; return correctDraft[key] !== undefined ? correctDraft[key] : ""; }
+  function setCorrectVal(row, size, val){ setCorrectDraft(d=>({ ...d, [`${row.id}|${size}`]: String(val).replace(/[^0-9]/g,"") })); }
+  async function saveCorrection(row){
+    const map = todayEntryMap(row);
+    const sizes = sizesFor(row);
+    const changes = sizes.map(size=>{
+      const oldQty = n(map.sizes[size]);
+      const raw = correctDraft[`${row.id}|${size}`];
+      const newQty = raw === undefined ? oldQty : n(raw);
+      const delta = newQty - oldQty;
+      if (!delta) return null;
+      return { row, size, oldQty, newQty, delta };
+    }).filter(Boolean);
+    if (!changes.length) { alert("No change made to today's entry."); return; }
+    const summary = changes.map(c=>`${c.size}: ${fmt(c.oldQty)} -> ${fmt(c.newQty)}`).join("\n");
+    if (!window.confirm(`Update ${entryDate} · ${stageLabel(stage)} · ${fieldLabel(field)} for ${row.style_no}?\n\n${summary}\n\nOnly the difference is saved as an audit-safe correction; the original entry stays visible in Register history.`)) return;
+    const newLedger = buildLedgerRows({ changes, stage, field, entryDate, reason: reason || "DPR quick-entry edit", source:"dpr_quick_entry_correction" });
+    const sharedResult = await saveLedgerToSupabase(newLedger, field);
+    if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
+      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
+      if (!window.confirm(`Shared Supabase save did not confirm: ${msg}\n\nSave locally in this browser anyway? Other users will not see it until Supabase is fixed/synced.`)) return;
+    }
+    const deltaMap = Object.fromEntries(changes.map(c=>[c.size, c.delta]));
+    const getValForApply = (r, size)=> n(deltaMap[size]);
+    setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:[row], stage, field, getVal:getValForApply }));
+    setLedger(prev => [...newLedger, ...prev]);
+    setCorrectRowId(null);
+    setCorrectDraft({});
+    onSharedSave?.(sharedResult, "DPR entry correction");
+  }
+
   const totalOpenForField = activeRows.reduce((a,row)=>a+entryOpenQty(row,stage,field),0);
   const totalNewEntry = activeRows.reduce((a,row)=>a+validate(row).entryTotal,0);
   const totals = entryContextTotals(activeRows, stage, field);
   const remainingAfter = Math.max(0, totalOpenForField - totalNewEntry);
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">DPR Quick Entry — Open Styles Only</h3><div className="mt-panel-sub">Select date, department and entry field. The sheet shows only rows with open quantity for that exact action. Enter new quantity by size; updated totals are shown only for cross-check.</div></div>
-    <div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-toolbar-label">Entry Date</span><input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /><span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span><span className="mt-toolbar-label">Dept</span><select className="mt-select" value={stage} onChange={e=>{setStage(e.target.value); setDraft({});}}>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select><span className="mt-toolbar-label">Entry Field</span><select className="mt-select" value={field} onChange={e=>{setField(e.target.value); setDraft({});}}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>{stage === "stitching" && <><span className="mt-toolbar-label">Line</span><select className="mt-select" value={entryLine} onChange={e=>setEntryLine(e.target.value)}>{productionLineNames().map(l=><option key={l} value={l}>{l}</option>)}</select><span className="mt-chip mt-info">line-wise performance</span></>}{risk.days>1 && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate reason optional/report flag" style={{minWidth:240}}/>}<button className="mt-btn" onClick={fillAllOpen}>Auto-fill all open</button><button className="mt-btn primary" onClick={save}><CheckCircle2 size={14}/>Save Day Entry</button></div><div className="mt-ram-action-bar"><span className="mt-toolbar-label">R/A/M closure rows</span>{RAM_ENTRY_FIELDS.map(f=><button key={f.key} className={`mt-btn ghost ${field===f.key?"active":""}`} onClick={()=>{setField(f.key); setDraft({});}}>{f.label}</button>)}<span className="mt-small">Rejection / Missing / Alter are not in the main dropdown; use these rows when closing/explaining balance.</span></div>{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated entries are report flags only. Quantity/feed/P0 sequence clashes still appear in Reconcile Review.</div>}
-    <div className="mt-entry-hero" style={{marginTop:10}}><div className="mt-entry-hero-title"><span>{entryDate}</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-chip mt-warn">{fieldLabel(field)}</span><span className="mt-chip mt-muted">{activeRows.length} open rows</span></div><div className="mt-entry-hero-sub">{fieldHelp(field)} Showing only styles where this action still has open quantity. Normal entry is positive/new quantity only; reductions go to approval.</div><div className="mt-mandatory-note"><AlertTriangle size={14}/> Mandatory entry context: confirm Date, Dept and Action before saving. Highlighted cells are open quantities.</div></div>
-    <div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">Available / source</div><div className="value">{fmt(totals.available)}</div><div className="note">previous dept or feed</div></div><div className="mt-entry-metric"><div className="label">Already entered</div><div className="value">{fmt(totals.previous)}</div><div className="note">same field before entry</div></div><div className="mt-entry-metric"><div className="label">Open now</div><div className="value">{fmt(totalOpenForField)}</div><div className="note">only shown rows</div></div><div className="mt-entry-metric"><div className="label">New entry</div><div className="value">{fmt(totalNewEntry)}</div><div className="note">selected date</div></div><div className="mt-entry-metric"><div className="label">Cumulative after</div><div className="value">{fmt(totals.previous + totalNewEntry)}</div><div className="note">{fmt(totals.previous + totalNewEntry)} / {fmt(totals.available)} total</div></div><div className="mt-entry-metric"><div className="label">Remaining after</div><div className="value">{fmt(remainingAfter)}</div><div className="note">after save</div></div></div></div>
-    <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Open Style / Order</th><th>Open Qty</th>{allSizes.map(sz=><th key={sz}>{sz}</th>)}<th>New Entry</th><th>Remaining</th><th>Save Status</th></tr></thead><tbody>{activeRows.length ? activeRows.map(row=>{ const sizes = sizesFor(row); const v=validate(row); const ctx=entryFieldContext(row,stage,field); const rowNew=v.entryTotal; const rowRemaining=Math.max(0,n(ctx.open)-rowNew); return <tr key={row.id}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{(()=>{ const ov=sizeVarianceInfo(row.order_qty, normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row))); return ov.diff!==0 ? <div className={`mt-chip ${statusClass(ov.tone)}`} style={{marginTop:4}}>{ov.text}</div> : null; })()}<div className="mt-entry-row-actions"><button className="mt-btn" onClick={()=>fillRowOpen(row)}>Fill row open</button><button className="mt-btn ghost" onClick={()=>clearRow(row)}>Clear</button></div></div></div></td><td><div className="mt-open-big">{fmt(ctx.open)}</div><div className="mt-small">{ctx.openLabel}</div><div className="mt-small">{ctx.availableLabel}: {fmt(ctx.available)}</div></td>{allSizes.map(sz=> sizes.includes(sz) ? <td key={sz} className="mt-entry-size-cell">{(()=>{ const szCtx=entryFieldSizeContext(row,stage,field,sz); const entry=n(getVal(row,sz)); const remain=Math.max(0,n(szCtx.open)-entry); return <><div className="mt-entry-size-open">Open <b>{fmt(szCtx.open)}</b><br/>Prev {fmt(szCtx.previous)} · Avl {fmt(szCtx.available)}</div><input className={`mt-cell-input ${n(szCtx.open)>0?"mandatory":""} ${draft[`${row.id}|${sz}`]!==undefined?"dirty":""} ${v.blocked?"blocked":""}`} value={getVal(row,sz)} onChange={e=>setVal(row,sz,e.target.value)} placeholder="0" /><div className={`mt-entry-remain ${entry?"warn":""}`}>Rem {fmt(remain)}</div></>; })()}</td> : <td key={sz} className="mt-small">—</td>)}<td><b>{fmt(rowNew)}</b></td><td><b>{fmt(rowRemaining)}</b><div className="mt-small">cumulative after {fmt(v.updatedTotal)} / {fmt(ctx.available)}</div></td><td>{v.blocked ? <span className="mt-chip mt-late">Blocked</span> : v.overCut ? <span className="mt-chip mt-purple">Extra cut warning</span> : v.entryTotal ? <span className="mt-chip mt-warn">Ready to save</span> : <span className="mt-chip mt-ok">OK</span>}<div className="mt-small">{v.messages?.join("; ") || "Positive day entry only"}</div></td></tr>;}) : <tr><td colSpan={allSizes.length+5} style={{padding:18}}>No open styles for {stageLabel(stage)} · {fieldLabel(field)} in the current filter.</td></tr>}</tbody></table></div>
+
+  return <div className="mt-card">
+    <div className="mt-section">
+      <h3 className="mt-panel-title">DPR Quick Entry</h3>
+      <div className="mt-panel-sub">{stageLabel(stage)} · {fieldLabel(field)} for {entryDate}. Rows already entered today stay visible, highlighted, so you can correct them right here.</div>
+    </div>
+    <div className="mt-section no-print">
+      <div className="mt-toolbar">
+        <span className="mt-toolbar-label">Date</span>
+        <input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} />
+        <span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span>
+        <span className="mt-toolbar-label">Dept</span>
+        <select className="mt-select" value={stage} onChange={e=>{setStage(e.target.value); setDraft({});}}>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>
+        <span className="mt-toolbar-label">Action</span>
+        <select className="mt-select" value={field} onChange={e=>{setField(e.target.value); setDraft({});}}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>
+        {stage === "stitching" && <><span className="mt-toolbar-label">Line</span><select className="mt-select" value={entryLine} onChange={e=>setEntryLine(e.target.value)}>{productionLineNames().map(l=><option key={l} value={l}>{l}</option>)}</select></>}
+        <button className="mt-btn" onClick={fillAllOpen}>Auto-fill all open</button>
+        <button className="mt-btn primary" onClick={save}><CheckCircle2 size={14}/>Save Day Entry</button>
+      </div>
+      <details className="mt-fold" style={{marginTop:8}}>
+        <summary>More: Rejection / Missing / Alter rows, backdate reason</summary>
+        <div style={{padding:12}}>
+          <div className="mt-ram-action-bar"><span className="mt-toolbar-label">R/A/M closure rows</span>{RAM_ENTRY_FIELDS.map(f=><button key={f.key} className={`mt-btn ghost ${field===f.key?"active":""}`} onClick={()=>{setField(f.key); setDraft({});}}>{f.label}</button>)}</div>
+          {risk.days>1 && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate reason optional/report flag" style={{minWidth:240, marginTop:8}}/>}
+        </div>
+      </details>
+      {risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated entries are report flags only. Quantity/feed/P0 sequence clashes still appear in Reconcile Review.</div>}
+    </div>
+    <div className="mt-entry-summary">
+      <span><b>{displayRows.length}</b> rows <span className="sep">·</span> {activeRows.length} open{todayExtraRows.length ? `, ${todayExtraRows.length} already done today` : ""}</span>
+      <span className="sep">|</span>
+      <span>Open <b>{fmt(totalOpenForField)}</b></span>
+      <span>New <b>{fmt(totalNewEntry)}</b></span>
+      <span>Remaining after <b>{fmt(remainingAfter)}</b></span>
+      <details style={{marginLeft:"auto"}}>
+        <summary className="mt-small" style={{cursor:"pointer"}}>Cross-check totals</summary>
+        <div className="mt-small" style={{marginTop:6}}>Available/source {fmt(totals.available)} · Already entered before today {fmt(totals.previous)} · Cumulative after {fmt(totals.previous + totalNewEntry)}</div>
+      </details>
+    </div>
+    <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style / Order</th><th>Open</th>{allSizes.map(sz=><th key={sz}>{sz}</th>)}<th>New</th><th>Remaining</th><th>Status</th></tr></thead><tbody>
+      {displayRows.length ? displayRows.map(row=>{
+        const sizes = sizesFor(row);
+        const v = validate(row);
+        const ctx = entryFieldContext(row, stage, field);
+        const rowNew = v.entryTotal;
+        const rowRemaining = Math.max(0, n(ctx.open) - rowNew);
+        const todayMap = todayEntryMap(row);
+        const isCorrecting = correctRowId === row.id;
+        return <React.Fragment key={row.id}>
+        <tr className={todayMap.total ? "mt-subrow" : ""}>
+          <td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>
+            {todayMap.total ? <div className="mt-today-badge">Entered today: {fmt(todayMap.total)}</div> : null}
+            <div className="mt-entry-row-actions">
+              <button className="mt-btn" onClick={()=>fillRowOpen(row)}>Fill open</button>
+              <button className="mt-btn ghost" onClick={()=>clearRow(row)}>Clear</button>
+              {todayMap.total ? <button className={`mt-btn ghost ${isCorrecting?"active":""}`} onClick={()=>isCorrecting?setCorrectRowId(null):beginCorrection(row)}>{isCorrecting?"Close edit":"Edit today's entry"}</button> : null}
+            </div>
+          </div></div></td>
+          <td><div className="mt-open-big">{fmt(ctx.open)}</div></td>
+          {allSizes.map(sz=> sizes.includes(sz) ? <td key={sz} className="mt-entry-size-cell">
+            {(()=>{ const szCtx=entryFieldSizeContext(row,stage,field,sz); const today=n(todayMap.sizes[sz]);
+              return <>
+                <div className="mt-entry-size-open">Open <b>{fmt(szCtx.open)}</b>{today ? <span className="mt-today-badge" style={{marginLeft:4}}>Today {fmt(today)}</span> : null}</div>
+                <input className={`mt-cell-input ${n(szCtx.open)>0?"mandatory":""} ${draft[`${row.id}|${sz}`]!==undefined?"dirty":""} ${v.blocked?"blocked":""} ${today?"today-entered":""}`} value={getVal(row,sz)} onChange={e=>setVal(row,sz,e.target.value)} placeholder="0" />
+              </>;
+            })()}
+          </td> : <td key={sz} className="mt-small">—</td>)}
+          <td><b>{fmt(rowNew)}</b></td>
+          <td><b>{fmt(rowRemaining)}</b></td>
+          <td>{v.blocked ? <span className="mt-chip mt-late">Blocked</span> : v.overCut ? <span className="mt-chip mt-purple">Extra cut</span> : v.entryTotal ? <span className="mt-chip mt-warn">Ready</span> : <span className="mt-chip mt-ok">OK</span>}
+            {v.blocked ? <div className="mt-small">{v.messages?.join("; ")}</div> : null}
+          </td>
+        </tr>
+        {isCorrecting && <tr className="mt-correction-row"><td colSpan={allSizes.length+5}>
+          <div className="mt-inline-correction">
+            <div className="mt-correction-head"><b>Edit {entryDate} entry</b><span className="mt-small">Type the corrected final quantity for today. Only the difference is saved as an audit correction; original history stays visible in Register.</span></div>
+            <div className="mt-correction-grid">
+              {sizes.filter(sz=>n(todayMap.sizes[sz])>0 || correctDraft[`${row.id}|${sz}`]!==undefined).map(sz=>{
+                const oldQty = n(todayMap.sizes[sz]);
+                const nextQty = n(correctVal(row, sz) || 0);
+                const delta = nextQty - oldQty;
+                return <div className="mt-correction-size" key={sz}>
+                  <div className="sz">{sz}</div>
+                  <div className="mt-small">Old {fmt(oldQty)}</div>
+                  <input className="mt-cell-input" style={{width:"100%"}} value={correctVal(row, sz)} onChange={e=>setCorrectVal(row, sz, e.target.value)} placeholder="0" />
+                  <div className={`mt-small ${delta?"warn":""}`}>Diff {delta>0?"+":""}{fmt(delta)}</div>
+                </div>;
+              })}
+            </div>
+            <div className="mt-entry-row-actions" style={{marginTop:10}}>
+              <button className="mt-btn primary" onClick={()=>saveCorrection(row)}><CheckCircle2 size={14}/>Save correction</button>
+              <button className="mt-btn ghost" onClick={()=>{setCorrectRowId(null); setCorrectDraft({});}}>Cancel</button>
+            </div>
+          </div>
+        </td></tr>}
+        </React.Fragment>;
+      }) : <tr><td colSpan={allSizes.length+5} style={{padding:18}}>No open styles, and nothing entered today, for {stageLabel(stage)} · {fieldLabel(field)}.</td></tr>}
+    </tbody></table></div>
   </div>;
 }
 
