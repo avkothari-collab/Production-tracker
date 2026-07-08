@@ -529,10 +529,10 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 
 .mt-plan-excel-table th.day-col, .mt-plan-excel-table td.day-col { min-width:285px; width:285px; }
 .mt-plan-cell-board.columnar { min-height:238px; gap:6px; }
-.mt-plan-field { display:grid; grid-template-columns:74px minmax(0,1fr); align-items:center; gap:6px; }
-.mt-plan-field label { font-size:8px; font-weight:900; color:var(--muted-2); text-transform:uppercase; letter-spacing:.35px; }
-.mt-plan-field input, .mt-plan-field select { min-width:0; }
-.mt-plan-field .style-input { grid-column:2; }
+.mt-plan-field { display:grid; grid-template-columns:78px minmax(0,1fr); align-items:center; gap:8px; }
+.mt-plan-field label { font-size:9.5px; font-weight:900; color:var(--muted-2); text-transform:uppercase; letter-spacing:.35px; }
+.mt-plan-field input, .mt-plan-field select { min-width:0; width:100%; }
+.mt-plan-field .style-input { grid-column:2; font-weight:800; }
 .mt-plan-calc-box { border:1px dashed var(--line-2); background:#fffaf1; border-radius:10px; padding:6px; display:grid; gap:5px; }
 .mt-plan-calc-box .mt-plan-field { grid-template-columns:88px minmax(0,1fr); }
 .mt-plan-calc-meta { display:flex; justify-content:space-between; gap:6px; align-items:center; flex-wrap:wrap; font-size:8.5px; color:var(--muted-3); }
@@ -637,19 +637,19 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .week-total { background:#f7f1e8 !important; font-family:'Archivo',sans-serif; font-size:13px; font-weight:800; text-align:right; padding:8px !important; }
 .compact-total-row td { background:#eee7dc !important; padding:8px !important; font-size:10px; }
 .compact-total-row td span { display:block; color:var(--muted-2); font-size:9px; margin-top:2px; }
-.mt-plan-editor-backdrop { position:fixed; inset:0; background:rgba(20,18,15,.42); display:flex; align-items:center; justify-content:center; padding:18px; z-index:90; }
-.mt-plan-editor { width:min(640px,96vw); max-height:92vh; overflow:hidden; background:var(--surface); border:1px solid var(--ink); border-radius:18px; box-shadow:0 22px 70px rgba(0,0,0,.25); display:flex; flex-direction:column; }
-.mt-plan-editor-head { background:var(--ink); color:var(--bg); padding:13px 15px; display:flex; justify-content:space-between; align-items:center; gap:10px; }
-.mt-plan-editor-head b { font-family:'Archivo',sans-serif; font-size:16px; }
-.mt-plan-editor-head span { display:block; color:var(--on-dark-2); font-size:10px; margin-top:2px; }
-.mt-plan-editor-body { padding:14px; overflow:auto; }
-.mt-editor-fields-grid { display:grid; grid-template-columns:1.3fr .8fr .62fr .55fr; gap:8px; align-items:end; }
+.mt-plan-editor-backdrop { position:fixed; inset:0; background:rgba(20,18,15,.5); display:flex; align-items:center; justify-content:center; padding:18px; z-index:90; }
+.mt-plan-editor { width:min(660px,96vw); max-height:92vh; overflow:hidden; background:var(--surface); border:1px solid var(--ink); border-radius:18px; box-shadow:0 24px 80px rgba(0,0,0,.3); display:flex; flex-direction:column; }
+.mt-plan-editor-head { background:var(--ink); color:var(--bg); padding:16px 18px; display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.mt-plan-editor-head b { font-family:'Archivo',sans-serif; font-size:17px; letter-spacing:-.1px; }
+.mt-plan-editor-head span { display:block; color:var(--on-dark-2); font-size:11px; margin-top:3px; font-weight:600; }
+.mt-plan-editor-body { padding:18px; overflow:auto; display:flex; flex-direction:column; gap:14px; }
+.mt-editor-fields-grid { display:grid; grid-template-columns:1.3fr .8fr .62fr .55fr; gap:12px 14px; align-items:end; }
 .mt-editor-fields-grid .wide { grid-column:span 2; }
 .mt-editor-fields-grid.compact { grid-template-columns:repeat(4,minmax(0,1fr)); }
-.mt-plan-engine-toggle { width:100%; margin:8px 0 0; border:1px solid var(--line-2); background:#fff7ea; color:var(--ink); border-radius:10px; padding:9px 11px; display:flex; justify-content:space-between; align-items:center; text-align:left; cursor:pointer; font-weight:800; font-size:11px; }
+.mt-plan-engine-toggle { width:100%; margin:0; border:1px solid var(--line-2); background:#fff7ea; color:var(--ink); border-radius:10px; padding:11px 14px; display:flex; justify-content:space-between; align-items:center; text-align:left; cursor:pointer; font-weight:800; font-size:12px; }
 .mt-plan-engine-toggle b { color:var(--muted-2); }
-.mt-plan-editor-engine { border:1px solid var(--line-2); border-top:0; border-radius:0 0 12px 12px; padding:10px; background:#fffaf1; }
-.mt-plan-editor-actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:12px; }
+.mt-plan-editor-engine { border:1px solid var(--line-2); border-radius:12px; padding:14px; background:#fffaf1; display:flex; flex-direction:column; gap:10px; }
+.mt-plan-editor-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:2px; padding-top:14px; border-top:1px solid var(--line-2); }
 .mt-btn.danger { color:var(--danger); border-color:#e8b8ae; }
 .mt-plan-need-mini.expanded { grid-template-columns:repeat(5,minmax(0,1fr)); margin-top:9px; }
 @media (max-width:900px){ .mt-editor-fields-grid,.mt-editor-fields-grid.compact{grid-template-columns:1fr 1fr;} .mt-editor-fields-grid .wide{grid-column:span 2;} .mt-compact-plan-table{min-width:820px;} }
@@ -5806,8 +5806,11 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
   const [search,setSearch] = useState("");
   const [editCell,setEditCell] = useState(null);
   const [editorAutoOpen,setEditorAutoOpen] = useState(false);
+  const [notice,setNotice] = useState(null);
   const saveTimersRef = useRef({});
   useEffect(()=>()=>Object.values(saveTimersRef.current || {}).forEach(clearTimeout), []);
+  function notify(message, title="Notice"){ setNotice({ kind:"info", title, message }); }
+  function confirmAction(message, title, onConfirm){ setNotice({ kind:"confirm", title, message, onConfirm }); }
   const boardRows = activeDept === "stitching" ? productionLineNames() : [`${stageLabel(activeDept)} Total`];
   const datalistId = `plan-style-list-${activeDept}`;
   const filteredStyles = useMemo(()=>{
@@ -5942,9 +5945,9 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     const current = findCellSlot(line, day, slotNo);
     const styleText = planStyleText(current);
     const linked = resolvePlanStyle(rows, styleText) || rows.find(r=>r.id===current?.row_id);
-    if (!linked) return window.alert("Select/link a style from Styles master first. Free-text styles cannot auto-cascade because order qty/feed is unknown.");
+    if (!linked) { notify("Select/link a style from Styles master first. Free-text styles cannot auto-cascade because order qty/feed is unknown.", "Cascade needs a linked style"); return; }
     const target = n(current?.eight_hr_target) || defaultFullDayOutputForStyle(linked);
-    if (!target) return window.alert("Enter Full-day target first. Cascade needs daily output to calculate hours and qty.");
+    if (!target) { notify("Enter Full-day target first. Cascade needs daily output to calculate hours and qty.", "Full-day target missing"); return; }
     const startIdx = weekDays.indexOf(day);
     if (startIdx < 0) return;
     const lineKey = planCellLineKey(activeDept,line);
@@ -6002,7 +6005,7 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
       generated.push(generatedRow);
       simulatedRows = [...simulatedRows.filter(p=>!(String(p.dept)===String(generatedRow.dept) && String(p.line||"")===String(generatedRow.line||"") && String(p.plan_date||"").slice(0,10)===String(generatedRow.plan_date||"").slice(0,10) && planSlotNo(p)===planSlotNo(generatedRow))), generatedRow];
     }
-    if (!generated.length) return window.alert("No available hours found in this week for this line. Add a slot or reduce existing planned hours.");
+    if (!generated.length) { notify("No available hours found in this week for this line. Add a slot or reduce existing planned hours.", "Cascade could not run"); return; }
     const generatedIds = new Set(generated.map(g=>String(g.id)));
     const generatedKeys = new Set(generated.map(g=>[g.dept,g.line,g.plan_date,planSlotNo(g)].join("|")));
     const styleUpper = String(linked.style_no || styleText).toUpperCase();
@@ -6017,13 +6020,13 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     const msg = qtyLeft > 0
       ? `Auto-filled ${generated.length} plan slot(s). ${fmt(qtyLeft)} qty still remains after this week.`
       : `Auto-filled ${generated.length} plan slot(s) and finished ${linked.style_no} on ${generated[generated.length-1].plan_date}.`;
-    window.alert(msg);
+    notify(msg, "Auto cascade complete");
   }
   async function quickAddStyleFromCell(line, day, slotNo){
     const p=findCellSlot(line,day,slotNo)||{};
     const style = planStyleText(p).toUpperCase();
-    if (!style) return window.alert("Type the style number first, then add style detail.");
-    if (resolvePlanStyle(rows, style)) return window.alert("This style already exists in Styles master.");
+    if (!style) { notify("Type the style number first, then add style detail.", "Style number needed"); return; }
+    if (resolvePlanStyle(rows, style)) { notify("This style already exists in Styles master.", "Already exists"); return; }
     const orderNo = window.prompt("Order No / SO No for this style", p.order_no || `PLAN-${style}`) || "";
     if (!orderNo.trim()) return;
     const buyer = window.prompt("Buyer / Brand", p.buyer || "") || "";
@@ -6037,7 +6040,7 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     const newRow = { ...rowBase, id:stableProductionOrderId(rowBase), stages:blankStagesForRoute(rowBase), route:routeFor(rowBase), difficulty:"Normal", priority:"Normal" };
     setRows?.(prev=>[newRow, ...(prev||[]).filter(r=>styleCompositeKey(r)!==styleCompositeKey(newRow))]);
     const save = await upsertOneStyleToSupabase(newRow);
-    if (save?.error) window.alert(`Style added locally but Supabase save failed: ${save.error.message}`);
+    if (save?.error) notify(`Style added locally but Supabase save failed: ${save.error.message}`, "Partial save");
     recordProductionAudit("style_add_from_plan", { table_name:"production_orders", order_no:newRow.order_no, style_no:newRow.style_no, colour:newRow.colour, component:newRow.component, qty:newRow.order_qty, source:"Planning quick add", after_data:{ daily_target:target, line:newRow.line } });
     updateCell(line, day, slotNo, { style_input:newRow.style_no, row_id:newRow.id, order_no:newRow.order_no, buyer:newRow.buyer, colour:newRow.colour, component:newRow.component, eight_hr_target:target, qty_auto_mode:!n(p.planned_qty) });
   }
@@ -6119,7 +6122,7 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     const p = findCellSlot(line, day, slotNo);
     if (!p) return;
     const achieved = achievedForPlan(p, rows, ledger);
-    if (!achieved) { alert("No DPR actual entry found yet for this style/date. Nothing to sync."); return; }
+    if (!achieved) { notify("No DPR actual entry found yet for this style/date. Nothing to sync.", "Nothing to sync"); return; }
     const allForDay = lineDayPlanRows(planRows, activeDept, line, day);
     const before = remainingHoursBeforeSlot(allForDay, p);
     const bookedHours = planHours(p) || Math.max(0, 8 - before);
@@ -6127,9 +6130,14 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     const ratio = target > 0 ? Math.min(1, achieved / target) : 1;
     const actualHoursUsed = Math.round(ratio * bookedHours * 100) / 100;
     const freed = Math.max(0, Math.round((bookedHours - actualHoursUsed) * 100) / 100);
-    if (!window.confirm(`Sync this slot to actual DPR output?\n\nActual so far: ${fmt(achieved)} (target ${fmt(target)})\nBooked hours: ${fmt(bookedHours)}h → hours actually needed: ${fmt(actualHoursUsed)}h\nThis frees ${fmt(freed)}h on ${shortDayLabel(day)} · ${line} for the next style.`)) return;
-    updateCell(line, day, slotNo, { planned_qty:achieved, remaining_hours:actualHoursUsed, qty_auto_mode:false, remarks:`Synced from actual (${fmt(achieved)}) — freed ${fmt(freed)}h` });
-    if (freed > 0.25) addNextStyleSlot(line, day);
+    confirmAction(
+      `Actual so far: ${fmt(achieved)} (target ${fmt(target)})\nBooked hours: ${fmt(bookedHours)}h → hours actually needed: ${fmt(actualHoursUsed)}h\nThis frees ${fmt(freed)}h on ${shortDayLabel(day)} · ${line} for the next style.`,
+      "Sync this slot to actual DPR output?",
+      () => {
+        updateCell(line, day, slotNo, { planned_qty:achieved, remaining_hours:actualHoursUsed, qty_auto_mode:false, remarks:`Synced from actual (${fmt(achieved)}) — freed ${fmt(freed)}h` });
+        if (freed > 0.25) addNextStyleSlot(line, day);
+      }
+    );
   }
   const editor = editCell ? compactCellPlan(editCell.line, editCell.day, editCell.slotNo) : null;
   const editorLinked = editor ? (resolvePlanStyle(rows, planStyleText(editor)) || rows.find(r=>r.id===editor?.row_id)) : null;
@@ -6194,12 +6202,12 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
       {(() => { const liveOpen = editorLinked ? n(entryFieldContext(editorLinked, activeDept, "output").open) : null; const over = liveOpen !== null ? Math.max(0, n(editor?.planned_qty) - liveOpen) : 0; return liveOpen !== null ? <div className={`mt-plan-actual-sync ${over>0?"warn":"ok"}`}><div><b>Currently open in {stageLabel(activeDept)}:</b> {fmt(liveOpen)} pcs{over>0 ? <span className="mt-small"> — this cell plans {fmt(over)} more than that. It was likely cascaded before recent actuals came in; re-run Auto fill cascade to true it up.</span> : <span className="mt-small"> — this cell's qty fits within what's actually still open.</span>}</div></div> : null; })()}
       <div className="mt-plan-editor-body">
         <div className="mt-editor-fields-grid">
-          <div className="mt-plan-field wide"><label>Style</label><input className="style-input" list={datalistId} value={planStyleText(editor)} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{style_input:e.target.value})} placeholder="TYPE / PICK STYLE" autoFocus/></div>
-          <div className="mt-plan-field"><label>Brand</label><input value={editor?.buyer || ""} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{buyer:e.target.value})} placeholder="BRAND"/></div>
-          <div className="mt-plan-field"><label>Qty</label><input value={editor?.planned_qty || ""} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{planned_qty:e.target.value.replace(/[^0-9]/g,""), qty_auto_mode:false})} placeholder="DAY TARGET"/></div>
-          <div className="mt-plan-field"><label>OPS</label><input value={editor?.ops || ""} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{ops:e.target.value.replace(/[^0-9]/g,"")})} placeholder="HEADCOUNT"/></div>
-          <div className="mt-plan-field"><label>Finish date</label><input type="date" value={editor?.stitching_end_date || ""} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{stitching_end_date:e.target.value})}/></div>
-          <div className="mt-plan-field wide"><label>Note</label><input value={editor?.remarks || ""} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{remarks:e.target.value})} placeholder="continue / reason"/></div>
+          <div className="mt-plan-field wide"><label>Style</label><input className="mt-input style-input" list={datalistId} value={planStyleText(editor)} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{style_input:e.target.value})} placeholder="TYPE / PICK STYLE" autoFocus/></div>
+          <div className="mt-plan-field"><label>Brand</label><input className="mt-input" value={editor?.buyer || ""} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{buyer:e.target.value})} placeholder="BRAND"/></div>
+          <div className="mt-plan-field"><label>Qty</label><input className="mt-input" value={editor?.planned_qty || ""} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{planned_qty:e.target.value.replace(/[^0-9]/g,""), qty_auto_mode:false})} placeholder="DAY TARGET"/></div>
+          <div className="mt-plan-field"><label>OPS</label><input className="mt-input" value={editor?.ops || ""} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{ops:e.target.value.replace(/[^0-9]/g,"")})} placeholder="HEADCOUNT"/></div>
+          <div className="mt-plan-field"><label>Finish date</label><input className="mt-input" type="date" value={editor?.stitching_end_date || ""} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{stitching_end_date:e.target.value})}/></div>
+          <div className="mt-plan-field wide"><label>Note</label><input className="mt-input" value={editor?.remarks || ""} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{remarks:e.target.value})} placeholder="continue / reason"/></div>
         </div>
         <details className="mt-plan-available-picker no-print"><summary>Available styles to load / stitch first — cross-check by feed</summary><div className="mt-plan-style-picks">{availableStylePickerRows(rows, planRows, activeDept, editCell.day, ledger).slice(0,40).map(({row,available,ready})=><button key={row.id} className={`mt-plan-style-pick ${ready.tone}`} onClick={()=>updateCell(editCell.line,editCell.day,editCell.slotNo,{style_input:row.style_no})}><b>{row.style_no}</b><span>{row.buyer} · possible {fmt(available)} · {ready.label}</span></button>)}</div></details>
         {planStyleText(editor) && !editorLinked && <div className="mt-plan-add-style"><b>Not in Styles master.</b><button className="mt-btn primary" onClick={()=>quickAddStyleFromCell(editCell.line,editCell.day,editCell.slotNo)}>+ Add style detail</button></div>}
@@ -6210,8 +6218,8 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
         <button className="mt-plan-engine-toggle" onClick={()=>setEditorAutoOpen(v=>!v)}><span>⚙ Auto target, changeover lost time, projected feed & cascade</span><b>{editorAutoOpen ? "Hide ▲" : "Optional ▾"}</b></button>
         {editorAutoOpen && <div className="mt-plan-editor-engine">
           <div className="mt-editor-fields-grid compact">
-            <div className="mt-plan-field"><label>Full-day target</label><input value={editor?.eight_hr_target || ""} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{eight_hr_target:e.target.value.replace(/[^0-9]/g,""), qty_auto_mode:!!editor?.qty_auto_mode})} placeholder="8hr qty"/></div>
-            <div className="mt-plan-field"><label>Plan hours</label><input value={editor?.remaining_hours || ""} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{remaining_hours:e.target.value.replace(/[^0-9.]/g,""), qty_auto_mode:!!editor?.qty_auto_mode})} placeholder={String(editorRemainingBefore || 8)}/></div>
+            <div className="mt-plan-field"><label>Full-day target</label><input className="mt-input" value={editor?.eight_hr_target || ""} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{eight_hr_target:e.target.value.replace(/[^0-9]/g,""), qty_auto_mode:!!editor?.qty_auto_mode})} placeholder="8hr qty"/></div>
+            <div className="mt-plan-field"><label>Plan hours</label><input className="mt-input" value={editor?.remaining_hours || ""} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{remaining_hours:e.target.value.replace(/[^0-9.]/g,""), qty_auto_mode:!!editor?.qty_auto_mode})} placeholder={String(editorRemainingBefore || 8)}/></div>
             <div className="mt-plan-readonly"><span>Remaining after</span><b>{fmt(editorRemainingAfter)}h</b></div>
             <div className="mt-plan-readonly"><span>Auto qty</span><b>{fmt(editorAutoQty)}</b></div>
           </div>
@@ -6221,6 +6229,17 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
           {editorNeed && <div className="mt-plan-need-mini expanded"><div><span>Need this slot</span><b>{fmt(editorNeed.qtyNeeded)}</b></div><div><span>Ready to load</span><b>{planLoadReadyShort({ ...editor, changeover:editorEffectiveChangeover }, rows, planRows, activeDept, editCell.line, editCell.day, ledger)}</b></div><div><span>Actual ready</span><b>{fmt(editorNeed.actualReadyFeed)}</b></div><div><span>Projected</span><b>{fmt(editorNeed.projectedFeed)}</b></div><div><span>After slot</span><b className={editorNeed.afterThisSlot < 0 ? "mt-delta-neg" : "mt-delta-pos"}>{fmt(editorNeed.afterThisSlot)}</b></div></div>}
         </div>}
         <div className="mt-plan-editor-actions no-print"><button className="mt-btn primary" onClick={()=>autoFillCascadeFromSlot(editCell.line,editCell.day,editCell.slotNo)}>Auto fill cascade</button><button className="mt-btn ghost" onClick={()=>carryForward(editCell.line,editCell.day,editCell.slotNo)}>Use previous day</button><button className="mt-btn ghost" onClick={()=>fillNext(editCell.line,editCell.day,editCell.slotNo)}>Copy to next</button><button className="mt-btn ghost" onClick={()=>addNextStyleSlot(editCell.line,editCell.day)}>+ Add next style</button><label className="mt-small"><input type="checkbox" checked={!!editor?.short_close} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{short_close:e.target.checked, remarks:e.target.checked ? "SPECIAL SHORT CLOSE" : (editor?.remarks || "")})}/> short close</label><button className="mt-btn ghost danger" onClick={()=>{ clearCellSlot(editCell.line,editCell.day,editCell.slotNo); setEditCell(null); }}>Delete slot</button></div>
+      </div>
+    </div></div>}
+    {notice && <div className="mt-update-backdrop no-print" onClick={()=>notice.kind==="info" && setNotice(null)}><div className="mt-manager-decision-modal" style={{width:"min(460px,92vw)"}} onClick={e=>e.stopPropagation()}>
+      <div className="head"><b>{notice.title}</b></div>
+      <div className="body"><div className="mt-small" style={{whiteSpace:"pre-line", fontSize:12.5, lineHeight:1.5}}>{notice.message}</div>
+        <div className="actions">
+          {notice.kind==="confirm" ? <>
+            <button className="mt-btn ghost" onClick={()=>setNotice(null)}>Cancel</button>
+            <button className="mt-btn primary" onClick={()=>{ notice.onConfirm?.(); setNotice(null); }}>Confirm</button>
+          </> : <button className="mt-btn primary" onClick={()=>setNotice(null)}>OK</button>}
+        </div>
       </div>
     </div></div>}
   </div>;
