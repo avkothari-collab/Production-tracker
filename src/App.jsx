@@ -4223,12 +4223,19 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
   const [draft, setDraft] = useState(()=>safeJsonLoad(uiStorageKey("entry_draft"), {}));
   const [correctRowId, setCorrectRowId] = useState(null);
   const [correctDraft, setCorrectDraft] = useState({});
+  const [viewMode, setViewMode] = useState(()=>safeJsonLoad(uiStorageKey("entry_view_mode"), "date"));
+  const [styleSearch, setStyleSearch] = useState("");
+  const [selectedRowId, setSelectedRowId] = useState("");
+  const [styleEditDate, setStyleEditDate] = useState(null);
+  const [styleCorrectDraft, setStyleCorrectDraft] = useState({});
+  const [styleCorrectReason, setStyleCorrectReason] = useState("");
   useEffect(()=>safeJsonSave(uiStorageKey("entry_stage"), stage), [stage]);
   useEffect(()=>safeJsonSave(uiStorageKey("entry_field"), field), [field]);
   useEffect(()=>safeJsonSave(uiStorageKey("entry_date"), entryDate), [entryDate]);
   useEffect(()=>safeJsonSave(uiStorageKey("entry_reason"), reason), [reason]);
   useEffect(()=>safeJsonSave(uiStorageKey("entry_line"), entryLine), [entryLine]);
   useEffect(()=>safeJsonSave(uiStorageKey("entry_draft"), draft), [draft]);
+  useEffect(()=>safeJsonSave(uiStorageKey("entry_view_mode"), viewMode), [viewMode]);
   useEffect(()=>{
     if (!focus?.id) return;
     setStage(focus.stage || "cutting");
@@ -4236,18 +4243,20 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
     setDraft({});
   }, [focus?.id]);
   useEffect(()=>{ setCorrectRowId(null); setCorrectDraft({}); }, [entryDate, stage, field]);
+  useEffect(()=>{ setStyleEditDate(null); setStyleCorrectDraft({}); setStyleCorrectReason(""); }, [selectedRowId, stage, field]);
+  useEffect(()=>{ setSelectedRowId(""); setStyleEditDate(null); }, [viewMode]);
 
   const allStageRows = rows.filter(r => routeFor(r).includes(stage));
   const activeRows = allStageRows.filter(r => entryOpenQty(r, stage, field) > 0);
 
-  function todayEntryMap(row){
+  function entryMapForRowDate(row, date){
     const matchType = String(entryTypeForField(field)).toLowerCase();
     const sizes = {};
     let total = 0;
     (ledger || []).forEach(e=>{
       if (!ledgerMatchesRow(e, row)) return;
       if (ledgerStage(e) !== stage) return;
-      if (ledgerDate(e) !== entryDate) return;
+      if (ledgerDate(e) !== date) return;
       if (ledgerType(e) !== matchType) return;
       const size = String(e.size || e.size_code || e.size_name || "").trim();
       if (!size) return;
@@ -4255,6 +4264,66 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
       total += n(e.qty ?? e.delta);
     });
     return { sizes, total };
+  }
+  function todayEntryMap(row){ return entryMapForRowDate(row, entryDate); }
+  function ledgerDatesForRow(row){
+    const matchType = String(entryTypeForField(field)).toLowerCase();
+    const set = new Set();
+    (ledger || []).forEach(e=>{
+      if (!ledgerMatchesRow(e, row)) return;
+      if (ledgerStage(e) !== stage) return;
+      if (ledgerType(e) !== matchType) return;
+      const d = ledgerDate(e);
+      if (d) set.add(d);
+    });
+    return Array.from(set).sort().reverse();
+  }
+  const styleMatches = useMemo(()=>{
+    const q = styleSearch.trim().toLowerCase();
+    if (!q) return [];
+    return rows.filter(r=>routeFor(r).includes(stage) && [r.style_no,r.order_no,r.buyer,r.colour,r.component].join(" ").toLowerCase().includes(q)).slice(0,30);
+  }, [rows, styleSearch, stage]);
+  const selectedStyleRow = rows.find(r=>r.id===selectedRowId) || null;
+  const selectedStyleDates = selectedStyleRow ? ledgerDatesForRow(selectedStyleRow) : [];
+  function styleCorrectVal(date, size){ const key = `${date}|${size}`; return styleCorrectDraft[key] !== undefined ? styleCorrectDraft[key] : ""; }
+  function setStyleCorrectVal(date, size, val){ setStyleCorrectDraft(d=>({ ...d, [`${date}|${size}`]: String(val).replace(/[^0-9]/g,"") })); }
+  function beginStyleCorrection(row, date){
+    const map = entryMapForRowDate(row, date);
+    const nd = {};
+    sizesFor(row).forEach(sz=>{ if (map.sizes[sz]) nd[`${date}|${sz}`] = String(map.sizes[sz]); });
+    setStyleCorrectDraft(nd);
+    setStyleCorrectReason("");
+    setStyleEditDate(date);
+  }
+  async function saveStyleCorrection(row, date){
+    const map = entryMapForRowDate(row, date);
+    const sizes = sizesFor(row);
+    const changes = sizes.map(size=>{
+      const oldQty = n(map.sizes[size]);
+      const raw = styleCorrectDraft[`${date}|${size}`];
+      const newQty = raw === undefined ? oldQty : n(raw);
+      const delta = newQty - oldQty;
+      if (!delta) return null;
+      return { row, size, oldQty, newQty, delta };
+    }).filter(Boolean);
+    if (!changes.length) { alert("No change made to this date's entry."); return; }
+    if (!String(styleCorrectReason||"").trim()) { alert("Reason is required to correct a past entry."); return; }
+    const summary = changes.map(c=>`${c.size}: ${fmt(c.oldQty)} -> ${fmt(c.newQty)}`).join("\n");
+    if (!window.confirm(`Update ${date} · ${stageLabel(stage)} · ${fieldLabel(field)} for ${row.style_no}?\n\n${summary}\n\nOnly the difference is saved as an audit-safe correction; the original entry stays visible in Register history.`)) return;
+    const newLedger = buildLedgerRows({ changes, stage, field, entryDate:date, reason:styleCorrectReason, source:"dpr_style_view_correction" });
+    const sharedResult = await saveLedgerToSupabase(newLedger, field);
+    if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
+      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
+      if (!window.confirm(`Shared Supabase save did not confirm: ${msg}\n\nSave locally in this browser anyway?`)) return;
+    }
+    const deltaMap = Object.fromEntries(changes.map(c=>[c.size, c.delta]));
+    const getValForApply = (r, size)=> n(deltaMap[size]);
+    setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:[row], stage, field, getVal:getValForApply }));
+    setLedger(prev => [...newLedger, ...prev]);
+    setStyleEditDate(null);
+    setStyleCorrectDraft({});
+    setStyleCorrectReason("");
+    onSharedSave?.(sharedResult, "DPR style-view correction");
   }
 
   const activeIds = new Set(activeRows.map(r=>r.id));
@@ -4366,7 +4435,14 @@ Save locally in this browser anyway? Other users will not see it until Supabase 
         </div>
       </details>
       {risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated entries are report flags only. Quantity/feed/P0 sequence clashes still appear in Reconcile Review.</div>}
+      <div className="mt-toggle-row" style={{marginTop:8}}>
+        <span className="mt-toolbar-label">View</span>
+        <button className={`mt-btn ${viewMode==="date"?"active":"ghost"}`} onClick={()=>setViewMode("date")}>Date view</button>
+        <button className={`mt-btn ${viewMode==="style"?"active":"ghost"}`} onClick={()=>setViewMode("style")}>Style view</button>
+        {viewMode==="style" && <span className="mt-small">Pick a style below to see and edit every {fieldLabel(field)} entry it has in {stageLabel(stage)}, across all dates.</span>}
+      </div>
     </div>
+    {viewMode === "date" ? <>
     <div className="mt-entry-summary">
       <span><b>{displayRows.length}</b> rows <span className="sep">·</span> {activeRows.length} open{todayExtraRows.length ? `, ${todayExtraRows.length} already done today` : ""}</span>
       <span className="sep">|</span>
@@ -4437,6 +4513,59 @@ Save locally in this browser anyway? Other users will not see it until Supabase 
         </React.Fragment>;
       }) : <tr><td colSpan={allSizes.length+5} style={{padding:18}}>No open styles, and nothing entered today, for {stageLabel(stage)} · {fieldLabel(field)}.</td></tr>}
     </tbody></table></div>
+    </> : <div className="mt-section">
+      <div className="mt-toolbar no-print">
+        <span className="mt-toolbar-label">Find style</span>
+        <input className="mt-input" style={{minWidth:260}} value={styleSearch} onChange={e=>{setStyleSearch(e.target.value); setSelectedRowId("");}} placeholder="Type style / order / buyer / colour" />
+      </div>
+      {!selectedStyleRow && styleMatches.length ? <div className="mt-plan-style-picks" style={{marginTop:8}}>
+        {styleMatches.map(r=><button key={r.id} className="mt-plan-style-pick ok" onClick={()=>{setSelectedRowId(r.id); setStyleSearch("");}}><b>{r.style_no}</b><span>{r.order_no} · {r.buyer} · {r.colour} · {r.component}</span></button>)}
+      </div> : null}
+      {!selectedStyleRow && styleSearch.trim() && !styleMatches.length ? <div className="mt-speed-note" style={{marginTop:8}}>No style matches "{styleSearch}" in {stageLabel(stage)}'s route.</div> : null}
+      {selectedStyleRow ? <div style={{marginTop:12}}>
+        <div className="mt-entry-hero">
+          <div className="mt-entry-hero-title"><span>{selectedStyleRow.style_no}</span><span className="mt-chip mt-muted">{selectedStyleRow.order_no}</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-chip mt-warn">{fieldLabel(field)}</span><button className="mt-btn ghost" style={{marginLeft:"auto"}} onClick={()=>setSelectedRowId("")}>Change style</button></div>
+          <div className="mt-entry-hero-sub">{selectedStyleRow.buyer} · {selectedStyleRow.colour} · {selectedStyleRow.component}. Every dated entry below can be corrected — type the final correct quantity per size and save; only the difference is recorded as an audit correction.</div>
+        </div>
+        <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th>Date</th><th>Total</th><th>By size</th><th>Edit</th></tr></thead><tbody>
+          {selectedStyleDates.length ? selectedStyleDates.map(date=>{
+            const map = entryMapForRowDate(selectedStyleRow, date);
+            const isEditing = styleEditDate === date;
+            return <React.Fragment key={date}>
+              <tr>
+                <td><b>{date}</b></td>
+                <td><b>{fmt(map.total)}</b></td>
+                <td className="mt-small">{sizesFor(selectedStyleRow).filter(sz=>n(map.sizes[sz])).map(sz=>`${sz} ${fmt(map.sizes[sz])}`).join(" · ") || "—"}</td>
+                <td><button className={`mt-btn ghost ${isEditing?"active":""}`} onClick={()=>isEditing ? setStyleEditDate(null) : beginStyleCorrection(selectedStyleRow, date)}>{isEditing?"Close edit":"Edit"}</button></td>
+              </tr>
+              {isEditing && <tr className="mt-correction-row"><td colSpan={4}>
+                <div className="mt-inline-correction">
+                  <div className="mt-correction-head"><b>Edit {date} entry</b><span className="mt-small">Type the corrected final quantity per size. Only the difference is saved as an audit correction; original history stays visible in Register.</span></div>
+                  <div className="mt-correction-controls"><label>Reason <input className="mt-input" value={styleCorrectReason} onChange={e=>setStyleCorrectReason(e.target.value)} placeholder="Correction reason" style={{minWidth:240}}/></label></div>
+                  <div className="mt-correction-grid">
+                    {sizesFor(selectedStyleRow).filter(sz=>n(map.sizes[sz])>0 || styleCorrectDraft[`${date}|${sz}`]!==undefined).map(sz=>{
+                      const oldQty = n(map.sizes[sz]);
+                      const nextQty = n(styleCorrectVal(date, sz) || 0);
+                      const delta = nextQty - oldQty;
+                      return <div className="mt-correction-size" key={sz}>
+                        <div className="sz">{sz}</div>
+                        <div className="mt-small">Old {fmt(oldQty)}</div>
+                        <input className="mt-cell-input" style={{width:"100%"}} value={styleCorrectVal(date, sz)} onChange={e=>setStyleCorrectVal(date, sz, e.target.value)} placeholder="0" />
+                        <div className={`mt-small ${delta?"warn":""}`}>Diff {delta>0?"+":""}{fmt(delta)}</div>
+                      </div>;
+                    })}
+                  </div>
+                  <div className="mt-entry-row-actions" style={{marginTop:10}}>
+                    <button className="mt-btn primary" onClick={()=>saveStyleCorrection(selectedStyleRow, date)}><CheckCircle2 size={14}/>Save correction</button>
+                    <button className="mt-btn ghost" onClick={()=>setStyleEditDate(null)}>Cancel</button>
+                  </div>
+                </div>
+              </td></tr>}
+            </React.Fragment>;
+          }) : <tr><td colSpan={4} style={{padding:18}}>No {fieldLabel(field)} entries yet for this style in {stageLabel(stage)}.</td></tr>}
+        </tbody></table></div>
+      </div> : null}
+    </div>}
   </div>;
 }
 
