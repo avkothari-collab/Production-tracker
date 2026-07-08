@@ -596,6 +596,15 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .compact-plan-cell .c-ready.ok { background:#e7f1e8; color:#1f6f54; }
 .compact-plan-cell .c-ready.warn { background:#fff0c7; color:#7a560f; }
 .compact-plan-cell .c-ready.late { background:#f6d3cb; color:#8c241a; }
+.compact-plan-cell .c-ready.info { background:#e7eefc; color:#2b4d8c; }
+.c-daytotal { margin-top:4px; font-size:8.5px; font-weight:800; border-top:1px dashed var(--line-3); padding-top:3px; }
+.c-daytotal.ok { color:#1f6f54; }
+.c-daytotal.warn { color:#a35b06; }
+.mt-plan-actual-sync { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; border:1px solid var(--line-2); border-radius:12px; padding:8px 10px; margin:8px 0; font-size:11px; }
+.mt-plan-actual-sync.ok { background:#eef6ef; border-color:#bcdcc2; }
+.mt-plan-actual-sync.warn { background:#fff8e8; border-color:#f1d69a; }
+.mt-plan-actual-sync.late { background:#fdefec; border-color:#f3c2b6; }
+.mt-plan-actual-sync.info { background:#eef2fb; border-color:#c7d5f2; }
 .mt-plan-slim-note { border:1px dashed var(--line-2); background:#fffaf1; border-radius:10px; padding:8px 10px; font-size:10px; color:var(--muted-3); line-height:1.4; }
 .mt-plan-collapse { border:1px solid var(--line-2); border-radius:12px; background:var(--surface); margin-top:10px; overflow:hidden; }
 .mt-plan-collapse > summary { cursor:pointer; padding:10px 12px; background:#fff7ea; font-family:'Archivo',sans-serif; font-weight:800; list-style:none; display:flex; justify-content:space-between; gap:8px; align-items:center; }
@@ -5913,6 +5922,38 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     if (p.short_close) parts.push("short close");
     return parts.join(" · ");
   }
+  function lineDayHoursSummary(line, day){
+    const list = lineDayPlanRows(planRows, activeDept, line, day);
+    const used = totalUsedPlanHours(list);
+    const free = Math.max(0, 8 - used);
+    return { used, free, hasAny: list.length>0 };
+  }
+  function cellActualInfo(p){
+    if (!planStyleText(p)) return null;
+    const day = String(p.plan_date||"").slice(0,10);
+    if (!day || day > today()) return null; // future slot, nothing to compare yet
+    const achieved = achievedForPlan(p, rows, ledger);
+    const planned = n(p.planned_qty) || planAutoQtyFromTarget(p);
+    if (!achieved && !planned) return null;
+    const tone = !planned ? "info" : achieved >= planned ? "ok" : achieved > 0 ? "warn" : "late";
+    return { achieved, planned, tone, done: planned>0 && achieved >= planned };
+  }
+  function syncFromActual(line, day, slotNo){
+    const p = findCellSlot(line, day, slotNo);
+    if (!p) return;
+    const achieved = achievedForPlan(p, rows, ledger);
+    if (!achieved) { alert("No DPR actual entry found yet for this style/date. Nothing to sync."); return; }
+    const allForDay = lineDayPlanRows(planRows, activeDept, line, day);
+    const before = remainingHoursBeforeSlot(allForDay, p);
+    const bookedHours = planHours(p) || Math.max(0, 8 - before);
+    const target = n(p.eight_hr_target) || defaultFullDayOutputForStyle(resolvePlanStyle(rows, planStyleText(p)) || {});
+    const ratio = target > 0 ? Math.min(1, achieved / target) : 1;
+    const actualHoursUsed = Math.round(ratio * bookedHours * 100) / 100;
+    const freed = Math.max(0, Math.round((bookedHours - actualHoursUsed) * 100) / 100);
+    if (!window.confirm(`Sync this slot to actual DPR output?\n\nActual so far: ${fmt(achieved)} (target ${fmt(target)})\nBooked hours: ${fmt(bookedHours)}h → hours actually needed: ${fmt(actualHoursUsed)}h\nThis frees ${fmt(freed)}h on ${shortDayLabel(day)} · ${line} for the next style.`)) return;
+    updateCell(line, day, slotNo, { planned_qty:achieved, remaining_hours:actualHoursUsed, qty_auto_mode:false, remarks:`Synced from actual (${fmt(achieved)}) — freed ${fmt(freed)}h` });
+    if (freed > 0.25) addNextStyleSlot(line, day);
+  }
   const editor = editCell ? compactCellPlan(editCell.line, editCell.day, editCell.slotNo) : null;
   const editorLinked = editor ? (resolvePlanStyle(rows, planStyleText(editor)) || rows.find(r=>r.id===editor?.row_id)) : null;
   const editorAll = editor ? lineDayPlanRows(planRows, activeDept, editCell.line, editCell.day) : [];
@@ -5943,18 +5984,22 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
                 const effChange = effectiveChangeoverForSlot(line, day, slotNo, p);
                 const need = has && planStyleText(p) ? planNeedBreakdown({ ...p, changeover:effChange }, rows, planRows, activeDept, line, day, ledger) : null;
                 const chInfo = has && effChange ? changeoverHoursInfo(line, day, slotNo, p) : null;
+                const actualInfo = has ? cellActualInfo(p) : null;
+                const daySummary = slotNo === 1 ? lineDayHoursSummary(line, day) : null;
                 const tone = need?.afterThisSlot < 0 ? "late" : need?.projectedFeed > 0 && need?.availableForThisSlot >= n(p.planned_qty) ? "warn" : has ? "ok" : "empty";
                 return <td key={`${line}-${day}-${slotNo}`} className={`compact-plan-cell ${tone} ${effChange ? "changeover" : ""}`}>
                   <button className="compact-plan-cell-btn" onClick={()=>{ setEditCell({ line, day, slotNo }); setEditorAutoOpen(false); }}>
                     {has ? <>
-                      <div className="c-style">{planStyleText(p)}</div>
+                      <div className="c-style">{planStyleText(p)}{p.cover_recovery_slot ? <span className="mt-chip mt-purple" style={{marginLeft:5}}>Cover</span> : null}</div>
                       <div className="c-brand">{p.buyer || linked?.buyer || ""}</div>
                       <div className="c-metrics"><b>{fmt(n(p.planned_qty))}</b><span>{fmt(n(p.ops))} ops</span></div>
                       <div className="c-note">{cellTinyText(p) || (effChange ? "changeover" : "")}</div>
+                      {actualInfo && <div className={`c-ready ${actualInfo.tone}`}>Actual {fmt(actualInfo.achieved)} / Plan {fmt(actualInfo.planned)}{actualInfo.done ? " · done" : ""}</div>}
                       {need && <div className={`c-ready ${planLoadReadyInfo({ ...p, changeover:effChange }, rows, planRows, activeDept, line, day, ledger).tone}`}>Load: {planLoadReadyShort({ ...p, changeover:effChange }, rows, planRows, activeDept, line, day, ledger)}</div>}
                       {effChange && chInfo && <div className="c-changeover">Changeover · <span className="lost">Lost {fmt(chInfo.lost)}h</span> · <span className="left">{fmt(chInfo.productive)}h production</span> · <span className="free">{fmt(chInfo.after)}h free</span></div>}
                       {showTargets && <div className="c-auto">{effChange ? "CO" : "100%"} · {fmt(planHours(p))}h · auto {fmt(planAutoQtyFromTarget({ ...p, changeover:effChange }))}</div>}
                     </> : <span className="compact-add">+ add</span>}
+                    {daySummary && daySummary.hasAny && <div className={`c-daytotal ${daySummary.free>0.05?"warn":"ok"}`}>{fmt(daySummary.used)}h/8h{daySummary.free>0.05?` · ${fmt(daySummary.free)}h not planned`:""}</div>}
                   </button>
                 </td>;
               })}
@@ -5977,6 +6022,10 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
         </div>
         <details className="mt-plan-available-picker no-print"><summary>Available styles to load / stitch first — cross-check by feed</summary><div className="mt-plan-style-picks">{availableStylePickerRows(rows, planRows, activeDept, editCell.day, ledger).slice(0,40).map(({row,available,ready})=><button key={row.id} className={`mt-plan-style-pick ${ready.tone}`} onClick={()=>updateCell(editCell.line,editCell.day,editCell.slotNo,{style_input:row.style_no})}><b>{row.style_no}</b><span>{row.buyer} · possible {fmt(available)} · {ready.label}</span></button>)}</div></details>
         {planStyleText(editor) && !editorLinked && <div className="mt-plan-add-style"><b>Not in Styles master.</b><button className="mt-btn primary" onClick={()=>quickAddStyleFromCell(editCell.line,editCell.day,editCell.slotNo)}>+ Add style detail</button></div>}
+        {(() => { const ai = editor && planStyleText(editor) ? cellActualInfo(editor) : null; if (!ai) return null; return <div className={`mt-plan-actual-sync ${ai.tone}`}>
+          <div><b>Actual so far:</b> {fmt(ai.achieved)} <span className="mt-small">/ plan {fmt(ai.planned)}</span>{ai.done ? <span className="mt-chip mt-ok" style={{marginLeft:6}}>Target met</span> : null}</div>
+          <button className="mt-btn ghost" onClick={()=>syncFromActual(editCell.line,editCell.day,editCell.slotNo)}>Sync from actual → free hours for next style</button>
+        </div>; })()}
         <button className="mt-plan-engine-toggle" onClick={()=>setEditorAutoOpen(v=>!v)}><span>⚙ Auto target, changeover lost time, projected feed & cascade</span><b>{editorAutoOpen ? "Hide ▲" : "Optional ▾"}</b></button>
         {editorAutoOpen && <div className="mt-plan-editor-engine">
           <div className="mt-editor-fields-grid compact">
@@ -6208,8 +6257,15 @@ function ManagerDeptCards({ taskRows, infoRows, query="" }){
   </details>)}</div>;
 }
 
+const RESIDUAL_ACTIONS = [
+  { key:"apply_cascade", label:"Apply cascade for the balance" },
+  { key:"short_close", label:"Short close the balance" },
+  { key:"no_change", label:"No plan change — line absorbs balance" },
+  { key:"manual_edit", label:"Manual board edit for the balance" },
+];
+function residualActionLabel(key){ return RESIDUAL_ACTIONS.find(x=>x.key===key)?.label || ""; }
 function ManagerDecisionPanel({ draft, onClose, onSave }){
-  const [form,setForm] = useState(()=>({ cover_qty:n(draft?.impact?.Short_Qty || 0), cover_date:nextProductionMonday(today()), line:draft?.impact?.Line || "", reason:"", create_plan_slot:true }));
+  const [form,setForm] = useState(()=>({ cover_qty:n(draft?.impact?.Short_Qty || 0), cover_date:nextProductionMonday(today()), line:draft?.impact?.Line || "", reason:"", create_plan_slot:true, residual_action:"" }));
   if (!draft) return null;
   const impact = draft.impact || {};
   const decision = draft.decision;
@@ -6217,16 +6273,32 @@ function ManagerDecisionPanel({ draft, onClose, onSave }){
   const short = n(impact.Short_Qty);
   const set = (k,v)=>setForm(f=>({ ...f, [k]:v }));
   const notePlaceholder = decision === "part_cover" ? "Line agreed to recover by extra output before due date" : decision === "short_close" ? "Management approved short close" : decision === "apply_cascade" ? "Push remaining variance into future plan after review" : decision === "no_change" ? "Variance accepted / line will manage inside existing plan" : "Manager will edit weekly board manually";
+  const coverQtyClamped = Math.min(n(form.cover_qty), short || n(form.cover_qty));
+  const residual = decision === "part_cover" ? Math.max(0, short - coverQtyClamped) : 0;
+  const needsResidualAction = residual > 0 && !form.residual_action;
+  const reasonMissing = !String(form.reason||"").trim();
+  const dateMissing = decision === "part_cover" && !String(form.cover_date||"").trim();
+  const qtyMissing = decision === "part_cover" && !coverQtyClamped;
+  const saveDisabled = reasonMissing || dateMissing || qtyMissing || needsResidualAction;
   return <div className="mt-update-backdrop no-print"><div className="mt-manager-decision-modal"><div className="head"><div><b>{title}</b><div className="mt-small">{impact.Style} · {impact.Date} · {impact.Dept} · {impact.Line}</div></div><button className="mt-btn ghost" onClick={onClose}>Close</button></div><div className="body">
     <div className="mt-manager-decision-kpis"><div><span>Plan</span><b>{fmt(impact.Planned)}</b></div><div><span>Actual</span><b>{fmt(impact.Actual)}</b></div><div><span>Short</span><b>{fmt(impact.Short_Qty)}</b></div><div><span>Future plan</span><b>{fmt(impact.Future_Qty)}</b></div></div>
     {decision === "part_cover" ? <>
       <div className="mt-speed-note"><b>Floating recovery bucket:</b> this is <u>cover by date</u>, not fixed to one day. Extra production of the same style before/on the due date automatically reduces the open cover balance.</div>
       <div className="mt-editor-grid"><label><span className="mt-toolbar-label">Cover qty</span><input className="mt-input" type="number" value={form.cover_qty} onChange={e=>set("cover_qty", e.target.value)} /></label><label><span className="mt-toolbar-label">Cover by</span><input className="mt-input" type="date" value={form.cover_date} onChange={e=>set("cover_date", e.target.value)} /></label><label><span className="mt-toolbar-label">Recovery line</span><input className="mt-input" value={form.line} onChange={e=>set("line", e.target.value)} /></label></div>
       <label className="mt-check-row"><input type="checkbox" checked={!!form.create_plan_slot} onChange={e=>set("create_plan_slot", e.target.checked)} /> Show/update recovery target in weekly plan on the due date</label>
-      <div className="mt-small">Net cascade held now: {fmt(Math.max(0, short - n(form.cover_qty)))} · Cover commitment: {fmt(form.cover_qty)} by {form.cover_date || "—"}</div>
+      {residual > 0 ? <div className="mt-locked-note" style={{marginTop:8}}>
+        <div style={{marginBottom:6}}><b>{fmt(residual)} pcs of this short will NOT be covered</b> by the qty above. This balance cannot be left silent — pick what happens to it before saving.</div>
+        <select className="mt-select" style={{width:"100%"}} value={form.residual_action} onChange={e=>set("residual_action", e.target.value)}>
+          <option value="">Choose next action for the {fmt(residual)} balance…</option>
+          {RESIDUAL_ACTIONS.map(a=><option key={a.key} value={a.key}>{a.label}</option>)}
+        </select>
+      </div> : <div className="mt-small" style={{marginTop:8}}>Cover qty fully matches the short — no balance left over.</div>}
     </> : null}
     <label><span className="mt-toolbar-label">Reason / manager note</span><textarea className="mt-input" rows={3} value={form.reason} placeholder={notePlaceholder} onChange={e=>set("reason", e.target.value)} /></label>
-    <div className="actions"><button className="mt-btn ghost" onClick={onClose}>Cancel</button><button className="mt-btn primary" onClick={()=>onSave({ ...form, reason:String(form.reason || notePlaceholder).trim() })}>Save manager decision</button></div>
+    {saveDisabled ? <div className="mt-small" style={{color:"var(--fg-late)", fontWeight:800}}>
+      {reasonMissing ? "Reason is required. " : ""}{dateMissing ? "Cover-by date is required. " : ""}{qtyMissing ? "Cover qty is required. " : ""}{needsResidualAction ? "Pick a next action for the balance above. " : ""}
+    </div> : null}
+    <div className="actions"><button className="mt-btn ghost" onClick={onClose}>Cancel</button><button className="mt-btn primary" disabled={saveDisabled} onClick={()=>onSave({ ...form, cover_qty:coverQtyClamped, reason:String(form.reason || "").trim() })}>Save manager decision</button></div>
   </div></div></div>;
 }
 
@@ -6258,8 +6330,11 @@ function ManagerActionCenter({ rows, planRows, setPlanRows, ledger, onPlanUpsert
     let extraRows = [];
     if (decision === "part_cover") {
       const coverQty = Math.min(n(form.cover_qty), n(impact.Short_Qty) || n(form.cover_qty));
+      const residual = Math.max(0, n(impact.Short_Qty) - coverQty);
       if (!coverQty || !String(form.cover_date||"").trim() || !String(form.reason||"").trim()) return;
-      patch = { ...patch, cover_qty:coverQty, cover_commitment_qty:coverQty, cover_date:form.cover_date, cover_due_date:form.cover_date, cover_status:"Open cover commitment", cover_recovered_qty:0, cover_remaining_qty:coverQty, status:`Manager reviewed - cover by ${form.cover_date} (${fmt(coverQty)})`, remarks:[plan.remarks, `COVER COMMITMENT: ${fmt(coverQty)} by ${form.cover_date}. ${form.reason}`].filter(Boolean).join(" | ") };
+      if (residual > 0 && !String(form.residual_action||"").trim()) return; // balance cannot be left silent
+      const residualNote = residual > 0 ? `BALANCE ${fmt(residual)} pcs: ${residualActionLabel(form.residual_action)}.` : "";
+      patch = { ...patch, cover_qty:coverQty, cover_commitment_qty:coverQty, cover_date:form.cover_date, cover_due_date:form.cover_date, cover_status:"Open cover commitment", cover_recovered_qty:0, cover_remaining_qty:coverQty, cover_residual_qty:residual, cover_residual_action:form.residual_action || "", status:residual>0 ? `Manager reviewed - cover ${fmt(coverQty)} by ${form.cover_date}; balance ${fmt(residual)}: ${residualActionLabel(form.residual_action)}` : `Manager reviewed - cover by ${form.cover_date} (${fmt(coverQty)})`, remarks:[plan.remarks, `COVER COMMITMENT: ${fmt(coverQty)} by ${form.cover_date}. ${form.reason}`, residualNote].filter(Boolean).join(" | ") };
       if (form.create_plan_slot) {
         const line = String(form.line || impact.Line || plan.line || "Dept total");
         const existingSameDay = (planRows||[]).filter(p=>String(p.dept)===String(plan.dept) && String(p.line||"")===line && String(p.plan_date||"").slice(0,10)===String(form.cover_date).slice(0,10));
