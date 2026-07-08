@@ -5108,12 +5108,24 @@ function defaultOpsForStyle(row){
 }
 function achievedForPlan(plan, rows, ledger=[]){
   const date = String(plan.plan_date||"").slice(0,10);
-  const style = plan.style_no;
+  const style = String(planStyleText(plan) || plan.style_no || "").trim().toUpperCase();
   const dept = plan.dept;
-  const line = plan.line || "";
-  const fromLedger = (ledger||[]).filter(e=>String(e.entry_date||"").slice(0,10)===date && String(e.style_no||e.style||"")===style && String(e.stage||"")===dept && ["good_output","output","receive","received"].includes(String(e.entry_type||e.type||"").toLowerCase()));
+  const line = String(plan.line || "").trim();
+  const outputTypes = ["good_output","output","receive","received","alter_clear"];
+  const fromLedger = (ledger||[]).filter(e=>{
+    if (String(e.entry_date||"").slice(0,10) !== date) return false;
+    if (String(e.stage||"") !== dept) return false;
+    if (!outputTypes.includes(String(e.entry_type||e.type||"").toLowerCase())) return false;
+    const eStyle = String(e.style_no||e.style||"").trim().toUpperCase();
+    if (eStyle !== style) return false;
+    if (dept === "stitching" && line) {
+      const eLine = String(e.line || e.stitching_line || "").trim();
+      if (eLine && eLine !== line) return false; // blank line on old ledger rows is not treated as a mismatch
+    }
+    return true;
+  });
   if (fromLedger.length) return fromLedger.reduce((a,e)=>a+n(e.qty ?? e.delta ?? e.good_qty),0);
-  const row = rows.find(r=>r.id===plan.row_id || (r.style_no===style && r.order_no===plan.order_no));
+  const row = rows.find(r=>r.id===plan.row_id || (String(r.style_no||"").trim().toUpperCase()===style && r.order_no===plan.order_no));
   if (!row) return 0;
   const st = sdata(row, dept);
   if (dept === "stitching" && line && row.line !== line) return 0;
@@ -5357,7 +5369,7 @@ function ledgerQtyUpTo(ledger=[], row, stage, day, types=["good_output","output"
   }).reduce((a,e)=>a+n(e.qty ?? e.delta ?? e.good_qty ?? e.output),0);
 }
 function actualStageOutputAsOf(row, dept, day, ledger=[]){
-  const fromLedger = ledgerQtyUpTo(ledger, row, dept, day, ["good_output","output","receive","received"]);
+  const fromLedger = ledgerQtyUpTo(ledger, row, dept, day, ["good_output","output","receive","received","alter_clear"]);
   if (fromLedger > 0) return fromLedger;
   return n(sdata(row, dept).output);
 }
@@ -5380,7 +5392,11 @@ function remainingForStyleAsOf(row, dept, day, planRows, ledger=[]){
   const actualDone = actualStageOutputAsOf(row, dept, day, ledger);
   const plannedBefore = plannedQtyUpTo(planRows, row, dept, day, false);
   const shortClosedBefore = (planRows||[]).some(p=>(p.row_id===row.id || styleKeyOf(p)===styleKeyOf(row)) && String(p.dept)===String(dept) && String(p.plan_date||"").slice(0,10)<String(day||"").slice(0,10) && p.short_close);
-  const consumed = shortClosedBefore ? feedInfo.feed : actualDone + plannedBefore;
+  // Ground truth is actual completed pieces, not planned qty. Adding plannedBefore on top of actualDone would
+  // double-subtract the same days once real DPR entries exist for them (plan for a past day almost always has
+  // a matching actual by the time we look at it), silently hiding real shortfall from cascade/remaining math.
+  // Only fall back to plannedBefore for days genuinely without any actual/ledger history yet (order not started).
+  const consumed = shortClosedBefore ? feedInfo.feed : (actualDone > 0 || plannedBefore === 0 ? actualDone : plannedBefore);
   return { remaining:Math.max(0, n(feedInfo.feed)-n(consumed)), feed:n(feedInfo.feed), consumed:n(consumed), actualDone, plannedBefore, prevStage:feedInfo.prevStage, note:feedInfo.note, shortClosedBefore };
 }
 
@@ -5557,9 +5573,14 @@ function planImpactReviewRows(planRows=[], rows=[], ledger=[]){
         && String(f.dept)===String(p.dept)
         && String(f.plan_date||"").slice(0,10) > String(p.plan_date||"").slice(0,10)
       ).reduce((a,f)=>a+planRowEffectiveQty(f),0);
-      const reviewed = p.manager_review_status === "reviewed" || String(p.status || "").toLowerCase().includes("manager reviewed") || String(p.status || "").toLowerCase().includes("manager short close");
-      const status = reviewed ? "Manager reviewed" : !planned ? "No plan qty" : short>0 ? "Pending manager review — short" : excess>0 ? "Pending manager review — excess" : "Matched";
-      const suggested = reviewed
+      const hasSnapshot = p.manager_reviewed_actual_qty !== undefined && p.manager_reviewed_actual_qty !== null && p.manager_reviewed_actual_qty !== "";
+      const reviewedRaw = p.manager_review_status === "reviewed" || String(p.status || "").toLowerCase().includes("manager reviewed") || String(p.status || "").toLowerCase().includes("manager short close");
+      const stale = reviewedRaw && hasSnapshot && n(p.manager_reviewed_actual_qty) !== achieved;
+      const reviewed = reviewedRaw && !stale;
+      const status = stale ? "Manager reviewed — DPR changed, recheck" : reviewed ? "Manager reviewed" : !planned ? "No plan qty" : short>0 ? "Pending manager review — short" : excess>0 ? "Pending manager review — excess" : "Matched";
+      const suggested = stale
+        ? `Reviewed earlier when actual was ${fmt(n(p.manager_reviewed_actual_qty))}; DPR now shows ${fmt(achieved)} for this date. Re-check the earlier decision: ${p.manager_decision || p.status || "reviewed"}.`
+        : reviewed
         ? `Decision saved: ${p.manager_decision || p.status || "reviewed"}.`
         : short>0
           ? `Short ${fmt(short)}. Manager: apply cascade, line cover promise, short close, manual edit, or no plan change.`
@@ -5595,7 +5616,7 @@ function planRowsBetweenDates(planRows=[], dept="", style="", startDate="", endD
 function actualForStyleDeptDate(style="", dept="", date="", rows=[], ledger=[]){
   const st = String(style || "").trim().toUpperCase();
   const day = String(date || "").slice(0,10);
-  const fromLedger = (ledger||[]).filter(e=>String(e.entry_date||"").slice(0,10)===day && String(e.stage||"")===String(dept||"") && String(e.style_no||e.style||"").trim().toUpperCase()===st && ["good_output","output","receive","received"].includes(String(e.entry_type||e.type||"").toLowerCase()));
+  const fromLedger = (ledger||[]).filter(e=>String(e.entry_date||"").slice(0,10)===day && String(e.stage||"")===String(dept||"") && String(e.style_no||e.style||"").trim().toUpperCase()===st && ["good_output","output","receive","received","alter_clear"].includes(String(e.entry_type||e.type||"").toLowerCase()));
   if (fromLedger.length) return fromLedger.reduce((a,e)=>a+n(e.qty ?? e.delta ?? e.good_qty),0);
   const row = (rows||[]).find(r=>String(r.style_no||"").trim().toUpperCase()===st);
   if (!row) return 0;
@@ -6218,11 +6239,26 @@ function styleActualBreakupRows(row){
 function stylePlanDrillRows(row, planRows=[], ledger=[]){
   if (!row) return [];
   const key = styleKeyOf(row);
-  return (planRows||[]).filter(p=>p.row_id===row.id || styleKeyOf(p)===key || planStyleText(p).toUpperCase()===String(row.style_no||"").toUpperCase()).sort((a,b)=>String(a.plan_date).localeCompare(String(b.plan_date)) || String(a.dept).localeCompare(String(b.dept)) || String(a.line).localeCompare(String(b.line)) || planSlotNo(a)-planSlotNo(b)).map(p=>{
+  const base = (planRows||[]).filter(p=>p.row_id===row.id || styleKeyOf(p)===key || planStyleText(p).toUpperCase()===String(row.style_no||"").toUpperCase()).sort((a,b)=>String(a.plan_date).localeCompare(String(b.plan_date)) || String(a.dept).localeCompare(String(b.dept)) || String(a.line).localeCompare(String(b.line)) || planSlotNo(a)-planSlotNo(b)).map(p=>{
     const need = planNeedBreakdown(p, [row], planRows, p.dept || "stitching", p.line || "", p.plan_date, ledger);
     const ach = achievedForPlan(p, [row], ledger);
     return { Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Slot:planSlotNo(p), Style:planStyleText(p), Plan_Qty:planRowEffectiveQty(p), Load_Ready:planLoadReadyShort(p, [row], planRows, p.dept || "stitching", p.line || "", p.plan_date, ledger), Achieved_Qty:ach, Balance:Math.max(0, planRowEffectiveQty(p)-ach), Actual_Ready_Feed:need.actualReadyFeed, Projected_Upstream_Feed:need.projectedFeed, Available_For_This_Slot:need.availableForThisSlot, After_This_Slot:need.afterThisSlot, Feed_Status:need.status, Hours:planHours(p), OPS:n(p.ops), Finish_Date:p.stitching_end_date||"", Short_Close:p.short_close?"Yes":"No", Remarks:p.remarks||"" };
   });
+  // Cumulative plan vs actual through each date (same date's slots share one cumulative snapshot).
+  const dateTotals = {};
+  base.forEach(r=>{
+    if (!dateTotals[r.Date]) dateTotals[r.Date] = { plan:0, ach:0 };
+    dateTotals[r.Date].plan += n(r.Plan_Qty);
+    dateTotals[r.Date].ach += n(r.Achieved_Qty);
+  });
+  const cumByDate = {};
+  let cumPlan = 0, cumAch = 0;
+  Object.keys(dateTotals).sort().forEach(d=>{
+    cumPlan += dateTotals[d].plan;
+    cumAch += dateTotals[d].ach;
+    cumByDate[d] = { cumPlan, cumAch };
+  });
+  return base.map(r=>({ ...r, Cum_Plan_Qty:cumByDate[r.Date].cumPlan, Cum_Achieved_Qty:cumByDate[r.Date].cumAch, Cum_Balance:Math.max(0, cumByDate[r.Date].cumPlan - cumByDate[r.Date].cumAch) }));
 }
 
 function planActionToneClass(tone){ return tone === "late" ? "late" : tone === "warn" ? "warn" : "ok"; }
@@ -6295,12 +6331,15 @@ function StylePlanDrilldown({ rows, planRows, ledger, selectedText, setSelectedT
   const planned = planDrill.reduce((a,r)=>a+n(r.Plan_Qty),0);
   const achieved = planDrill.reduce((a,r)=>a+n(r.Achieved_Qty),0);
   const openOrder = linked ? Math.max(0, n(linked.order_qty)-actualBreakup.reduce((a,r)=>Math.max(a,n(r.Good_Output)),0)) : 0;
+  const todayIso = today();
+  const cumThroughToday = planDrill.filter(r=>String(r.Date||"").slice(0,10) <= todayIso).slice(-1)[0];
   return <div className="mt-card" style={{marginTop:12}}>
     <div className="mt-section"><div className="mt-style-drill-head"><div><h3 className="mt-panel-title">Style Plan / Actual Breakup</h3><div className="mt-panel-sub">Select one style to see how it is planned, achieved, WIP-fed, projected from upstream plan, and balanced department-wise.</div></div><div className="mt-toolbar no-print"><span className="mt-toolbar-label">Style</span><input className="mt-input" list="planning-style-drill-list" value={selectedText || ""} onChange={e=>setSelectedText(e.target.value)} placeholder="Select / type style" style={{minWidth:250}}/><datalist id="planning-style-drill-list">{options.map(x=><option key={x} value={x}/>)}</datalist></div></div></div>
     {!linked ? <div className="mt-section"><span className="mt-chip mt-warn">Select a linked style to see plan and actual breakup.</span></div> : <>
       <div className="mt-section"><div className="mt-style-drill-kpis"><div className="mt-style-drill-kpi"><div className="label">Order Qty</div><div className="value">{fmt(linked.order_qty)}</div></div><div className="mt-style-drill-kpi"><div className="label">Planned</div><div className="value">{fmt(planned)}</div></div><div className="mt-style-drill-kpi"><div className="label">Achieved Against Plan</div><div className="value">{fmt(achieved)}</div></div><div className="mt-style-drill-kpi"><div className="label">Plan Balance</div><div className="value">{fmt(Math.max(0,planned-achieved))}</div></div><div className="mt-style-drill-kpi"><div className="label">Order Open Snapshot</div><div className="value">{fmt(openOrder)}</div></div></div><span className="mt-chip mt-info">{linked.order_no}</span> <span className="mt-chip mt-muted">{linked.buyer}</span> <span className="mt-chip mt-muted">{linked.colour}</span> <span className="mt-chip mt-muted">{linked.component}</span></div>
+      {cumThroughToday && <div className="mt-section"><div className="mt-speed-note"><b>Cumulative through {cumThroughToday.Date}:</b> Plan {fmt(cumThroughToday.Cum_Plan_Qty)} · Actual {fmt(cumThroughToday.Cum_Achieved_Qty)} · {cumThroughToday.Cum_Balance>0 ? <span style={{color:"var(--fg-late)",fontWeight:800}}>Behind by {fmt(cumThroughToday.Cum_Balance)}</span> : <span style={{color:"var(--fg-ok)",fontWeight:800}}>On/ahead of cumulative plan</span>}. Full day-by-day cumulative trail is in the detail table below.</div></div>}
       <div className="mt-section"><div className="mt-plan-reading-strip"><span className="mt-plan-reading-pill">Planned {fmt(planned)}</span><span className="mt-plan-reading-pill">Done {fmt(achieved)}</span><span className="mt-plan-reading-pill">Balance {fmt(Math.max(0,planned-achieved))}</span><span className="mt-plan-reading-pill">Open order snapshot {fmt(openOrder)}</span></div><div className="mt-plan-action-grid">{planActionRows.slice(0,8).map((r,i)=><div key={`${r.Date}-${r.Line}-${r.Style}-${i}`} className={`mt-plan-action-card ${planActionToneClass(r.tone)}`}><div className="mt-plan-action-top"><span>{r.Day} · {r.Line}</span><span>{r.Status}</span></div><div className="mt-plan-action-style">{r.Style}</div><div className="mt-plan-action-reading">Plan {fmt(r.Plan_Qty)} · Done {fmt(r.Done)} · Bal {fmt(r.Balance)} · Load {r.Load}</div><div className="mt-plan-action-next">{r.Next_Action}</div></div>)}</div>{!planActionRows.length && <span className="mt-chip mt-muted">No plan slots found for this style.</span>}</div>
-      <div className="mt-section"><details className="mt-plan-collapse"><summary><span>Open detailed style plan table</span><span className="mt-chip mt-muted">{fmt(planDrill.length)} rows</span></summary><div className="mt-plan-collapse-body"><SimpleTable title="Style plan slots" sub="Detailed plan/load table for audit or export; daily reading is shown above." rows={planDrill} empty="No plan rows found for this style." /></div></details></div>
+      <div className="mt-section"><details className="mt-plan-collapse" open><summary><span>Open detailed style plan table — with running cumulative</span><span className="mt-chip mt-muted">{fmt(planDrill.length)} rows</span></summary><div className="mt-plan-collapse-body"><SimpleTable title="Style plan slots" sub="Cum. Plan / Cum. Actual show the running total through that date, so you can see if the style is ahead or behind cumulatively — not just day-by-day." rows={planDrill} empty="No plan rows found for this style." /></div></details></div>
       <div className="mt-section"><details className="mt-plan-collapse"><summary><span>Open department actual / WIP breakup</span><span className="mt-chip mt-muted">expand</span></summary><div className="mt-plan-collapse-body"><SimpleTable title="Department actual / WIP breakup" sub="Actual production snapshot by department: feed, good output, issued forward, R/A/M and open work." rows={actualBreakup} empty="No actual breakup available." /></div></details></div>
     </>}
   </div>;
@@ -6318,12 +6357,17 @@ function SimplePlanReadingView({ rows, planRows, ledger, activeDept, weekDays, m
     acc.plan += plan; acc.achieved += achieved; acc.balance += Math.max(0, plan-achieved); acc.excess += Math.max(0, achieved-plan); acc.hours += planHours(p); acc.ops += n(p.ops);
     return acc;
   }, { plan:0, achieved:0, balance:0, excess:0, hours:0, ops:0 });
+  const todayIso = today();
+  let __cumPlan = 0, __cumAch = 0;
   const dayRows = weekDays.map(day=>{
     const dayPlans = weekPlans.filter(p=>String(p.plan_date||"").slice(0,10)===day);
     const plan = dayPlans.reduce((a,p)=>a+n(p.planned_qty),0);
     const achieved = dayPlans.reduce((a,p)=>a+achievedForPlan(p, rows, ledger),0);
     const styles = uniqueList(dayPlans.map(planStyleText).filter(Boolean));
-    return { Date:day, Day:shortDayLabel(day), Styles:styles.join(", "), Planned_Qty:plan, Achieved_Qty:achieved, Balance:Math.max(0,plan-achieved), Achievement:plan ? `${Math.round(achieved*1000/plan)/10}%` : "—", Plan_Hours:dayPlans.reduce((a,p)=>a+planHours(p),0), OPS:Object.values(dayPlans.reduce((m,p)=>{ const k=String(p.line||"Dept total"); m[k]=Math.max(n(m[k]), n(p.ops)); return m; },{})).reduce((a,v)=>a+n(v),0) };
+    const crossed = day <= todayIso;
+    __cumPlan += plan;
+    if (crossed) __cumAch += achieved;
+    return { Date:day, Day:shortDayLabel(day), Styles:styles.join(", "), Planned_Qty:plan, Achieved_Qty:achieved, Balance:Math.max(0,plan-achieved), Achievement:plan ? `${Math.round(achieved*1000/plan)/10}%` : "—", Cum_Plan_Qty:__cumPlan, Cum_Achieved_Qty:crossed ? __cumAch : "not yet due", Cum_Balance:crossed ? Math.max(0,__cumPlan-__cumAch) : "—", Plan_Hours:dayPlans.reduce((a,p)=>a+planHours(p),0), OPS:Object.values(dayPlans.reduce((m,p)=>{ const k=String(p.line||"Dept total"); m[k]=Math.max(n(m[k]), n(p.ops)); return m; },{})).reduce((a,v)=>a+n(v),0) };
   });
   const lineRows = lines.map(line=>{
     const lp = weekPlans.filter(p=>String(p.line || planCellLineKey(activeDept,line))===String(planCellLineKey(activeDept,line)));
@@ -6482,7 +6526,7 @@ function ManagerActionCenter({ rows, planRows, setPlanRows, ledger, onPlanUpsert
     const plan = (planRows||[]).find(p=>String(p.id)===String(impact.Plan_ID));
     if (!plan) return setDecisionDraft(null);
     const now = new Date().toISOString();
-    let patch = { manager_review_status:"reviewed", manager_decision:decision, manager_reviewed_by:currentUserName(), manager_reviewed_at:now, cover_reason:form.reason || "" };
+    let patch = { manager_review_status:"reviewed", manager_decision:decision, manager_reviewed_by:currentUserName(), manager_reviewed_at:now, manager_reviewed_actual_qty:n(impact.Actual), cover_reason:form.reason || "" };
     let extraRows = [];
     if (decision === "part_cover") {
       const coverQty = Math.min(n(form.cover_qty), n(impact.Short_Qty) || n(form.cover_qty));
@@ -6553,6 +6597,14 @@ function PlanningView({ rows, planRows, setPlanRows, ledger, setRows, onPlanUpse
   const pva = planVsAchievedRows(visiblePlans, rows, ledger);
   const impactRows = planImpactReviewRows(planRows, rows, ledger).filter(r=>String(r.Dept)===stageLabel(activeDept));
   const projectedRows = projectedFeedRows(planRows, rows, activeDept, weekDays);
+  const todayIso = today();
+  const todayIdx = weekDays.indexOf(todayIso);
+  const isCurrentWeek = todayIdx >= 0;
+  const daysElapsed = isCurrentWeek ? weekDays.slice(0, todayIdx+1) : (todayIso > weekDays[weekDays.length-1] ? weekDays : []);
+  const wtdPlanRows = weekPlanRows.filter(p=>daysElapsed.includes(String(p.plan_date||"").slice(0,10)));
+  const wtdPlan = wtdPlanRows.reduce((a,p)=>a+coverAdjustedPlanQty(p, planRows, rows, ledger),0);
+  const wtdActual = wtdPlanRows.reduce((a,p)=>a+achievedForPlan(p, rows, ledger),0);
+  const todayLongLabel = isCurrentWeek ? parseYmd(todayIso).toLocaleString("en-US",{weekday:"long", day:"numeric", month:"short"}) : "";
   function exportWeekDetail(){
     exportXlsx(`production_${activeDept}_plan_detail_${normalizedWeekStart}.xlsx`, [
       { name:"Plan Detail", rows:weekPlanRows.map(p=>({ Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Slot:p.slot_no || 1, Style:p.style_no || p.style_input, Buyer:p.buyer, Qty:coverAdjustedPlanQty(p, planRows, rows, ledger), Full_Day_Target:p.eight_hr_target || "", Plan_Hours:p.remaining_hours || "", Changeover_Lost_Time:p.changeover?"Yes":"No", Qty_Mode:p.qty_auto_mode?"Auto":"Manual", End_Date:p.stitching_end_date, OPS:p.ops, Short_Close:p.short_close?"Yes":"No", Remarks:p.remarks, Status:p.status })) },
@@ -6561,7 +6613,10 @@ function PlanningView({ rows, planRows, setPlanRows, ledger, setRows, onPlanUpse
       { name:"Projected Feed", rows:projectedRows }
     ]);
   }
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Planning — Entry Board / Simple View</h3><div className="mt-panel-sub">Use Entry Board for typing plans; switch to Simple View or Achieved Weekly for reading the week, entry-done status, target-vs-actual and balance without the heavy entry UI.</div></div>
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Planning — Entry Board / Simple View</h3><div className="mt-panel-sub">Use Entry Board for typing plans; switch to Simple View or Achieved Weekly for reading the week, entry-done status, target-vs-actual and balance without the heavy entry UI.</div>
+      {isCurrentWeek ? <div className="mt-speed-note" style={{marginTop:8}}><b>Today is {todayLongLabel}</b> — day {todayIdx+1} of {weekDays.length} in this working week ({stageLabel(activeDept)}). Week-to-date: Plan {fmt(wtdPlan)} · Actual {fmt(wtdActual)} · {wtdPlan-wtdActual>0 ? <span style={{color:"var(--fg-late)",fontWeight:800}}>Behind by {fmt(wtdPlan-wtdActual)}</span> : <span style={{color:"var(--fg-ok)",fontWeight:800}}>On/ahead of plan</span>}.</div>
+        : <div className="mt-locked-note" style={{marginTop:8}}>Viewing week of {normalizedWeekStart} — this is {todayIso < weekDays[0] ? "a future week" : "a past week"}, not the current week. <button className="mt-btn ghost" onClick={()=>setWeekStart(lineBoardWeekStart(today()))} style={{marginLeft:8}}>Jump to this week</button></div>}
+    </div>
     <div className="mt-section no-print"><div className="mt-filter-row"><button className={`mt-btn ${mode==="stitching"?"primary":"ghost"}`} onClick={()=>setMode("stitching")}>Stitching line board</button><button className={`mt-btn ${mode==="dept"?"primary":"ghost"}`} onClick={()=>setMode("dept")}>Other dept board</button>{mode==="dept" && <select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.filter(s=>!['stitching'].includes(s.key)).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>}<span className="mt-toolbar-label">Week</span><input className="mt-input" type="date" value={weekStart} onChange={e=>setWeekStart(e.target.value)}/><button className="mt-btn ghost" onClick={()=>setWeekStart(lineBoardWeekStart(today()))}>This week</button><button className="mt-btn ghost" onClick={()=>setWeekStart(nextProductionMonday(today()))}>Next week</button><button className={`mt-btn ${fitBoard?"active":"ghost"}`} onClick={()=>setFitBoard(v=>!v)}>Compact board</button><button className={`mt-btn ${showTargets?"active":"ghost"}`} onClick={()=>setShowTargets(v=>!v)}>{showTargets ? "Auto qty calculator: on" : "Auto qty calculator: off"}</button><span className="mt-toolbar-label">Plan View</span>{[["entry","Entry Board"],["simple","Simple View"],["achieved","Achieved Weekly"]].map(([k,l])=><button key={k} className={`mt-btn ${planViewMode===k?"active":"ghost"}`} onClick={()=>setPlanViewMode(k)}>{l}</button>)}<button className="mt-btn primary" onClick={exportWeekDetail}><Download size={14}/>Export plan detail</button>{planSaveState && <span className={`mt-chip ${statusClass(planSaveState.tone)}`}>{planSaveState.text}</span>}</div><div className="mt-plan-slim-note"><b>Simple mode:</b> board shows only style / qty / OPS / finish. Click a cell for auto-target, changeover, load-ready and cascade checks.</div><details className="mt-plan-collapse"><summary><span>Advanced P0 plan rules</span><span className="mt-chip mt-muted">expand</span></summary><div className="mt-plan-collapse-body mt-small">Plan cells autosave to <b>production_plan_rows</b>. Earlier running styles consume balance first. Changeover is fixed lost setup time only when style changes. Projected feed includes upstream plan that is ready by loading date with buffer days, but stays separate from actual-ready feed.</div></details></div>
     <div className="mt-section">{planViewMode === "entry" ? <PlanExcelLineBoard rows={rows} planRows={planRows} setPlanRows={setPlanRows} setRows={setRows} activeDept={activeDept} weekDays={weekDays} showTargets={showTargets} fit={fitBoard} ledger={ledger} onPlanUpsert={onPlanUpsert} onPlanDelete={onPlanDelete}/> : <SimplePlanReadingView rows={rows} planRows={planRows} ledger={ledger} activeDept={activeDept} weekDays={weekDays} mode={planViewMode}/>}</div>
     <div className="mt-section"><StylePlanDrilldown rows={rows} planRows={planRows} ledger={ledger} selectedText={selectedStylePlan} setSelectedText={setSelectedStylePlan}/></div>
@@ -6797,7 +6852,8 @@ function friendlyTableHeader(key){
     Source:"Source", Source_Type:"Source type", Short_Close:"Short close", Remarks:"Note", End_Date:"End", OPS:"OPS", Hours:"Hrs", Plan_Hours:"Hrs",
     Feed:"Feed", Output:"Good", Open_Work:"Open", Ready_To_Issue:"Ready", RAM:"R/A/M", Good:"Good", Issued:"Issued",
     Original_Short:"Original short", Committed_Qty:"Committed", Recovered_Qty:"Recovered", Remaining_Qty:"Open", Due_By:"Due by", Reason:"Reason", Reviewed_By:"Reviewed by",
-    Task:"Task", Suggested_Action:"Action", Signal:"Signal", Miss_Count:"Misses", Total_Short:"Total short", Future_Slots:"Future slots", Future_Qty:"Future qty"
+    Task:"Task", Suggested_Action:"Action", Signal:"Signal", Miss_Count:"Misses", Total_Short:"Total short", Future_Slots:"Future slots", Future_Qty:"Future qty",
+    Cum_Plan_Qty:"Cum. Plan (till date)", Cum_Achieved_Qty:"Cum. Actual (till date)", Cum_Balance:"Cum. Balance"
   };
   return map[key] || String(key || "").replace(/_/g," ").replace(/\b\w/g,m=>m.toUpperCase());
 }
