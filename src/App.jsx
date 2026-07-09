@@ -4374,12 +4374,39 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
   const selectedStyleHistory = selectedStyleRow ? styleHistoryRows(selectedStyleRow, styleDeptFilter) : [];
   const selectedStyleDeptOptions = selectedStyleRow ? routeFor(selectedStyleRow) : [];
   function styleCorrectVal(key, size){ const k = `${key}|${size}`; return styleCorrectDraft[k] !== undefined ? styleCorrectDraft[k] : ""; }
-  function setStyleCorrectVal(key, size, val){ setStyleCorrectDraft(d=>({ ...d, [`${key}|${size}`]: String(val).replace(/[^0-9]/g,"") })); }
+  function setStyleCorrectVal(key, size, val){ setStyleCorrectDraft(d=>({ ...d, [`${key}|${size}`]: String(val).replace(/[^0-9-]/g,"").replace(/(?!^)-/g,"") })); }
   function groupKeyOf(g){ return `${g.date}|${g.stage}|${g.type}`; }
+  function groupHasSizeSplit(g){ return Object.values(g.sizes || {}).some(v=>n(v)!==0); }
+  async function voidStyleEntry(row, g){
+    const field = fieldForEntryType(g.type);
+    const hasSplit = groupHasSizeSplit(g);
+    // Build reversal changes: cancel every size that has a value, or the lump total if size-less.
+    const changes = hasSplit
+      ? sizesFor(row).filter(sz=>n(g.sizes[sz])!==0).map(sz=>{ const oldQty=n(g.sizes[sz]); return { row, size:sz, oldQty, newQty:0, delta:-oldQty }; })
+      : [{ row, size:"", oldQty:n(g.total), newQty:0, delta:-n(g.total) }];
+    if (!changes.length || changes.every(c=>!c.delta)) { alert("Nothing to delete — this entry is already zero."); return; }
+    if (!window.confirm(`DELETE / VOID this entry?\n\n${g.date} · ${stageLabel(g.stage)} · ${registerActivityLabel(g.type)} for ${row.style_no}\nCurrent total: ${fmt(g.total)}\n\nThis posts a reversal that cancels it to zero and removes its quantity from WIP. The original entry and this reversal both stay visible in Register for audit — production data is never silently erased. Continue?`)) return;
+    const reason = window.prompt("Reason for deleting/voiding this entry (required):", "Wrong entry / duplicate — voided from style view") || "";
+    if (!reason.trim()) { alert("A reason is required to void an entry."); return; }
+    const newLedger = buildLedgerRows({ changes, stage:g.stage, field, entryDate:g.date, reason:reason.trim(), source:"dpr_style_view_void" });
+    const sharedResult = await saveLedgerToSupabase(newLedger, field);
+    if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
+      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
+      if (!window.confirm(`Shared Supabase save did not confirm: ${msg}\n\nSave locally in this browser anyway?`)) return;
+    }
+    const deltaMap = Object.fromEntries(changes.filter(c=>c.size).map(c=>[c.size, c.delta]));
+    const totalDelta = changes.reduce((a,c)=>a+n(c.delta),0);
+    const getValForApply = hasSplit ? (r,size)=>n(deltaMap[size]) : (r,size)=>{ const list=sizesFor(r); return size===list[0] ? totalDelta : 0; };
+    setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:[row], stage:g.stage, field, getVal:getValForApply }));
+    setLedger(prev => mergeLedgerPrependUnique(prev, newLedger));
+    setStyleEditKey(null);
+    onSharedSave?.(sharedResult, "DPR entry void");
+  }
   function beginStyleCorrection(row, g){
     const key = groupKeyOf(g);
     const nd = {};
-    sizesFor(row).forEach(sz=>{ if (g.sizes[sz]) nd[`${key}|${sz}`] = String(g.sizes[sz]); });
+    if (groupHasSizeSplit(g)) sizesFor(row).forEach(sz=>{ if (g.sizes[sz]) nd[`${key}|${sz}`] = String(g.sizes[sz]); });
+    else nd[`${key}|__total__`] = String(n(g.total));
     setStyleCorrectDraft(nd);
     setStyleCorrectReason("");
     setStyleEditKey(key);
@@ -4388,17 +4415,27 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
     const key = groupKeyOf(g);
     const field = fieldForEntryType(g.type);
     const sizes = sizesFor(row);
-    const changes = sizes.map(size=>{
-      const oldQty = n(g.sizes[size]);
-      const raw = styleCorrectDraft[`${key}|${size}`];
+    const hasSplit = groupHasSizeSplit(g);
+    let changes;
+    if (!hasSplit) {
+      const oldQty = n(g.total);
+      const raw = styleCorrectDraft[`${key}|__total__`];
       const newQty = raw === undefined ? oldQty : n(raw);
       const delta = newQty - oldQty;
-      if (!delta) return null;
-      return { row, size, oldQty, newQty, delta };
-    }).filter(Boolean);
+      changes = delta ? [{ row, size:"", oldQty, newQty, delta }] : [];
+    } else {
+      changes = sizes.map(size=>{
+        const oldQty = n(g.sizes[size]);
+        const raw = styleCorrectDraft[`${key}|${size}`];
+        const newQty = raw === undefined ? oldQty : n(raw);
+        const delta = newQty - oldQty;
+        if (!delta) return null;
+        return { row, size, oldQty, newQty, delta };
+      }).filter(Boolean);
+    }
     if (!changes.length) { alert("No change made to this entry."); return; }
     if (!String(styleCorrectReason||"").trim()) { alert("Reason is required to correct a past entry."); return; }
-    const summary = changes.map(c=>`${c.size}: ${fmt(c.oldQty)} -> ${fmt(c.newQty)}`).join("\n");
+    const summary = changes.map(c=>`${c.size||"Total"}: ${fmt(c.oldQty)} -> ${fmt(c.newQty)}`).join("\n");
     if (!window.confirm(`Update ${g.date} · ${stageLabel(g.stage)} · ${registerActivityLabel(g.type)} for ${row.style_no}?\n\n${summary}\n\nOnly the difference is saved as an audit-safe correction; the original entry stays visible in Register history.`)) return;
     const newLedger = buildLedgerRows({ changes, stage:g.stage, field, entryDate:g.date, reason:styleCorrectReason, source:"dpr_style_view_correction" });
     const sharedResult = await saveLedgerToSupabase(newLedger, field);
@@ -4406,8 +4443,9 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
       const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
       if (!window.confirm(`Shared Supabase save did not confirm: ${msg}\n\nSave locally in this browser anyway?`)) return;
     }
-    const deltaMap = Object.fromEntries(changes.map(c=>[c.size, c.delta]));
-    const getValForApply = (r, size)=> n(deltaMap[size]);
+    const totalDelta = changes.reduce((a,c)=>a+n(c.delta),0);
+    const deltaMap = Object.fromEntries(changes.filter(c=>c.size).map(c=>[c.size, c.delta]));
+    const getValForApply = hasSplit ? (r,size)=>n(deltaMap[size]) : (r,size)=>{ const list=sizesFor(r); return size===list[0] ? totalDelta : 0; };
     setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:[row], stage:g.stage, field, getVal:getValForApply }));
     setLedger(prev => mergeLedgerPrependUnique(prev, newLedger));
     setStyleEditKey(null);
@@ -4639,14 +4677,24 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
                 <td>{registerActivityLabel(g.type)}</td>
                 <td><b>{fmt(g.total)}</b></td>
                 <td className="mt-small">{sizesFor(selectedStyleRow).filter(sz=>n(g.sizes[sz])).map(sz=>`${sz} ${fmt(g.sizes[sz])}`).join(" · ") || "—"}</td>
-                <td><button className={`mt-btn ghost ${isEditing?"active":""}`} onClick={()=>isEditing ? setStyleEditKey(null) : beginStyleCorrection(selectedStyleRow, g)}>{isEditing?"Close edit":"Edit"}</button></td>
+                <td><div style={{display:"flex",gap:4}}><button className={`mt-btn ghost ${isEditing?"active":""}`} onClick={()=>isEditing ? setStyleEditKey(null) : beginStyleCorrection(selectedStyleRow, g)}>{isEditing?"Close edit":"Edit"}</button><button className="mt-btn ghost danger" onClick={()=>voidStyleEntry(selectedStyleRow, g)} title="Delete / void this entry (posts an audit-safe reversal)">Delete</button></div></td>
               </tr>
               {isEditing && <tr className="mt-correction-row"><td colSpan={6}>
                 <div className="mt-inline-correction">
                   <div className="mt-correction-head"><b>Edit {g.date} · {stageLabel(g.stage)} · {registerActivityLabel(g.type)}</b><span className="mt-small">Type the corrected final quantity per size. Only the difference is saved as an audit correction; original history stays visible in Register.</span></div>
                   <div className="mt-correction-controls"><label>Reason <input className="mt-input" value={styleCorrectReason} onChange={e=>setStyleCorrectReason(e.target.value)} placeholder="Correction reason" style={{minWidth:240}}/></label></div>
                   <div className="mt-correction-grid">
-                    {sizesFor(selectedStyleRow).map(sz=>{
+                    {!groupHasSizeSplit(g) ? (()=>{
+                      const oldQty = n(g.total);
+                      const nextQty = n(styleCorrectVal(key, "__total__") || 0);
+                      const delta = nextQty - oldQty;
+                      return <div className="mt-correction-size">
+                        <div className="sz">Total (no size split)</div>
+                        <div className="mt-small">Old {fmt(oldQty)}</div>
+                        <input className="mt-cell-input" style={{width:"100%"}} value={styleCorrectVal(key, "__total__")} onChange={e=>setStyleCorrectVal(key, "__total__", e.target.value)} placeholder="0" />
+                        <div className={`mt-small ${delta?"warn":""}`}>Diff {delta>0?"+":""}{fmt(delta)}</div>
+                      </div>;
+                    })() : sizesFor(selectedStyleRow).map(sz=>{
                       const oldQty = n(g.sizes[sz]);
                       const nextQty = n(styleCorrectVal(key, sz) || 0);
                       const delta = nextQty - oldQty;
