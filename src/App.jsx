@@ -177,7 +177,7 @@ table.mt-table { width:100%; border-collapse:separate; border-spacing:0; min-wid
 .mt-filter-row { display:flex; align-items:center; gap:7px; flex-wrap:wrap; background:var(--toolbar-bg); border:1px solid var(--toolbar-line); border-radius:10px; padding:8px; margin-bottom:10px; }
 .mt-filter-group { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding-right:8px; border-right:1px solid var(--line-2); }
 .mt-filter-group:last-child { border-right:0; }
-.mt-col-filter-row th { top:34px; z-index:3; background:#2b2722 !important; padding:5px 6px !important; border-bottom:1px solid var(--on-dark-line); }
+.mt-col-filter-row th { top:46px; z-index:4; background:#2b2722 !important; padding:5px 6px !important; border-bottom:1px solid var(--on-dark-line); }
 .mt-col-filter-input, .mt-col-filter-select { width:100%; min-width:74px; border:1px solid var(--on-dark-line); background:var(--surface); color:var(--ink); padding:5px 6px; min-height:28px; font-size:9.5px; font-weight:700; }
 .mt-col-filter-input.stage { min-width:86px; }
 .mt-col-filter-clear { font-size:9px; white-space:nowrap; }
@@ -386,8 +386,12 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-login-access-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .mt-wip-sticky-tools { position:sticky; top:0; z-index:18; background:var(--surface); border-bottom:1px solid var(--line-3); box-shadow:0 2px 10px rgba(31,31,29,.04); }
 .mt-wip-table-wrap { max-height:calc(100vh - 260px); overflow:auto; }
-.mt-wip-table-wrap .mt-table th { top:0; }
-.mt-wip-table-wrap .mt-col-filter-row th { top:34px; }
+/* Header + filter rows are both sticky. The filter row's top offset MUST equal the
+   real header height, or a wrapped 2-line header ("Current Status / Entry") pushes the
+   filter row down over the first data row. Pin header height so the offset is exact. */
+.mt-wip-table-wrap .mt-table thead th { top:0; height:46px; vertical-align:middle; }
+.mt-wip-table-wrap .mt-col-filter-row th { top:46px; height:auto; vertical-align:middle; }
+.mt-wip-table-wrap .mt-table thead th:not(.mt-col-filter-row th) { white-space:normal; overflow-wrap:anywhere; }
 .mt-wip-fit-table table.mt-table { min-width:max(100%, 1380px); table-layout:auto; }
 .mt-wip-fit-table .mt-style-main { min-width:170px; }
 .mt-wip-fit-table .mt-table th, .mt-wip-fit-table .mt-table td { white-space:normal; overflow-wrap:anywhere; padding:8px; }
@@ -4642,7 +4646,7 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
                   <div className="mt-correction-head"><b>Edit {g.date} · {stageLabel(g.stage)} · {registerActivityLabel(g.type)}</b><span className="mt-small">Type the corrected final quantity per size. Only the difference is saved as an audit correction; original history stays visible in Register.</span></div>
                   <div className="mt-correction-controls"><label>Reason <input className="mt-input" value={styleCorrectReason} onChange={e=>setStyleCorrectReason(e.target.value)} placeholder="Correction reason" style={{minWidth:240}}/></label></div>
                   <div className="mt-correction-grid">
-                    {sizesFor(selectedStyleRow).filter(sz=>n(g.sizes[sz])>0 || styleCorrectDraft[`${key}|${sz}`]!==undefined).map(sz=>{
+                    {sizesFor(selectedStyleRow).map(sz=>{
                       const oldQty = n(g.sizes[sz]);
                       const nextQty = n(styleCorrectVal(key, sz) || 0);
                       const delta = nextQty - oldQty;
