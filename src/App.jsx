@@ -4377,6 +4377,17 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
   function setStyleCorrectVal(key, size, val){ setStyleCorrectDraft(d=>({ ...d, [`${key}|${size}`]: String(val).replace(/[^0-9-]/g,"").replace(/(?!^)-/g,"") })); }
   function groupKeyOf(g){ return `${g.date}|${g.stage}|${g.type}`; }
   function groupHasSizeSplit(g){ return Object.values(g.sizes || {}).some(v=>n(v)!==0); }
+  function editableSizeKeys(row, g){
+    // Sizes that actually exist in this entry (may be legacy/mismatched names) come first,
+    // then any style-master sizes not already present. This guarantees a box for every real
+    // stored value, even when the ledger used a different size scheme than the style now has.
+    const fromEntry = Object.keys(g.sizes || {}).filter(k=>n(g.sizes[k])!==0 || g.sizes[k]!==undefined);
+    const fromMaster = sizesFor(row);
+    const seen = new Set();
+    const out = [];
+    [...fromEntry, ...fromMaster].forEach(k=>{ const key=String(k); if (!seen.has(key)) { seen.add(key); out.push(key); } });
+    return out;
+  }
   async function voidStyleEntry(row, g){
     const field = fieldForEntryType(g.type);
     const hasSplit = groupHasSizeSplit(g);
@@ -4385,7 +4396,11 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
       ? sizesFor(row).filter(sz=>n(g.sizes[sz])!==0).map(sz=>{ const oldQty=n(g.sizes[sz]); return { row, size:sz, oldQty, newQty:0, delta:-oldQty }; })
       : [{ row, size:"", oldQty:n(g.total), newQty:0, delta:-n(g.total) }];
     if (!changes.length || changes.every(c=>!c.delta)) { alert("Nothing to delete — this entry is already zero."); return; }
-    if (!window.confirm(`DELETE / VOID this entry?\n\n${g.date} · ${stageLabel(g.stage)} · ${registerActivityLabel(g.type)} for ${row.style_no}\nCurrent total: ${fmt(g.total)}\n\nThis posts a reversal that cancels it to zero and removes its quantity from WIP. The original entry and this reversal both stay visible in Register for audit — production data is never silently erased. Continue?`)) return;
+    const reAdds = n(g.total) < 0;
+    const warnLine = reAdds
+      ? `\nNOTE: this entry is NEGATIVE (${fmt(g.total)}) — it is itself a reversal/correction. Deleting it will ADD ${fmt(Math.abs(g.total))} back into WIP. Only do this if the reversal was a mistake.\n`
+      : "";
+    if (!window.confirm(`DELETE / VOID this entry?\n\n${g.date} · ${stageLabel(g.stage)} · ${registerActivityLabel(g.type)} for ${row.style_no}\nCurrent total: ${fmt(g.total)}\n${warnLine}\nThis posts a reversal that cancels it to zero and adjusts WIP accordingly. The original entry and this reversal both stay visible in Register for audit — production data is never silently erased. Continue?`)) return;
     const reason = window.prompt("Reason for deleting/voiding this entry (required):", "Wrong entry / duplicate — voided from style view") || "";
     if (!reason.trim()) { alert("A reason is required to void an entry."); return; }
     const newLedger = buildLedgerRows({ changes, stage:g.stage, field, entryDate:g.date, reason:reason.trim(), source:"dpr_style_view_void" });
@@ -4405,7 +4420,7 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
   function beginStyleCorrection(row, g){
     const key = groupKeyOf(g);
     const nd = {};
-    if (groupHasSizeSplit(g)) sizesFor(row).forEach(sz=>{ if (g.sizes[sz]) nd[`${key}|${sz}`] = String(g.sizes[sz]); });
+    if (groupHasSizeSplit(g)) editableSizeKeys(row, g).forEach(sz=>{ if (n(g.sizes[sz])) nd[`${key}|${sz}`] = String(n(g.sizes[sz])); });
     else nd[`${key}|__total__`] = String(n(g.total));
     setStyleCorrectDraft(nd);
     setStyleCorrectReason("");
@@ -4414,7 +4429,6 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
   async function saveStyleCorrection(row, g){
     const key = groupKeyOf(g);
     const field = fieldForEntryType(g.type);
-    const sizes = sizesFor(row);
     const hasSplit = groupHasSizeSplit(g);
     let changes;
     if (!hasSplit) {
@@ -4424,7 +4438,7 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
       const delta = newQty - oldQty;
       changes = delta ? [{ row, size:"", oldQty, newQty, delta }] : [];
     } else {
-      changes = sizes.map(size=>{
+      changes = editableSizeKeys(row, g).map(size=>{
         const oldQty = n(g.sizes[size]);
         const raw = styleCorrectDraft[`${key}|${size}`];
         const newQty = raw === undefined ? oldQty : n(raw);
@@ -4676,8 +4690,8 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
                 <td>{stageLabel(g.stage)}</td>
                 <td>{registerActivityLabel(g.type)}</td>
                 <td><b>{fmt(g.total)}</b></td>
-                <td className="mt-small">{sizesFor(selectedStyleRow).filter(sz=>n(g.sizes[sz])).map(sz=>`${sz} ${fmt(g.sizes[sz])}`).join(" · ") || "—"}</td>
-                <td><div style={{display:"flex",gap:4}}><button className={`mt-btn ghost ${isEditing?"active":""}`} onClick={()=>isEditing ? setStyleEditKey(null) : beginStyleCorrection(selectedStyleRow, g)}>{isEditing?"Close edit":"Edit"}</button><button className="mt-btn ghost danger" onClick={()=>voidStyleEntry(selectedStyleRow, g)} title="Delete / void this entry (posts an audit-safe reversal)">Delete</button></div></td>
+                <td className="mt-small">{Object.keys(g.sizes||{}).filter(sz=>n(g.sizes[sz])).map(sz=>`${sz||"(blank)"} ${fmt(g.sizes[sz])}`).join(" · ") || "—"}</td>
+                <td><div style={{display:"flex",gap:4,alignItems:"center"}}>{n(g.total)!==0 || groupHasSizeSplit(g) ? <><button className={`mt-btn ghost ${isEditing?"active":""}`} onClick={()=>isEditing ? setStyleEditKey(null) : beginStyleCorrection(selectedStyleRow, g)}>{isEditing?"Close edit":"Edit"}</button><button className="mt-btn ghost danger" onClick={()=>voidStyleEntry(selectedStyleRow, g)} title="Delete / void this entry (posts an audit-safe reversal)">Delete</button></> : <span className="mt-small">already 0</span>}</div></td>
               </tr>
               {isEditing && <tr className="mt-correction-row"><td colSpan={6}>
                 <div className="mt-inline-correction">
@@ -4694,12 +4708,12 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
                         <input className="mt-cell-input" style={{width:"100%"}} value={styleCorrectVal(key, "__total__")} onChange={e=>setStyleCorrectVal(key, "__total__", e.target.value)} placeholder="0" />
                         <div className={`mt-small ${delta?"warn":""}`}>Diff {delta>0?"+":""}{fmt(delta)}</div>
                       </div>;
-                    })() : sizesFor(selectedStyleRow).map(sz=>{
+                    })() : editableSizeKeys(selectedStyleRow, g).map(sz=>{
                       const oldQty = n(g.sizes[sz]);
                       const nextQty = n(styleCorrectVal(key, sz) || 0);
                       const delta = nextQty - oldQty;
-                      return <div className="mt-correction-size" key={sz}>
-                        <div className="sz">{sz}</div>
+                      return <div className="mt-correction-size" key={sz || "__blank__"}>
+                        <div className="sz">{sz || "(no size)"}</div>
                         <div className="mt-small">Old {fmt(oldQty)}</div>
                         <input className="mt-cell-input" style={{width:"100%"}} value={styleCorrectVal(key, sz)} onChange={e=>setStyleCorrectVal(key, sz, e.target.value)} placeholder="0" />
                         <div className={`mt-small ${delta?"warn":""}`}>Diff {delta>0?"+":""}{fmt(delta)}</div>
