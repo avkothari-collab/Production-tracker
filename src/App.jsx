@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V19 PLAN-COMPONENT-HEADCOUNT-FIX";
-const APP_COMMIT_MESSAGE = "Planning component selector now locks exact row plus mandatory headcount/output defaults";
+const APP_VERSION = "V25 ENTRY-SAVE-GUARD";
+const APP_COMMIT_MESSAGE = "Blocks double/triple DPR saves and stops output entries from auto-creating receiving";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -1112,7 +1112,7 @@ function backdateRisk(entryDate){
   return { days:d, label:`Backdate flag ${d}d`, tone:d>3?"warn":"info", approval:"date_flag_report_only", locked:false, sameDay:false, future:false, reportOnly:true };
 }
 function entryTypeForField(field){
-  if (field === "received") return "receive";
+  if (field === "received") return "legacy_feed";
   if (field === "output") return "good_output";
   if (field === "issued") return "issue";
   if (field === "reject") return "reject";
@@ -1123,7 +1123,7 @@ function entryTypeForField(field){
 }
 const ENTRY_FIELDS = [
   { key:"output", label:"Completed / Output", help:"Good quantity completed by the selected department." },
-  { key:"issued", label:"Dept Issue Forward", help:"Good quantity handed to the next active department." },
+  { key:"issued", label:"Issue / Feed Next Dept", help:"Good quantity handed to the next active department. This is the next department feed in your factory flow." },
 ];
 const RAM_ENTRY_FIELDS = [
   { key:"reject", label:"Rejection", help:"Rejected/lost quantity by size." },
@@ -1131,10 +1131,8 @@ const RAM_ENTRY_FIELDS = [
   { key:"alter", label:"Alter Defect", help:"Alter/repair quantity raised by size." },
   { key:"alter_clear", label:"Alter Clear", help:"Alter quantity repaired and returned to good output." },
 ];
-const HIDDEN_ENTRY_FIELDS = [
-  { key:"received", label:"Dept Receive", help:"Hidden/manual only. In this factory flow, Dept Issue Forward already means the next department has accepted it." },
-];
-const ALL_ENTRY_FIELDS = [...ENTRY_FIELDS, ...RAM_ENTRY_FIELDS, ...HIDDEN_ENTRY_FIELDS];
+const HIDDEN_ENTRY_FIELDS = [];
+const ALL_ENTRY_FIELDS = [...ENTRY_FIELDS, ...RAM_ENTRY_FIELDS];
 function fieldLabel(field){ return ALL_ENTRY_FIELDS.find(f=>f.key===field)?.label || field; }
 function fieldHelp(field){ return ALL_ENTRY_FIELDS.find(f=>f.key===field)?.help || ""; }
 
@@ -1170,17 +1168,17 @@ function entryFieldContext(row, stage, field){
     const available = stage === "cutting" ? n(row.order_qty) : feed;
     return {
       mode:"receive",
-      available, previous:n(st.received), open:Math.max(0, available - n(st.received)), updatedLabel:"Updated received",
-      availableLabel: stage === "cutting" ? "Order quantity" : `Available from ${stageLabel(prevStage)}`,
-      previousLabel:`Already received in ${stageLabel(stage)}`, openLabel:"Open to receive",
-      note: stage === "cutting" ? "Cutting usually uses Completed / Output, not receive." : `Receive balance from ${stageLabel(prevStage)} into ${stageLabel(stage)}.`
+      available, previous:n(st.received), open:Math.max(0, available - n(st.received)), updatedLabel:"Updated feed",
+      availableLabel: stage === "cutting" ? "Order quantity" : `Feed from ${stageLabel(prevStage)}`,
+      previousLabel:`Already fed to ${stageLabel(stage)}`, openLabel:"Open feed balance",
+      note: stage === "cutting" ? "Cutting usually uses Completed / Output, not receive." : `Feed balance from ${stageLabel(prevStage)} into ${stageLabel(stage)}.`
     };
   }
   if (field === "issued") {
     return {
       mode:"issue", available:n(st.output), previous:n(st.issued), open:Math.max(0, n(st.output) - n(st.issued)), updatedLabel:"Updated issued",
-      availableLabel:`Completed in ${stageLabel(stage)}`, previousLabel:`Already issued ${nextStage ? `to ${stageLabel(nextStage)}` : "forward"}`, openLabel:`Open in ${stageLabel(stage)} / ready to issue`,
-      note: nextStage ? `Issue completed quantity from ${stageLabel(stage)} to ${stageLabel(nextStage)}.` : `Issue/dispatch completed quantity from ${stageLabel(stage)}.`
+      availableLabel:`Completed in ${stageLabel(stage)}`, previousLabel:`Already issued / fed ${nextStage ? `to ${stageLabel(nextStage)}` : "forward"}`, openLabel:`Ready to feed next dept from ${stageLabel(stage)}`,
+      note: nextStage ? `Feed completed quantity from ${stageLabel(stage)} to ${stageLabel(nextStage)}.` : `Issue/dispatch completed quantity from ${stageLabel(stage)}.`
     };
   }
   if (field === "output") {
@@ -1243,7 +1241,7 @@ function entryContextTotals(rows, stage, field){
   }, { available:0, previous:0, open:0 });
 }
 function entryFieldVerb(field){
-  return ({ received:"Receive", output:"Complete", issued:"Issue forward", reject:"Reject", missing:"Mark missing", alter:"Raise alter", alter_clear:"Clear alter" })[field] || "Enter";
+  return ({ received:"Legacy feed", output:"Complete", issued:"Issue / feed next", reject:"Reject", missing:"Mark missing", alter:"Raise alter", alter_clear:"Clear alter" })[field] || "Enter";
 }
 function defaultFieldForStage(row, stage){
   const st = sdata(row, stage), c = cellBreakup(row, stage);
@@ -1456,7 +1454,7 @@ function cellBreakup(row, stageKey){
     return { skipped:false, received:n(st.output), open, ram, extra, shortClose, note };
   }
   const feed = stageFeed(row, stageKey);
-  // Since issued-to-department = received/accepted in this workflow, the department's accountable feed is previous stage issued.
+  // Since issued-to-department = fed/accountable in this workflow, the department's accountable feed is previous stage issued.
   // Main cell shows completed/good output, open work, and R/A/M.
   const done = n(st.output);
   const open = Math.max(0, feed - done - ram);
@@ -1769,7 +1767,7 @@ function routeProgressSnapshot(row){
     if (accounted > 0) parts.push({ stage, label:`${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} acct ${fmt(accounted)}`, qty:accounted, tone:ram?"warn":"ok", title:`Good ${fmt(good)} + R/A/M ${fmt(ram)} = accounted ${fmt(accounted)} · local ${pctOf(accounted, feed)}% · overall ${pctOf(accounted, cutQty||orderQty)}%` });
     if (issued > 0) parts.push({ stage, label:`${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} issue ${fmt(issued)}`, qty:issued, tone:"purple", title:`Issued forward from ${stageLabel(stage)}` });
     const open = Math.max(0, feed - accounted);
-    if (open > 0) parts.push({ stage, label:`${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} open ${fmt(open)}`, qty:open, tone:open <= Math.max(10, Math.round(feed*0.05))?"warn":"late", title:`Pending to receive/output/account for ${fmt(open)} from ${stageLabel(stage)}` });
+    if (open > 0) parts.push({ stage, label:`${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} open ${fmt(open)}`, qty:open, tone:open <= Math.max(10, Math.round(feed*0.05))?"warn":"late", title:`Pending to output/account for ${fmt(open)} from ${stageLabel(stage)}` });
   });
   return parts;
 }
@@ -1836,11 +1834,11 @@ function wipStageFilterText(row, stageKey){
   const pct = feed > 0 ? Math.round((n(c.received) * 1000) / feed) / 10 : 0;
   return [
     stageLabel(stageKey), STAGE_BY_KEY[stageKey]?.short, c.note, `${pct}%`,
-    `good ${fmt(c.received)}`, `done ${fmt(c.received)}`, `output ${fmt(c.received)}`,
+    `output ${fmt(c.received)}`, `done ${fmt(c.received)}`, `output ${fmt(c.received)}`,
     `open ${fmt(c.open)}`, `ram ${fmt(c.ram)}`, `${fmt(c.ram)}r`,
     c.extra ? `extra ${fmt(c.extra)}` : "",
     st.party ? `party ${st.party}` : "",
-    `received ${fmt(st.received)}`, `issued ${fmt(st.issued)}`, `reject ${fmt(st.reject)}`,
+    `legacy feed ${fmt(st.received)}`, `issued ${fmt(st.issued)}`, `reject ${fmt(st.reject)}`,
     `missing ${fmt(st.missing)}`, `alter ${fmt(st.alter)}`, `clear ${fmt(st.alter_clear)}`
   ].filter(Boolean).join(" ");
 }
@@ -1995,7 +1993,7 @@ function rowSnapshotNumbers(rows, label, periodKey, dateRange="Snapshot"){
     Start_Date:"",
     End_Date:"",
     Cutting:0,
-    Stitching_Receiving:0,
+    Stitching_Feed:0,
     Checking:0,
     Packing:0,
     Dispatch:0,
@@ -2010,6 +2008,18 @@ function ledgerPeriodNumbers(ledgerRows, rows, label, periodKey, start, end){
   const qty = (stage, types=[]) => inRows
     .filter(x => String(x.stage) === stage && (!types.length || types.includes(entryType(x))))
     .reduce((a,x)=>a+Math.max(0,n(x.qty ?? x.delta)),0);
+  // Factory truth: the previous department's Issue Forward is the next department's Feed.
+  // Legacy receive rows are intentionally not added into Feed to avoid double counting.
+  const feedQty = (targetStage) => inRows
+    .filter(x => ["issue","issued"].includes(entryType(x)))
+    .filter(x => {
+      const row = findRowForLedger(rows, x);
+      if (!row) return false;
+      const route = routeFor(row);
+      const idx = route.indexOf(String(x.stage || ""));
+      return idx >= 0 && route[idx + 1] === targetStage;
+    })
+    .reduce((a,x)=>a+Math.max(0,n(x.qty ?? x.delta)),0);
   const ram = inRows
     .filter(x => ["reject","alter","missing","ram"].includes(entryType(x)))
     .reduce((a,x)=>a+Math.abs(n(x.qty ?? x.delta)),0);
@@ -2019,11 +2029,15 @@ function ledgerPeriodNumbers(ledgerRows, rows, label, periodKey, start, end){
     Date_Range:dateRangeLabel(parseYmd(start), parseYmd(end)),
     Start_Date:start,
     End_Date:end,
-    Cutting:qty("cutting", ["good_output","receive","output"]),
-    Stitching_Receiving:qty("stitching", ["receive","good_output","output"]),
-    Checking:qty("checking", ["good_output","receive","output"]),
-    Packing:qty("packing", ["good_output","receive","output"]),
-    Dispatch:qty("dispatch", ["receive","dispatch","good_output","output","issue"]),
+    Cutting_Output:qty("cutting", ["good_output","output"]),
+    Stitching_Output:qty("stitching", ["good_output","output"]),
+    Stitching_Feed:feedQty("stitching"),
+    Checking_Output:qty("checking", ["good_output","output"]),
+    Checking_Feed:feedQty("checking"),
+    Packing_Output:qty("packing", ["good_output","output"]),
+    Packing_Feed:feedQty("packing"),
+    Dispatch_Output:qty("dispatch", ["dispatch","good_output","output","issue"]),
+    Dispatch_Feed:feedQty("dispatch"),
     RAM:ram,
     Rows:inRows.length,
     Note:"Based on production_entries.entry_date",
@@ -2115,14 +2129,13 @@ function qualityLossRows(rows){
   return STAGES.map(stage => {
     const stageRows = rows.filter(row => routeFor(row).includes(stage.key));
     const accountable = stageRows.reduce((a,row)=>a+(stage.key === "cutting" ? n(row.order_qty) : stageFeed(row, stage.key)),0);
-    const received = stageRows.reduce((a,row)=>a+n(sdata(row,stage.key).received),0);
     const reject = stageRows.reduce((a,row)=>a+n(sdata(row,stage.key).reject),0);
     const alter = stageRows.reduce((a,row)=>a+n(sdata(row,stage.key).alter),0);
     const missing = stageRows.reduce((a,row)=>a+n(sdata(row,stage.key).missing),0);
     const ram = reject + alter + missing;
-    const denom = accountable || received;
-    return { stage:stage.key, Dept:stage.label, Accountable_Feed:accountable, Received_Qty:received, Reject:reject, Alter:alter, Missing:missing, RAM_Total:ram, Loss_Rate: denom ? `${Math.round((ram*1000)/denom)/10}%` : "0%", Styles:stageRows.filter(r=>loss(sdata(r,stage.key))>0).length };
-  }).filter(r=>r.RAM_Total>0 || r.Accountable_Feed>0 || r.Received_Qty>0).sort((a,b)=>b.RAM_Total-a.RAM_Total);
+    const denom = accountable;
+    return { stage:stage.key, Dept:stage.label, Feed_Qty:accountable, Reject:reject, Alter:alter, Missing:missing, RAM_Total:ram, Loss_Rate: denom ? `${Math.round((ram*1000)/denom)/10}%` : "0%", Styles:stageRows.filter(r=>loss(sdata(r,stage.key))>0).length };
+  }).filter(r=>r.RAM_Total>0 || r.Feed_Qty>0).sort((a,b)=>b.RAM_Total-a.RAM_Total);
 }
 function partyPendingRows(rows){
   return STAGES.flatMap(stage => rows.filter(row => routeFor(row).includes(stage.key) && sdata(row, stage.key).party).map(row => {
@@ -2137,7 +2150,7 @@ function flowBottleneckRows(rows, ledger=[], referenceDate=today(), lookbackDays
   return STAGES.map(stage => {
     const stageRows = rows.filter(row => routeFor(row).includes(stage.key));
     const inflow = stageRows.reduce((a,row)=>a+(stage.key==="cutting"?n(row.order_qty):stageFeed(row, stage.key)),0);
-    const received = stageRows.reduce((a,row)=>a+n(sdata(row,stage.key).received || (stage.key==="cutting" ? sdata(row,stage.key).output : 0)),0);
+    const feed = inflow;
     const output = stageRows.reduce((a,row)=>a+n(sdata(row,stage.key).output),0);
     const issued = stageRows.reduce((a,row)=>a+n(sdata(row,stage.key).issued),0);
     const buckets = stageRows.flatMap(row=>issueBuckets(row).filter(b=>b.stage===stage.key && b.type!=="extra_cut"));
@@ -2148,8 +2161,8 @@ function flowBottleneckRows(rows, ledger=[], referenceDate=today(), lookbackDays
     const realDailyRate = recentOutput > 0 ? recentOutput / Math.max(1, lookbackDays) : 0;
     const fallbackDailyRate = output > 0 ? output / Math.max(1, lookbackDays) : 0;
     const dailyRate = Math.max(1, realDailyRate || fallbackDailyRate);
-    return { stage:stage.key, Dept:stage.label, Inflow_or_Feed:inflow, Received:received, Output:output, Issued_Forward:issued, Queue_WIP:queue, Reconcile_Qty:reconcile, RAM_Qty:ram, Recent_Output_7d:recentOutput, Daily_Rate:Math.round(dailyRate*10)/10, Days_Cover: queue ? Math.round((queue / dailyRate)*10)/10 : 0, Bottleneck_Score: queue + reconcile*2 + ram };
-  }).filter(r=>r.Queue_WIP || r.Reconcile_Qty || r.RAM_Qty || r.Received || r.Output).sort((a,b)=>b.Bottleneck_Score-a.Bottleneck_Score);
+    return { stage:stage.key, Dept:stage.label, Inflow_or_Feed:inflow, Feed:feed, Output:output, Issued_Forward:issued, Queue_WIP:queue, Reconcile_Qty:reconcile, RAM_Qty:ram, Recent_Output_7d:recentOutput, Daily_Rate:Math.round(dailyRate*10)/10, Days_Cover: queue ? Math.round((queue / dailyRate)*10)/10 : 0, Bottleneck_Score: queue + reconcile*2 + ram };
+  }).filter(r=>r.Queue_WIP || r.Reconcile_Qty || r.RAM_Qty || r.Feed || r.Output).sort((a,b)=>b.Bottleneck_Score-a.Bottleneck_Score);
 }
 function lineEfficiencyRows(rows, ledger=[], start=today(), end=today(), planRows=[]){
   const map = new Map();
@@ -2160,7 +2173,7 @@ function lineEfficiencyRows(rows, ledger=[], start=today(), end=today(), planRow
     curr.Styles.add(p.style_no || p.style_input || p.row_id || line);
     map.set(line,curr);
   });
-  const period = (ledger || []).filter(x => inDateRange(x.entry_date || x.entryDate || x.date, start, end) && String(x.stage)==="stitching" && ["good_output","output","receive"].includes(String(x.entry_type || x.entryType || "")));
+  const period = (ledger || []).filter(x => inDateRange(x.entry_date || x.entryDate || x.date, start, end) && String(x.stage)==="stitching" && ["good_output","output"].includes(String(x.entry_type || x.entryType || "")));
   period.forEach(e => {
     const row = findRowForLedger(rows, e) || {};
     const line = e.line || e.stitching_line || row.line || "Unassigned";
@@ -2527,7 +2540,7 @@ function entryTypeLabelFromRaw(raw){
   const t = String(raw || "").toLowerCase();
   if (["output","good_output","completed","complete","done"].includes(t)) return "Completed / Output";
   if (["issue","issued"].includes(t)) return "Dept Issue Forward";
-  if (["receive","received"].includes(t)) return "Dept Receive";
+  if (["receive","received"].includes(t)) return "Legacy Receive / Feed";
   if (["reject","rejection"].includes(t)) return "Rejection";
   if (t === "missing") return "Missing";
   if (t === "alter") return "Alter Defect";
@@ -2610,24 +2623,29 @@ function receivingDaySummaryRows(rows, ledger=[], opts={}){
   const map = new Map();
   (ledger || []).forEach(e=>{
     const typ = entryTypeRaw(e);
-    if (!["receive","received","issue","issued"].includes(typ)) return;
+    if (!["issue","issued","receive","received","legacy_feed"].includes(typ)) return;
     const row = findRowForLedger(rows, e) || {};
     if (!ledgerMatchesSearch(e,row,q)) return;
+    const route = row && row.id ? routeFor(row) : [];
+    const sourceStage = String(e.stage || "");
+    const idx = route.indexOf(sourceStage);
+    const isIssueFeed = ["issue","issued"].includes(typ) && idx >= 0 && route[idx + 1];
+    const dept = isIssueFeed ? route[idx + 1] : sourceStage;
     const date = actualActivityDate(e);
-    const stage = String(e.stage || "");
-    const key = [date, stage].join("|::|");
-    if (!map.has(key)) map.set(key, { Actual_Date:date, Department:stageLabel(stage), Received:0, Issued_Forward:0, Orders:new Set(), Styles:new Set(), Entries:0, Users:new Set() });
+    const key = [date, dept].join("|::|");
+    if (!map.has(key)) map.set(key, { Actual_Date:date, Department:stageLabel(dept), Feed_Qty:0, Legacy_Manual_Receive:0, Orders:new Set(), Styles:new Set(), Entries:0, Users:new Set() });
     const g = map.get(key);
     const qty = entryQty(e);
-    if (["receive","received"].includes(typ)) g.Received += qty;
-    if (["issue","issued"].includes(typ)) g.Issued_Forward += qty;
+    if (isIssueFeed) g.Feed_Qty += qty;
+    else g.Legacy_Manual_Receive += qty;
     g.Orders.add(String(e.order_no || e.order || row.order_no || ""));
     g.Styles.add(String(e.style_no || e.style || row.style_no || ""));
     g.Users.add(entryUser(e));
     g.Entries += 1;
   });
-  return Array.from(map.values()).map(g=>({ Actual_Date:g.Actual_Date, Department:g.Department, Received:g.Received, Issued_Forward:g.Issued_Forward, Net_Receiving:g.Received-g.Issued_Forward, Orders:g.Orders.size, Styles:g.Styles.size, Entries:g.Entries, Users:Array.from(g.Users).filter(Boolean).join(", ") })).sort((a,b)=>String(b.Actual_Date).localeCompare(String(a.Actual_Date)) || String(a.Department).localeCompare(String(b.Department)));
+  return Array.from(map.values()).map(g=>({ Actual_Date:g.Actual_Date, Department:g.Department, Feed_Qty:g.Feed_Qty, Legacy_Manual_Receive:g.Legacy_Manual_Receive, Orders:g.Orders.size, Styles:g.Styles.size, Entries:g.Entries, Users:Array.from(g.Users).filter(Boolean).join(", ") })).sort((a,b)=>String(b.Actual_Date).localeCompare(String(a.Actual_Date)) || String(a.Department).localeCompare(String(b.Department)));
 }
+
 function changeLogRows(rows, ledger=[], opts={}){
   const q = opts.search || "";
   return (ledger || []).filter(e=>{
@@ -2865,10 +2883,10 @@ function sumLedgerBefore(entries, stage, types=[], start){
     .reduce((a,e)=>a+Math.max(0, ledgerQty(e)),0);
 }
 function stagePeriodFlow(periodEntries, allKeyEntries, start){
-  const stitchTypes = ["receive","good_output","output"];
-  const checkTypes = ["receive","good_output","output"];
-  const packTypes = ["receive","good_output","output"];
-  const dispatchTypes = ["receive","dispatch","good_output","output","issue"];
+  const stitchTypes = ["good_output","output"];
+  const checkTypes = ["good_output","output"];
+  const packTypes = ["good_output","output"];
+  const dispatchTypes = ["dispatch","good_output","output","issue"];
   const stitched = sumLedger(periodEntries, "stitching", stitchTypes);
   const checked = sumLedger(periodEntries, "checking", checkTypes);
   const packed = sumLedger(periodEntries, "packing", packTypes);
@@ -2911,7 +2929,7 @@ function monthlyComparisonRows(rows, ledger=[], month=today().slice(0,7)){
   });
   return Array.from(grouped.entries()).map(([key, {row, entries}])=>{
     const rs = row?.style_no ? rowStatus(row) : { status:"", owner:"", qty:0, action:"" };
-    const stitchingTypes = ["receive","good_output","output"];
+    const stitchingTypes = ["good_output","output"];
     const productionRamTypes = ["reject","alter","alter_issue","missing","ram"];
     const allKeyEntries = (ledger||[]).filter(e=>ledgerSameNaturalKey(e, key, row));
     const flow = stagePeriodFlow(entries, allKeyEntries, start);
@@ -2929,7 +2947,7 @@ function monthlyComparisonRows(rows, ledger=[], month=today().slice(0,7)){
       Component: row.component || entries[0]?.component || "",
       Route: row.style_no ? routeType(row) : "",
       ...withHorizontalSizes(row, sizeMap, allSizes),
-      Stitching_Receiving_In_Period: flow.stitched,
+      Stitching_Feed_In_Period: flow.stitched,
       Checking_In_Period: flow.checked,
       Packing_In_Period: flow.packed,
       Dispatch_In_Period: flow.dispatched,
@@ -2953,7 +2971,7 @@ function monthlyComparisonRows(rows, ledger=[], month=today().slice(0,7)){
       Current_Open_Qty_Snapshot: rs.qty,
       Next_Action: rs.action,
     };
-  }).filter(r=>n(r.Stitching_Receiving_In_Period)+n(r.Checking_In_Period)+n(r.Packing_In_Period)+n(r.Dispatch_In_Period)+n(r.RAM_Posted_In_Period)>0)
+  }).filter(r=>n(r.Stitching_Feed_In_Period)+n(r.Checking_In_Period)+n(r.Packing_In_Period)+n(r.Dispatch_In_Period)+n(r.RAM_Posted_In_Period)>0)
     .sort((a,b)=>String(a.Buyer).localeCompare(String(b.Buyer)) || String(a.Order).localeCompare(String(b.Order)) || String(a.Style).localeCompare(String(b.Style)));
 }
 
@@ -3294,7 +3312,7 @@ function Dashboard({ rows, ledger=[], planRows=[], onDrill, clearTick=0 }){
   ].filter(Boolean);
   const todayOutputRows = [
     { Dept:"Cutting", Qty:n(daily.Cutting), kind:"period" },
-    { Dept:"Stitching receiving", Qty:n(daily.Stitching_Receiving), kind:"period" },
+    { Dept:"Stitching feed", Qty:n(daily.Stitching_Feed), kind:"period" },
     { Dept:"Checking", Qty:n(daily.Checking), kind:"period" },
     { Dept:"Packing", Qty:n(daily.Packing), kind:"period" },
     { Dept:"Dispatch", Qty:n(daily.Dispatch), kind:"period" },
@@ -3754,9 +3772,8 @@ function applyCumulativeSizeEdits({ rows, targetRows, stage, field, getVal }){
     const stages = { ...(row.stages || {}) };
     const prevStage = { ...blankStage(), ...sdata(row,stage) };
     const nextStage = { ...prevStage, [field]:total };
-    if (stage !== "cutting" && field === "output") {
-      nextStage.received = Math.max(n(prevStage.received), stageFeed(row, stage));
-    }
+    // Output entry must not auto-create a receive entry.
+    // Receiving is a separate movement and issue-forward is the accountable feed for next dept.
     stages[stage] = nextStage;
     return { ...row, stages, size_stage:{ ...(row.size_stage||{}), [stage]:{ ...(row.size_stage?.[stage]||{}), [field]:sizes } } };
   });
@@ -3963,7 +3980,7 @@ function applyDailySizeEntries({ rows, targetRows, stage, field, getVal }){
       const newMap = {};
       sizesFor(row).forEach(size => { newMap[size] = n(oldMap[size]) + n(entries[size]); });
       nextStage[field] = Object.values(newMap).reduce((a,b)=>a+n(b),0);
-      if (stage !== "cutting" && field === "output") nextStage.received = Math.max(n(prevStage.received), stageFeed(row, stage));
+      // Output entry must not auto-create receiving.
       stageSizes[field] = newMap;
     }
     stages[stage] = nextStage;
@@ -4058,7 +4075,7 @@ function receivingHistoryRows(row, stage, ledger=[]){
     const typ = String(e.entry_type || e.entryType || e.type || "").toLowerCase();
     const isPrevIssue = stg === prevStage;
     const entryDate = e.entry_date || e.date || "";
-    const meaning = isPrevIssue ? `${stageLabel(prevStage)} issue to ${stageLabel(stage)}` : `${stageLabel(stage)} manual receive`;
+    const meaning = isPrevIssue ? `${stageLabel(prevStage)} issue / feed to ${stageLabel(stage)}` : `${stageLabel(stage)} legacy manual feed`;
     const key = [entryDate, stg, typ, meaning].join("|::|");
     if (!grouped.has(key)) {
       grouped.set(key, {
@@ -4176,11 +4193,38 @@ function departmentOutputHistoryRows(row, stage, ledger=[]){
   });
 }
 
+
+function ledgerLocalUniqueKey(e){
+  return [
+    ledgerDate(e), ledgerStage(e), ledgerType(e),
+    String(e.order_no || e.order || "").trim().toUpperCase(),
+    String(e.style_no || e.style || "").trim().toUpperCase(),
+    String(e.colour || "").trim().toUpperCase(),
+    String(e.component || "").trim().toUpperCase(),
+    String(e.size || e.size_code || e.size_name || "").trim().toUpperCase(),
+    String(e.entry_source || e.source || "").trim().toLowerCase(),
+    n(e.qty ?? e.delta)
+  ].join("|::|");
+}
+function mergeLedgerPrependUnique(prev=[], incoming=[]){
+  const seen = new Set((prev || []).map(ledgerLocalUniqueKey));
+  const cleanIncoming = [];
+  (incoming || []).forEach(e=>{
+    const key = ledgerLocalUniqueKey(e);
+    if (seen.has(key)) return;
+    seen.add(key);
+    cleanIncoming.push(e);
+  });
+  return [...cleanIncoming, ...(prev || [])];
+}
+
 function SizeCumulativeEditor({ row, rows, setRows, ledger, setLedger, stage, initialField="output", source="wip_cell", onSaved, onSharedSave }){
   const [field, setField] = useState(initialField);
   const [entryDate, setEntryDate] = useState(defaultEntryDate(ledger));
   const [reason, setReason] = useState("");
   const [draft, setDraft] = useState({});
+  const saveLockRef = useRef(false);
+  const [isSaving, setIsSaving] = useState(false);
   useEffect(()=>setDraft({}), [row?.id, stage, field]);
   if (!row) return null;
   const sizes = sizesFor(row);
@@ -4198,30 +4242,38 @@ function SizeCumulativeEditor({ row, rows, setRows, ledger, setLedger, stage, in
   const fillOpen = () => setDraft(d=>{ const nd={...d}; sizeContexts.forEach(x=>{ nd[`${row.id}|${x.size}`]=String(Math.max(0,n(x.open))); }); return nd; });
   const clear = () => setDraft({});
   async function save(){
+    if (saveLockRef.current) { notify("Save already in progress. Please wait.", "Duplicate save blocked"); return; }
     if (!changes.length) { alert("No new size-wise quantity entered."); return; }
     if (reasonMissing) { alert("Backdated entry older than normal next-day needs a reason before save."); return; }
     const hardMessages = hardBlockMessages(validation);
     if (hardMessages.length) { alert(`Blocked: ${hardMessages.join("; ")}. Correct upstream/opening stock or create approved adjustment first.`); return; }
     if (!confirmP0DateViolation({ validation, entryDate, stage, field, reason })) return;
     if (!confirmEntryChecks({ entryDate, changes, stage, field, reason })) return;
-    const newLedger = buildLedgerRows({ changes, stage, field, entryDate, reason, source, validationOverride:validationOverrideForP0(validation) });
-    const sharedResult = await saveLedgerToSupabase(newLedger, field);
-    if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
-      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
-      if (!window.confirm(`Shared Supabase save did not confirm: ${msg}
+    saveLockRef.current = true;
+    setIsSaving(true);
+    try {
+      const newLedger = buildLedgerRows({ changes, stage, field, entryDate, reason, source, validationOverride:validationOverrideForP0(validation) });
+      const sharedResult = await saveLedgerToSupabase(newLedger, field);
+      if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
+        const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
+        if (!window.confirm(`Shared Supabase save did not confirm: ${msg}
 
 Save locally in this browser anyway? Other users will not see it until Supabase is fixed/synced.`)) return;
+      }
+      setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:[row], stage, field, getVal }));
+      setLedger(prev => mergeLedgerPrependUnique(prev, newLedger));
+      setDraft({});
+      onSaved?.(newLedger);
+      onSharedSave?.(sharedResult, "WIP day entry");
+    } finally {
+      saveLockRef.current = false;
+      setIsSaving(false);
     }
-    setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:[row], stage, field, getVal }));
-    setLedger(prev => [...newLedger, ...prev]);
-    setDraft({});
-    onSaved?.(newLedger);
-    onSharedSave?.(sharedResult, "WIP day entry");
   }
   return <div className="mt-edit-panel">
     <div className="mt-edit-panel-head"><h3 className="mt-panel-title">{stageLabel(stage)} — {fieldLabel(field)}</h3><div className="mt-panel-sub">Selected department only. Enter new quantity by size for the selected date. The updated total is shown as a cross-check, not as editable cumulative entry.</div></div>
-    <div className="mt-section no-print"><div className="mt-backdate-box"><span className="mt-toolbar-label">Entry Date</span><input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /><span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span><span className="mt-toolbar-label">Dept</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-toolbar-label">Entry Field</span><select className="mt-select" value={field} onChange={e=>setField(e.target.value)}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>{risk.days>1 && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate note optional/report flag" style={{minWidth:250}} />}</div><div className="mt-ram-action-bar"><span className="mt-toolbar-label">R/A/M closure rows</span>{RAM_ENTRY_FIELDS.map(f=><button key={f.key} className={`mt-btn ghost ${field===f.key?"active":""}`} onClick={()=>{setField(f.key); setDraft({});}}>{f.label}</button>)}<span className="mt-small">Use these only to close/explain small balances; normal production entry stays Output / Issue.</span></div>{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated date: report flag only. Quantity/feed/P0 sequence clashes still require reconcile review.</div>}</div>
-    <div className="mt-section"><div className="mt-entry-hero"><div className="mt-entry-hero-title"><span>{row.style_no}</span><span className="mt-chip mt-muted">{row.order_no}</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-chip mt-warn">{fieldLabel(field)}</span></div><div className="mt-entry-hero-sub">{ctx.note} Reductions/corrections are not normal entry and must go through approval.</div>{orderVariance.diff !== 0 && <div className={`mt-chip ${statusClass(orderVariance.tone)}`} style={{marginTop:8}}>{orderVariance.text}</div>}<div className="mt-mandatory-note"><AlertTriangle size={14}/> Highlighted size boxes are open/mandatory when entering this row. Blank means no quantity entered for that size.</div></div><div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">{ctx.availableLabel}</div><div className="value">{fmt(ctx.available)}</div><div className="note">source / feed</div></div><div className="mt-entry-metric"><div className="label">{ctx.previousLabel}</div><div className="value">{fmt(ctx.previous)}</div><div className="note">already entered</div></div><div className="mt-entry-metric"><div className="label">{ctx.openLabel}</div><div className="value">{fmt(ctx.open)}</div><div className="note">balance before entry</div></div><div className="mt-entry-metric"><div className="label">New Entry</div><div className="value">{fmt(newQty)}</div><div className="note">selected date</div></div><div className="mt-entry-metric"><div className="label">Cumulative After</div><div className="value">{fmt(validation.updatedTotal)}</div><div className="note">{fmt(validation.updatedTotal)} / {fmt(ctx.available)} total</div></div><div className="mt-entry-metric"><div className="label">Remaining After</div><div className="value">{fmt(Math.max(0, n(ctx.open)-newQty))}</div><div className="note">after saving</div></div></div><div className="mt-entry-row-actions"><button className="mt-btn" onClick={fillOpen}>Auto-fill open qty</button><button className="mt-btn ghost" onClick={clear}>Clear entry</button><button className="mt-btn primary" onClick={save} disabled={!changes.length || validation.blocked || reasonMissing}><CheckCircle2 size={14}/>Save Day Entry</button></div></div>
+    <div className="mt-section no-print"><div className="mt-backdate-box"><span className="mt-toolbar-label">Entry Date</span><input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /><span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span><span className="mt-toolbar-label">Dept</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-toolbar-label">Entry Field</span><select className="mt-select" value={field} onChange={e=>setField(e.target.value)}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>{risk.days>1 && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate note optional/report flag" style={{minWidth:250}} />}</div><div className="mt-ram-action-bar"><span className="mt-toolbar-label">R/A/M closure rows</span>{RAM_ENTRY_FIELDS.map(f=><button key={f.key} className={`mt-btn ghost ${field===f.key?"active":""}`} onClick={()=>{setField(f.key); setDraft({});}}>{f.label}</button>)}<span className="mt-small">Use these only to close/explain small balances; normal production entry stays Output / Issue-Feed. No separate Receive entry.</span></div>{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated date: report flag only. Quantity/feed/P0 sequence clashes still require reconcile review.</div>}</div>
+    <div className="mt-section"><div className="mt-entry-hero"><div className="mt-entry-hero-title"><span>{row.style_no}</span><span className="mt-chip mt-muted">{row.order_no}</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-chip mt-warn">{fieldLabel(field)}</span></div><div className="mt-entry-hero-sub">{ctx.note} Reductions/corrections are not normal entry and must go through approval.</div>{orderVariance.diff !== 0 && <div className={`mt-chip ${statusClass(orderVariance.tone)}`} style={{marginTop:8}}>{orderVariance.text}</div>}<div className="mt-mandatory-note"><AlertTriangle size={14}/> Highlighted size boxes are open/mandatory when entering this row. Blank means no quantity entered for that size.</div></div><div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">{ctx.availableLabel}</div><div className="value">{fmt(ctx.available)}</div><div className="note">source / feed</div></div><div className="mt-entry-metric"><div className="label">{ctx.previousLabel}</div><div className="value">{fmt(ctx.previous)}</div><div className="note">already entered</div></div><div className="mt-entry-metric"><div className="label">{ctx.openLabel}</div><div className="value">{fmt(ctx.open)}</div><div className="note">balance before entry</div></div><div className="mt-entry-metric"><div className="label">New Entry</div><div className="value">{fmt(newQty)}</div><div className="note">selected date</div></div><div className="mt-entry-metric"><div className="label">Cumulative After</div><div className="value">{fmt(validation.updatedTotal)}</div><div className="note">{fmt(validation.updatedTotal)} / {fmt(ctx.available)} total</div></div><div className="mt-entry-metric"><div className="label">Remaining After</div><div className="value">{fmt(Math.max(0, n(ctx.open)-newQty))}</div><div className="note">after saving</div></div></div><div className="mt-entry-row-actions"><button className="mt-btn" onClick={fillOpen}>Auto-fill open qty</button><button className="mt-btn ghost" onClick={clear}>Clear entry</button><button className="mt-btn primary" onClick={save} disabled={isSaving || !changes.length || validation.blocked || reasonMissing}><CheckCircle2 size={14}/>{isSaving ? "Saving..." : "Save Day Entry"}</button></div></div>
     <div className="mt-section"><div className="mt-dept-size-grid">{sizeContexts.map(x=>{ const remaining=Math.max(0,n(x.open)-n(x.entry)); const baseField=field==="alter_clear"?"output":field; const prev=n(sizeMatrix(row,stage,baseField).find(v=>v.size===x.size)?.qty); const updated=prev+n(x.entry); const blocked=field==="alter_clear" && n(x.entry)>n(x.open); return <div key={x.size} className="mt-dept-size-box"><div className="size">{x.size}</div><div className="line"><span>Open</span><b>{fmt(x.open)}</b></div><input className={`mt-cell-input ${n(x.open)>0?"mandatory":""} ${draft[`${row.id}|${x.size}`]!==undefined?"dirty":""} ${blocked||validation.blocked?"blocked":""}`} value={getVal(row,x.size)} onChange={e=>setVal(x.size,e.target.value)} placeholder="0" style={{width:"100%", marginTop:6}}/><div className="line"><span>Remaining</span><b>{fmt(remaining)}</b></div><div className="line"><span>Updated total</span><b>{fmt(updated)}</b></div></div>;})}</div>{validation.blocked && <div className="mt-locked-note" style={{marginTop:10}}>Blocked: {validation.messages.join("; ")}</div>}</div>
   </div>;
 }
@@ -4233,6 +4285,8 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
   const [reason, setReason] = useState(()=>safeJsonLoad(uiStorageKey("entry_reason"), ""));
   const [entryLine, setEntryLine] = useState(()=>safeJsonLoad(uiStorageKey("entry_line"), productionLineNames()[0] || "STF-1"));
   const [draft, setDraft] = useState(()=>safeJsonLoad(uiStorageKey("entry_draft"), {}));
+  const saveLockRef = useRef(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [correctRowId, setCorrectRowId] = useState(null);
   const [correctDraft, setCorrectDraft] = useState({});
   const [viewMode, setViewMode] = useState(()=>safeJsonLoad(uiStorageKey("entry_view_mode"), "date"));
@@ -4351,7 +4405,7 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
     const deltaMap = Object.fromEntries(changes.map(c=>[c.size, c.delta]));
     const getValForApply = (r, size)=> n(deltaMap[size]);
     setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:[row], stage:g.stage, field, getVal:getValForApply }));
-    setLedger(prev => [...newLedger, ...prev]);
+    setLedger(prev => mergeLedgerPrependUnique(prev, newLedger));
     setStyleEditKey(null);
     setStyleCorrectDraft({});
     setStyleCorrectReason("");
@@ -4371,6 +4425,7 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
   function clearRow(row){ setDraft(d=>{ const nd={...d}; sizesFor(row).forEach(sz=>delete nd[`${row.id}|${sz}`]); return nd; }); }
   function fillAllOpen(){ setDraft(d=>{ const nd={...d}; activeRows.forEach(row=>sizesFor(row).forEach(sz=>{ nd[`${row.id}|${sz}`]=String(Math.max(0,n(entryFieldSizeContext(row,stage,field,sz).open))); })); return nd; }); }
   async function save(){
+    if (saveLockRef.current) { notify("Save already in progress. Please wait.", "Duplicate save blocked"); return; }
     const changed = activeRows.flatMap(row => dailySizeRows(row, stage, field, getVal, ledger, entryDate));
     const validationRows = activeRows.map(r=>({ row:r, validation:validate(r) })).filter(x=>x.validation.entryTotal);
     const hardBlocked = validationRows.filter(x=>hardBlockMessages(x.validation).length);
@@ -4383,19 +4438,24 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
     }
     if (!changed.length) { alert("No new size-wise quantity entered."); return; }
     if (!confirmEntryChecks({ entryDate, changes:changed, stage, field, reason })) return;
-    const override = p0Rows.length ? { validation_status:"p0_date_sequence_override", validation_scope:"p0_date_sequence_confirmed_reconcile", validation_messages:p0Rows.flatMap(x=>x.validation.dateMessages || []), requires_reconcile:true } : null;
-    const newLedger = buildLedgerRows({ changes:changed, stage, field, entryDate, reason, source:"dpr_quick_entry", line: stage === "stitching" ? entryLine : "", validationOverride:override });
-    const sharedResult = await saveLedgerToSupabase(newLedger, field);
-    if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
-      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
-      if (!window.confirm(`Shared Supabase save did not confirm: ${msg}
-
-Save locally in this browser anyway? Other users will not see it until Supabase is fixed/synced.`)) return;
+    saveLockRef.current = true;
+    setIsSaving(true);
+    try {
+      const override = p0Rows.length ? { validation_status:"p0_date_sequence_override", validation_scope:"p0_date_sequence_confirmed_reconcile", validation_messages:p0Rows.flatMap(x=>x.validation.dateMessages || []), requires_reconcile:true } : null;
+      const newLedger = buildLedgerRows({ changes:changed, stage, field, entryDate, reason, source:"dpr_quick_entry", line: stage === "stitching" ? entryLine : "", validationOverride:override });
+      const sharedResult = await saveLedgerToSupabase(newLedger, field);
+      if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
+        const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
+        if (!window.confirm(`Shared Supabase save did not confirm: ${msg}\n\nSave locally in this browser anyway? Other users will not see it until Supabase is fixed/synced.`)) return;
+      }
+      setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:activeRows, stage, field, getVal }));
+      setLedger(prev => mergeLedgerPrependUnique(prev, newLedger));
+      setDraft({});
+      onSharedSave?.(sharedResult, "DPR day entry");
+    } finally {
+      saveLockRef.current = false;
+      setIsSaving(false);
     }
-    setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:activeRows, stage, field, getVal }));
-    setLedger(prev => [...newLedger, ...prev]);
-    setDraft({});
-    onSharedSave?.(sharedResult, "DPR day entry");
   }
 
   function beginCorrection(row){
@@ -4430,7 +4490,7 @@ Save locally in this browser anyway? Other users will not see it until Supabase 
     const deltaMap = Object.fromEntries(changes.map(c=>[c.size, c.delta]));
     const getValForApply = (r, size)=> n(deltaMap[size]);
     setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:[row], stage, field, getVal:getValForApply }));
-    setLedger(prev => [...newLedger, ...prev]);
+    setLedger(prev => mergeLedgerPrependUnique(prev, newLedger));
     setCorrectRowId(null);
     setCorrectDraft({});
     onSharedSave?.(sharedResult, "DPR entry correction");
@@ -4457,7 +4517,7 @@ Save locally in this browser anyway? Other users will not see it until Supabase 
         <select className="mt-select" value={field} onChange={e=>{setField(e.target.value); setDraft({});}}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>
         {stage === "stitching" && <><span className="mt-toolbar-label">Line</span><select className="mt-select" value={entryLine} onChange={e=>setEntryLine(e.target.value)}>{productionLineNames().map(l=><option key={l} value={l}>{l}</option>)}</select></>}
         <button className="mt-btn" onClick={fillAllOpen}>Auto-fill all open</button>
-        <button className="mt-btn primary" onClick={save}><CheckCircle2 size={14}/>Save Day Entry</button>
+        <button className="mt-btn primary" onClick={save} disabled={isSaving}><CheckCircle2 size={14}/>{isSaving ? "Saving..." : "Save Day Entry"}</button>
       </div>
       <details className="mt-fold" style={{marginTop:8}}>
         <summary>More: Rejection / Missing / Alter rows, backdate reason</summary>
@@ -4614,7 +4674,7 @@ function registerActivityLabel(type){
   const t = String(type || "").toLowerCase();
   if (["good_output","output","completed","complete","done"].includes(t)) return "Completed / Output";
   if (["issue","issued"].includes(t)) return "Dept Issue Forward";
-  if (["receive","received"].includes(t)) return "Dept Receive";
+  if (["receive","received"].includes(t)) return "Legacy Receive / Feed";
   if (["reject","rejection"].includes(t)) return "Rejection";
   if (t === "missing") return "Missing";
   if (t === "alter" || t === "alter_issue") return "Alter Defect";
@@ -4624,7 +4684,7 @@ function registerActivityLabel(type){
 function correctionFieldToEntryType(field){
   if (field === "output") return "good_output";
   if (field === "issued") return "issue";
-  if (field === "received") return "receive";
+  if (field === "received") return "legacy_feed";
   if (field === "reject") return "reject";
   if (field === "missing") return "missing";
   if (field === "alter") return "alter";
@@ -4662,7 +4722,7 @@ function applyRegisterCorrectionToRows({ rows, target, stage, field, sizeMap }){
       stageSizes.alter = newAlter;
     } else {
       nextStage[baseField] = Object.values(newMap).reduce((a,b)=>a+n(b),0);
-      if (stage !== "cutting" && baseField === "output") nextStage.received = Math.max(n(prevStage.received), stageFeed(row, stage));
+      // Register/output correction must not auto-create receiving.
       stageSizes[baseField] = newMap;
     }
     stages[stage] = nextStage;
@@ -4729,11 +4789,7 @@ function applySharedLedgerTotalsToRows(rows=[], ledger=[]){
         nextStageSizes[field] = bySize;
         changed = true;
       });
-      // Under the user's workflow, issue-forward means the receiving department accepted it.
-      // If there are output ledger rows but no explicit received ledger rows, keep received at least equal to feed so the other browser does not show blank receive.
-      if (stage !== "cutting" && Object.prototype.hasOwnProperty.call(bucket.fields, "output") && !Object.prototype.hasOwnProperty.call(bucket.fields, "received")) {
-        nextStage.received = Math.max(n(nextStage.received), stageFeed({ ...row, stages }, stage));
-      }
+      // Do not synthesize receiving from output ledger rows. Receive stays explicit only.
       stages[stage] = nextStage;
       sizeStage[stage] = nextStageSizes;
     });
@@ -4800,7 +4856,7 @@ function outputRegisterRows(rows, ledger=[], filters={}){
     let fieldKey = "output";
     if (["Completed / Output"].includes(label)) { g.Completed_Output += qty; fieldKey = "output"; }
     else if (label === "Dept Issue Forward") { g.Issue_Forward += qty; fieldKey = "issued"; }
-    else if (label === "Dept Receive") { g.Receive += qty; fieldKey = "received"; }
+    else if (label === "Legacy Receive / Feed") { g.Receive += qty; fieldKey = "received"; }
     else if (label === "Rejection") { g.Rejection += qty; g.R_A_M_Total += qty; fieldKey = "reject"; }
     else if (label === "Missing") { g.Missing += qty; g.R_A_M_Total += qty; fieldKey = "missing"; }
     else if (label === "Alter Defect") { g.Alter_Defect += qty; g.R_A_M_Total += qty; fieldKey = "alter"; }
@@ -4925,7 +4981,7 @@ function OutputRegisterView({ rows, setRows, ledger, setLedger, focus, clearTick
   const fieldOptions = [
     ["output", "Completed / Output"],
     ["issued", "Dept Issue Forward"],
-    ["received", "Dept Receive"],
+    ["received", "Legacy Receive / Feed"],
     ["reject", "Rejection"],
     ["missing", "Missing"],
     ["alter", "Alter Defect"],
@@ -5038,7 +5094,7 @@ function stagePlanSources(row, dept){
     sources.push({ key:"route_ready", label: prevStage ? `${stageLabel(prevStage)} ready / issued` : "Route ready", qty:feed, readyType:"Actual ready", status: feed > 0 ? "Ready" : "Not ready" });
     if (prevStage) sources.push({ key:"previous_output", label:`${stageLabel(prevStage)} completed`, qty:n(prev.output), readyType:"Previous dept output", status:n(prev.output)>0?"Ready":"Not ready" });
   }
-  sources.push({ key:"dept_received", label:`${stageLabel(dept)} received/accepted`, qty:n(st.received || feed), readyType:"Dept accepted", status:n(st.received || feed)>0?"Ready":"Not ready" });
+  sources.push({ key:"dept_received", label:`${stageLabel(dept)} fed/accountable`, qty:n(st.received || feed), readyType:"Dept has feed", status:n(st.received || feed)>0?"Ready":"Not ready" });
   sources.push({ key:"manual_future", label:"Manual Future Plan", qty:n(row.order_qty), readyType:"Manual / risk", status:"Manual future / risk" });
   return sources;
 }
@@ -5125,7 +5181,7 @@ function achievedForPlan(plan, rows, ledger=[]){
   const dept = plan.dept;
   const line = String(plan.line || "").trim();
   const linked = resolvePlanStyle(rows, plan);
-  const outputTypes = ["good_output","output","receive","received","alter_clear"];
+  const outputTypes = ["good_output","output","alter_clear"];
   const fromLedger = (ledger||[]).filter(e=>{
     if (String(e.entry_date||"").slice(0,10) !== date) return false;
     if (String(e.stage||"") !== dept) return false;
@@ -5168,7 +5224,7 @@ function reviewBuckets(rows, ledger=[], planRows=[]){
   rows.forEach(row=>{
     routeFor(row).forEach(stage=>{
       const st = sdata(row,stage), c=cellBreakup(row,stage);
-      const base = { Dept:stageLabel(stage), Order:row.order_no, Style:row.style_no, Buyer:row.buyer, Colour:row.colour, Component:row.component, Owner:"Production Coordinator", HOD:stageOwner(stage), Received:n(st.received), Output:n(st.output), Issued:n(st.issued), Open:n(c.open), RAM:n(c.ram), Idle:`${n(st.idle)}d` };
+      const base = { Dept:stageLabel(stage), Order:row.order_no, Style:row.style_no, Buyer:row.buyer, Colour:row.colour, Component:row.component, Owner:"Production Coordinator", HOD:stageOwner(stage), Feed:(stage === "cutting" ? n(row.order_qty) : stageFeed(row, stage)), Output:n(st.output), Issued:n(st.issued), Open:n(c.open), RAM:n(c.ram), Idle:`${n(st.idle)}d` };
       const buckets = issueBuckets(row).filter(b=>b.stage===stage);
       const hasRecon = buckets.some(b=>b.type==="reconcile");
       if (hasRecon) reconcile.push({ ...base, Problem:buckets.filter(b=>b.type==="reconcile").map(b=>b.status).join(" | "), Difference:buckets.filter(b=>b.type==="reconcile").reduce((a,b)=>a+n(b.qty),0), Action:"Correct entry or approved adjustment" });
@@ -5307,6 +5363,72 @@ function nextProductionMonday(iso=today()){
 }
 function planCellLineKey(activeDept, line){ return activeDept === "stitching" ? String(line || "").trim() : `${activeDept}_total`; }
 function planCellMatches(p, activeDept, line, day){ return String(p.dept||"")===String(activeDept) && String(p.plan_date||"").slice(0,10)===String(day||"").slice(0,10) && String(p.line || planCellLineKey(activeDept,line) || "")===String(planCellLineKey(activeDept,line)||""); }
+function planExactIdentityKey(item, rows=[]){
+  const linked = resolvePlanStyle(rows, item);
+  const obj = linked || item || {};
+  const style = String(obj.style_no || planStyleText(obj) || "").trim().toUpperCase();
+  const order = String(obj.order_no || "").trim().toUpperCase();
+  const colour = String(obj.colour || obj.color || "").trim().toUpperCase();
+  const component = String(obj.component || "").trim().toUpperCase();
+  if (style) return [order, style, colour, component].join("|");
+  const id = obj.id || obj.row_id;
+  return id ? `ID:${String(id).trim()}` : "";
+}
+function samePlanExactIdentity(a, b, rows=[]){
+  const ak = planExactIdentityKey(a, rows);
+  const bk = planExactIdentityKey(b, rows);
+  return !!ak && !!bk && ak === bk;
+}
+function isSamePlanCellSlot(p, candidate, activeDept="stitching", line="", day="", slotNo=1){
+  if (!p || !candidate) return false;
+  const currentDay = String(day || candidate.plan_date || "").slice(0,10);
+  const currentLine = String(planCellLineKey(activeDept, line) || candidate.line || "");
+  const currentSlot = n(slotNo || candidate.slot_no || 1) || 1;
+  if (candidate.id && String(p.id || "") === String(candidate.id)) return true;
+  return String(p.dept || "") === String(activeDept || candidate.dept || "")
+    && String(p.plan_date || "").slice(0,10) === currentDay
+    && String(p.line || "") === currentLine
+    && planSlotNo(p) === currentSlot;
+}
+function planAllocationHorizonStart(){ return today(); }
+function isPlanAllocationRowActive(p){
+  const d = String(p?.plan_date || "").slice(0,10);
+  return !!d && d >= planAllocationHorizonStart();
+}
+function sameHorizonAllocatedPlanRows(candidate, rows=[], planRows=[], activeDept="stitching", line="", day="", slotNo=1){
+  if (!candidate || !planStyleText(candidate)) return [];
+  const candidateKey = planExactIdentityKey(candidate, rows);
+  if (!candidateKey) return [];
+  const currentDay = String(day || candidate.plan_date || "").slice(0,10);
+  return (planRows || []).filter(p=>{
+    if (!p || !planStyleText(p)) return false;
+    if (String(p.dept || "") !== String(activeDept || candidate.dept || "")) return false;
+    if (!isPlanAllocationRowActive(p)) return false;
+    if (isSamePlanCellSlot(p, candidate, activeDept, line, currentDay, slotNo)) return false;
+    return samePlanExactIdentity(p, candidate, rows);
+  }).sort((a,b)=>String(a.plan_date||"").localeCompare(String(b.plan_date||"")) || String(a.line||"").localeCompare(String(b.line||"")) || planSlotNo(a)-planSlotNo(b));
+}
+function sameHorizonAllocatedPlanQty(candidate, rows=[], planRows=[], activeDept="stitching", line="", day="", slotNo=1){
+  return sameHorizonAllocatedPlanRows(candidate, rows, planRows, activeDept, line, day, slotNo).reduce((a,p)=>a+planRowEffectiveQty(p),0);
+}
+// Backward-compatible names: the guard now reserves quantity across the full future planning horizon, not only the visible week/day.
+function planAllocationWeekDaysFor(day){ return planningSixDays(lineBoardWeekStart(day || today())); }
+function planAllocationWeekSet(day){ return new Set(planAllocationWeekDaysFor(day).map(d=>String(d).slice(0,10))); }
+function sameWeekAllocatedPlanRows(candidate, rows=[], planRows=[], activeDept="stitching", line="", day="", slotNo=1){ return sameHorizonAllocatedPlanRows(candidate, rows, planRows, activeDept, line, day, slotNo); }
+function sameWeekAllocatedPlanQty(candidate, rows=[], planRows=[], activeDept="stitching", line="", day="", slotNo=1){ return sameHorizonAllocatedPlanQty(candidate, rows, planRows, activeDept, line, day, slotNo); }
+function sameDayAllocatedPlanRows(candidate, rows=[], planRows=[], activeDept="stitching", line="", day="", slotNo=1){ return sameHorizonAllocatedPlanRows(candidate, rows, planRows, activeDept, line, day, slotNo); }
+function sameDayAllocatedPlanQty(candidate, rows=[], planRows=[], activeDept="stitching", line="", day="", slotNo=1){ return sameHorizonAllocatedPlanQty(candidate, rows, planRows, activeDept, line, day, slotNo); }
+function planQuantityAllocationMessage(guard){
+  if (!guard) return "";
+  const allocationRows = guard.horizonAllocatedRows || guard.weekAllocatedRows || guard.sameDayRows || [];
+  const places = allocationRows.slice(0,5).map(p=>`${shortDayLabel(String(p.plan_date||"").slice(0,10))} ${p.line || "Dept total"} slot ${planSlotNo(p)}: ${fmt(planRowEffectiveQty(p))}`).join("; ");
+  const more = allocationRows.length > 5 ? ` +${allocationRows.length - 5} more` : "";
+  const used = n(guard.actualConsumedForAllocation) + n(guard.horizonAllocatedQty ?? guard.weekAllocatedQty ?? guard.sameDayAllocatedQty);
+  return `Qty allocation across full future plan: available ${fmt(guard.availableForThisSlot)} after actual done ${fmt(guard.actualConsumedForAllocation)} + already planned/reserved ${fmt(guard.horizonAllocatedQty ?? guard.weekAllocatedQty ?? guard.sameDayAllocatedQty)}${places ? ` (${places}${more})` : ""}.`;
+}
+// Kept for old references, but split-line planning is now allowed. Quantity allocation guard handles over-planning.
+function findSameDayOtherLineDuplicatePlan(){ return null; }
+function planDuplicateLineMessage(){ return "Split lines are allowed. Quantity guard checks only remaining unplanned qty."; }
 function planSlotNo(p){ return Math.max(1, n(p?.slot_no || p?.slot || p?.sequence || p?.metadata?.slot_no || 1) || 1); }
 function lineDayPlanRows(planRows, activeDept, line, day){
   return (planRows||[]).filter(p=>planCellMatches(p, activeDept, line, day)).sort((a,b)=>planSlotNo(a)-planSlotNo(b) || String(a.updated_at||a.created_at||"").localeCompare(String(b.updated_at||b.created_at||"")));
@@ -5425,7 +5547,7 @@ function ledgerQtyUpTo(ledger=[], row, stage, day, types=["good_output","output"
   }).reduce((a,e)=>a+n(e.qty ?? e.delta ?? e.good_qty ?? e.output),0);
 }
 function actualStageOutputAsOf(row, dept, day, ledger=[]){
-  const fromLedger = ledgerQtyUpTo(ledger, row, dept, day, ["good_output","output","receive","received","alter_clear"]);
+  const fromLedger = ledgerQtyUpTo(ledger, row, dept, day, ["good_output","output","alter_clear"]);
   if (fromLedger > 0) return fromLedger;
   return n(sdata(row, dept).output);
 }
@@ -5460,28 +5582,33 @@ function planNeedBreakdown(plan, rows, planRows, activeDept, line, day, ledger=[
   const styleText = planStyleText(plan);
   const linked = resolvePlanStyle(rows, plan);
   const qtyNeeded = planRowEffectiveQty(plan);
-  if (!linked) return { linked:null, qtyNeeded, actualReadyFeed:0, projectedFeed:0, possibleFeed:0, actualDone:0, plannedBeforeDay:0, earlierSameDayPlan:0, consumedBeforeSlot:0, availableForThisSlot:0, afterThisSlot:0, feedInfo:null, status:"Unlinked style", tone:"warn" };
-  const feedInfo = feedAvailableAsOf(linked, activeDept, day, planRows, ledger);
-  const actualDone = actualStageOutputAsOf(linked, activeDept, day, ledger);
-  const plannedBeforeDay = plannedQtyUpTo(planRows, linked, activeDept, day, false);
+  if (!linked) return { linked:null, qtyNeeded, actualReadyFeed:0, projectedFeed:0, possibleFeed:0, actualDone:0, plannedBeforeDay:0, plannedBeforeWeek:0, earlierSameDayPlan:0, consumedBeforeSlot:0, availableForThisSlot:0, afterThisSlot:0, feedInfo:null, status:"Unlinked style", tone:"warn" };
+  const planDay = String(day || plan?.plan_date || today()).slice(0,10);
+  const weekDays = planAllocationWeekDaysFor(planDay);
+  const weekStart = weekDays[0] || planDay;
+  const weekEnd = weekDays[weekDays.length-1] || planDay;
+  const dayBeforeWeek = addCalendarDaysIso(weekStart, -1);
+  const feedInfo = feedAvailableAsOf(linked, activeDept, planDay, planRows, ledger);
+  const actualDone = actualStageOutputAsOf(linked, activeDept, planDay, ledger);
+  const actualDoneBeforeWeek = actualStageOutputAsOf(linked, activeDept, dayBeforeWeek, ledger);
+  const plannedBeforeDay = plannedQtyUpTo(planRows, linked, activeDept, planDay, false);
+  const plannedBeforeWeek = plannedQtyUpTo(planRows, linked, activeDept, weekStart, false);
+  const priorConsumedBeforeWeek = Math.max(n(actualDoneBeforeWeek), n(plannedBeforeWeek));
   const lineKey = planCellLineKey(activeDept,line);
   const slotNo = planSlotNo(plan);
-  const key = styleKeyOf(linked);
-  const sameDayEarlier = (planRows||[]).filter(p=>{
-    if (String(p.dept)!==String(activeDept)) return false;
-    if (String(p.plan_date||"").slice(0,10)!==String(day||"").slice(0,10)) return false;
-    if (String(p.line||"")!==String(lineKey)) return false;
-    if (planSlotNo(p) >= slotNo) return false;
-    return (p.row_id===linked.id || styleKeyOf(p)===key || planStyleText(p).toUpperCase()===styleText.toUpperCase());
-  }).reduce((a,p)=>a+planRowEffectiveQty(p),0);
-  const consumedBeforeSlot = n(actualDone) + n(plannedBeforeDay) + n(sameDayEarlier);
-  const availableForThisSlot = Math.max(0, n(feedInfo.feed) - consumedBeforeSlot);
+  const horizonAllocatedRows = sameHorizonAllocatedPlanRows({ ...plan, row_id:linked.id, order_no:linked.order_no, style_no:linked.style_no, style_input:linked.style_no, colour:linked.colour, component:linked.component }, rows, planRows, activeDept, lineKey, planDay, slotNo);
+  const horizonAllocated = horizonAllocatedRows.reduce((a,p)=>a+planRowEffectiveQty(p),0);
+  const allocationBaseQty = Math.max(n(feedInfo.feed), n(linked.order_qty), n(sdata(linked, upstreamStageFor(linked, activeDept)).output));
+  const yesterday = addCalendarDaysIso(today(), -1);
+  const actualConsumedForAllocation = actualStageOutputAsOf(linked, activeDept, yesterday, ledger);
+  const consumedBeforeSlot = n(actualConsumedForAllocation) + n(horizonAllocated);
+  const availableForThisSlot = Math.max(0, n(allocationBaseQty) - consumedBeforeSlot);
   const afterThisSlot = availableForThisSlot - n(qtyNeeded);
   const depends = n(feedInfo.projectedPrev) > 0 && n(feedInfo.actualPrev) < n(feedInfo.feed) && n(qtyNeeded) > Math.max(0, n(feedInfo.actualPrev) - consumedBeforeSlot);
   const over = n(qtyNeeded) > availableForThisSlot;
   const tone = over ? "late" : depends ? "warn" : "ok";
-  const status = over ? `Over needed feed by ${fmt(Math.abs(afterThisSlot))}` : depends ? "OK only if upstream plan is achieved" : "Covered by actual-ready feed";
-  return { linked, qtyNeeded, actualReadyFeed:n(feedInfo.actualPrev), projectedFeed:n(feedInfo.projectedPrev), possibleFeed:n(feedInfo.feed), actualDone:n(actualDone), plannedBeforeDay:n(plannedBeforeDay), earlierSameDayPlan:n(sameDayEarlier), consumedBeforeSlot, availableForThisSlot, afterThisSlot, feedInfo, status, tone, depends, over };
+  const status = over ? `Over remaining unplanned qty by ${fmt(Math.abs(afterThisSlot))}` : depends ? "OK only if upstream plan is achieved" : "Covered by actual/projected feed and full-horizon unplanned balance";
+  return { linked, qtyNeeded, actualReadyFeed:n(feedInfo.actualPrev), projectedFeed:n(feedInfo.projectedPrev), possibleFeed:n(feedInfo.feed), allocationBaseQty:n(allocationBaseQty), actualDone:n(actualDone), actualDoneBeforeWeek:n(actualDoneBeforeWeek), actualConsumedForAllocation:n(actualConsumedForAllocation), plannedBeforeDay:n(plannedBeforeDay), plannedBeforeWeek:n(plannedBeforeWeek), priorConsumedBeforeWeek:n(priorConsumedBeforeWeek), earlierSameDayPlan:n(horizonAllocated), sameDayAllocatedQty:n(horizonAllocated), sameDayRows:horizonAllocatedRows, weekAllocatedQty:n(horizonAllocated), weekAllocatedRows:horizonAllocatedRows, horizonAllocatedQty:n(horizonAllocated), horizonAllocatedRows, consumedBeforeSlot, availableForThisSlot, afterThisSlot, feedInfo, status, tone, depends, over, weekStart, weekEnd };
 }
 function planNeedMessage(plan, rows, planRows, activeDept, line, day, ledger=[]){
   const b = planNeedBreakdown(plan, rows, planRows, activeDept, line, day, ledger);
@@ -5491,7 +5618,7 @@ function planNeedMessage(plan, rows, planRows, activeDept, line, day, ledger=[])
     `Actual ready feed ${fmt(b.actualReadyFeed)}`,
     `Projected upstream feed ${fmt(b.projectedFeed)}`,
     `Possible feed by ${day} ${fmt(b.possibleFeed)}`,
-    `already done ${fmt(b.actualDone)} + earlier planned ${fmt(n(b.plannedBeforeDay)+n(b.earlierSameDayPlan))}`,
+    `actual done before today ${fmt(b.actualConsumedForAllocation)} + all future planned/reserved ${fmt(b.horizonAllocatedQty ?? b.weekAllocatedQty ?? b.earlierSameDayPlan)}`,
     `available for this slot ${fmt(b.availableForThisSlot)}`,
     `after slot ${fmt(b.afterThisSlot)}`,
     b.status
@@ -5509,7 +5636,7 @@ function planLoadReadyInfo(plan, rows, planRows, activeDept, line, day, ledger=[
   if (!prevStage) return { tone:"ok", label:"Order base", detail:`Order base covers ${fmt(b.qtyNeeded)}.`, readyDate:planDay, daysBefore:0, depends:false, short:0 };
   const entries = (ledger||[])
     .filter(e=>String(e.stage || e.dept || "")===String(prevStage) && ledgerEntryMatchesStyle(e, b.linked))
-    .filter(e=>["good_output","output","receive","received"].includes(String(e.entry_type || e.type || e.field || "").toLowerCase()))
+    .filter(e=>["good_output","output","alter_clear"].includes(String(e.entry_type || e.type || e.field || "").toLowerCase()))
     .map(e=>({ date:String(e.entry_date || e.date || e.created_at || "").slice(0,10), qty:n(e.qty ?? e.delta ?? e.good_qty ?? e.output) }))
     .filter(e=>e.date && e.date<=planDay && e.qty)
     .sort((a,c)=>String(a.date).localeCompare(String(c.date)));
@@ -5568,11 +5695,11 @@ function planLoadReadyShort(plan, rows, planRows, activeDept, line, day, ledger=
   const r = planLoadReadyInfo(plan, rows, planRows, activeDept, line, day, ledger);
   return r?.label || "";
 }
-function availableStylePickerRows(rows=[], planRows=[], activeDept="stitching", day=today(), ledger=[]){
+function availableStylePickerRows(rows=[], planRows=[], activeDept="stitching", day=today(), ledger=[], line="", slotNo=1){
   return (rows||[]).map(row=>{
-    const pseudo = { row_id:row.id, style_no:row.style_no, style_input:row.style_no, planned_qty:1, dept:activeDept, plan_date:day, line:"", slot_no:1 };
-    const b = planNeedBreakdown(pseudo, [row], planRows, activeDept, "", day, ledger);
-    const ready = planLoadReadyInfo(pseudo, [row], planRows, activeDept, "", day, ledger);
+    const pseudo = { row_id:row.id, order_no:row.order_no, colour:row.colour, component:row.component, style_no:row.style_no, style_input:row.style_no, planned_qty:1, dept:activeDept, plan_date:day, line:planCellLineKey(activeDept,line), slot_no:slotNo };
+    const b = planNeedBreakdown(pseudo, rows, planRows, activeDept, line, day, ledger);
+    const ready = planLoadReadyInfo(pseudo, rows, planRows, activeDept, line, day, ledger);
     const available = Math.max(0, n(b.availableForThisSlot));
     const rank = available>0 && !ready.depends ? 0 : available>0 ? 1 : 2;
     return { row, available, ready, rank };
@@ -5584,6 +5711,10 @@ function planCellSignal(plan, rows, planRows, activeDept, line, day, ledger=[]){
   const qty = n(plan.planned_qty);
   if (plan.short_close) return { tone:"purple", level:"override", text:"Short close override marked — next style can roll even if balance remains." };
   if (!linked) return { tone:"warn", level:"manual_unlinked", text:"Free text style — allowed, but no master qty/cascade check until linked to Styles." };
+  const historicalPlanDay = isHistoricalPlanReportingRow({ ...plan, plan_date:day || plan?.plan_date });
+  const qtyGuard = planNeedBreakdown(plan, rows, planRows, activeDept, line, day, ledger);
+  if (historicalPlanDay && qty) return { tone:"info", level:"historical_reporting", text:`Historical plan row — reporting target preserved. Only compare Actual vs Plan; live open/allocated balance is reference only. ${planNeedMessage(plan, rows, planRows, activeDept, line, day, ledger)}` };
+  if (!historicalPlanDay && qty && qtyGuard.over) return { tone:"late", level:"over_allocated_qty", text:`Planned qty exceeds unplanned balance. ${planQuantityAllocationMessage(qtyGuard)} Split line is allowed, but only remaining qty can be planned.` };
   const thisRemain = remainingForStyleAsOf(linked, activeDept, day, planRows, ledger);
   const sameDayRowsForCapacity = lineDayPlanRows(planRows, activeDept, line, day);
   const dayHoursAreCovered = planDayHoursCovered(sameDayRowsForCapacity);
@@ -5677,7 +5808,7 @@ function planRowsBetweenDates(planRows=[], dept="", style="", startDate="", endD
 function actualForStyleDeptDate(style="", dept="", date="", rows=[], ledger=[]){
   const st = String(style || "").trim().toUpperCase();
   const day = String(date || "").slice(0,10);
-  const fromLedger = (ledger||[]).filter(e=>String(e.entry_date||"").slice(0,10)===day && String(e.stage||"")===String(dept||"") && String(e.style_no||e.style||"").trim().toUpperCase()===st && ["good_output","output","receive","received","alter_clear"].includes(String(e.entry_type||e.type||"").toLowerCase()));
+  const fromLedger = (ledger||[]).filter(e=>String(e.entry_date||"").slice(0,10)===day && String(e.stage||"")===String(dept||"") && String(e.style_no||e.style||"").trim().toUpperCase()===st && ["good_output","output","alter_clear"].includes(String(e.entry_type||e.type||"").toLowerCase()));
   if (fromLedger.length) return fromLedger.reduce((a,e)=>a+n(e.qty ?? e.delta ?? e.good_qty),0);
   const row = (rows||[]).find(r=>String(r.style_no||"").trim().toUpperCase()===st);
   if (!row) return 0;
@@ -5713,6 +5844,18 @@ function planReportQty(p){
   const base = planRowEffectiveQty(p);
   if (p?.cover_recovery_slot) return base || n(p.cover_commitment_qty || p.cover_qty || p.cover_remaining_qty);
   return base;
+}
+function isHistoricalPlanReportingRow(p){
+  const day = String(p?.plan_date || "").slice(0,10);
+  if (!day) return false;
+  // Past plan rows are locked reporting targets. They must compare Plan vs Actual,
+  // not today's live open balance, because live open naturally reduces after DPR entry.
+  return day < today();
+}
+function liveOpenPlanOverage(p, linked, activeDept){
+  if (!p || !linked || isHistoricalPlanReportingRow(p)) return 0;
+  const liveOpen = n(entryFieldContext(linked, activeDept, "output").open);
+  return Math.max(0, planReportQty(p) - liveOpen);
 }
 function coverAdjustedPlanQty(p, planRows=[], rows=[], ledger=[]){
   // Reporting rule: a plan row is the target that was committed.
@@ -5801,13 +5944,15 @@ function planTeamExportRows(planRows=[], rows=[], ledger=[], activeDept="stitchi
       const need = linked?.id ? planNeedBreakdown(p, [linked], planRows, activeDept, p.line || "", day, ledger) : null;
       const load = planLoadReadyInfo(p, rows, planRows, activeDept, p.line || "", day, ledger);
       const validation = planValidationSnapshot(p, rows, planRows, ledger);
+      const allocation = need || (linked?.id ? planNeedBreakdown(p, [linked], planRows, activeDept, p.line || "", day, ledger) : null);
       return {
         Date:day, Day:shortDayLabel(day), Dept:stageLabel(activeDept), Line:p.line || "Dept total", Slot:planSlotNo(p),
+        Qty_Allocation_Check: allocation?.over ? "OVER FUTURE PLAN RESERVED QTY" : "OK", Qty_Allocation_Detail: allocation ? planQuantityAllocationMessage(allocation) : "", Future_Planned_Other_Slots:n(allocation?.horizonAllocatedQty ?? allocation?.weekAllocatedQty ?? allocation?.sameDayAllocatedQty), Future_Available_For_This_Slot:n(allocation?.availableForThisSlot),
         Style:planStyleText(p), Order_No:p.order_no || linked.order_no || "", Buyer:p.buyer || linked.buyer || "", Colour:p.colour || linked.colour || "", Component:p.component || linked.component || "",
         Planned_Qty:qty, Actual_Qty:actual, Balance_Qty:Math.max(0, qty-actual),
         Full_Day_Target:n(p.eight_hr_target) || "", Plan_Hours:planCapacityHours(p) || "", Changeover_Lost_Hours:p.changeover ? Math.min(CHANGEOVER_LOST_HOURS, planCapacityHours(p) || CHANGEOVER_LOST_HOURS) : 0,
         OPS:planCapacityOps(p) || "", Capacity_Type:p.cover_recovery_slot ? "Cover commitment only - OPS not added" : "Normal capacity plan",
-        Load_Status:load?.label || "", Feed_Reading:load?.detail || "", Actual_Ready_Feed:n(need?.feedInfo?.actualPrev), Projected_Feed:n(need?.feedInfo?.projectedPrev), Available_For_This_Slot:n(need?.availableForThisSlot), After_This_Slot:n(need?.afterThisSlot),
+        Load_Status:load?.label || "", Feed_Reading:load?.detail || "", Actual_Ready_Feed:n(need?.feedInfo?.actualPrev), Projected_Feed:n(need?.feedInfo?.projectedPrev), Available_For_This_Slot:n(need?.availableForThisSlot), Future_Planned_Other_Slots:n(need?.horizonAllocatedQty ?? need?.weekAllocatedQty ?? need?.sameDayAllocatedQty), After_This_Slot:n(need?.afterThisSlot),
         End_Date:p.stitching_end_date || "", Short_Close:p.short_close ? "Yes" : "No", Cover_Target:p.cover_recovery_slot ? "Yes" : "No",
         Status:p.status || validation.level || "Draft", Validation:validation.message || "", Next_Action:planNextActionText(p, rows, planRows, activeDept, ledger), Remarks:p.remarks || "", Plan_ID:p.id
       };
@@ -5861,7 +6006,7 @@ function projectedFeedRows(planRows=[], rows=[], activeDept="stitching", weekDay
     const depends = n(feed?.projectedPrev) > 0 && n(feed?.actualPrev) < qty;
     return {
       Date:p.plan_date, Dept:stageLabel(activeDept), Line:p.line||"Dept total", Style:planStyleText(p), Plan_Qty_Needed_This_Slot:qty,
-      Actual_Ready_Feed:n(feed?.actualPrev), Projected_Upstream_Feed:n(feed?.projectedPrev), Projected_Available_Feed:n(feed?.feed), Already_Done_In_Dept:n(need?.actualDone), Earlier_Planned:n(n(need?.plannedBeforeDay)+n(need?.earlierSameDayPlan)), Available_For_This_Slot:n(need?.availableForThisSlot ?? remain?.remaining), After_This_Slot:n(need?.afterThisSlot),
+      Actual_Ready_Feed:n(feed?.actualPrev), Projected_Upstream_Feed:n(feed?.projectedPrev), Projected_Available_Feed:n(feed?.feed), Already_Done_In_Dept:n(need?.actualDone), Already_Planned_Reserved:n(need?.horizonAllocatedQty ?? need?.earlierSameDayPlan), Available_For_This_Slot:n(need?.availableForThisSlot ?? remain?.remaining), After_This_Slot:n(need?.afterThisSlot),
       Feed_Status: over>0 ? `Over projected feed by ${fmt(over)}` : depends ? "Depends on upstream plan" : "Actual ready / OK",
       Upstream_Rule: feed?.prevStage ? `${stageLabel(feed.prevStage)} plan + ${feed.bufferDays} day buffer` : "Order/cutting base",
       Reading: linked ? planNeedMessage(p, [linked], planRows, activeDept, p.line || "", p.plan_date, []) : "No linked style"
@@ -6063,7 +6208,7 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     const cleanedNow = cleanPatchForStyle(baseNow, patch);
     const styleTouched = Object.prototype.hasOwnProperty.call(patch, "style_input") && !!planStyleText(cleanedNow);
     const autoTouched = ["eight_hr_target","remaining_hours","changeover","qty_auto_mode","use_auto_qty"].some(k=>Object.prototype.hasOwnProperty.call(cleanedNow,k));
-    const shouldAutoFromStyle = styleTouched && !n(baseNow.planned_qty) && !!resolvePlanStyle(rows, planStyleText({ ...baseNow, ...cleanedNow }));
+    const shouldAutoFromStyle = styleTouched && !n(baseNow.planned_qty) && !!resolvePlanStyle(rows, { ...baseNow, ...cleanedNow });
     const willAuto = cleanedNow.qty_auto_mode !== undefined ? !!cleanedNow.qty_auto_mode : (cleanedNow.use_auto_qty !== undefined ? !!cleanedNow.use_auto_qty : (!!baseNow.qty_auto_mode || shouldAutoFromStyle));
     const finalHours = Math.max(0, Math.min(8, n(cleanedNow.remaining_hours !== undefined ? cleanedNow.remaining_hours : baseNow.remaining_hours || defaultHours)));
     const draftBaseBeforeChangeover = { ...baseNow, ...cleanedNow, plan_date:day, dept:activeDept, line:planCellLineKey(activeDept,line), slot_no:n(slotNo)||1, remaining_hours:finalHours, eight_hr_target:n(cleanedNow.eight_hr_target !== undefined ? cleanedNow.eight_hr_target : baseNow.eight_hr_target || 0), qty_auto_mode: willAuto };
@@ -6073,11 +6218,28 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     const draftWithOverride = { ...draftBaseBeforeChangeover, changeover_override:changeoverOverride, changeover: manualChangeoverTouched ? !!cleanedNow.changeover : !!baseNow.changeover };
     const effectiveChangeover = effectiveChangeoverForSlot(line, day, slotNo, draftWithOverride);
     const draftBeforeQty = { ...draftWithOverride, changeover:effectiveChangeover };
-    const plannedQty = cleanedNow.planned_qty !== undefined
+    const manualQtyTouched = cleanedNow.planned_qty !== undefined;
+    let plannedQty = manualQtyTouched
       ? n(cleanedNow.planned_qty)
       : ((willAuto || autoTouched) ? planAutoQtyFromTarget(draftBeforeQty) : n(baseNow.planned_qty));
+    const preGuardDraft = { ...draftBeforeQty, planned_qty:plannedQty };
+    const isPastReportingDate = isHistoricalPlanReportingRow({ ...preGuardDraft, plan_date:day });
+    if (!isPastReportingDate && planStyleText(preGuardDraft) && !manualQtyTouched) {
+      const autoGuard = planNeedBreakdown(preGuardDraft, rows, planRows, activeDept, line, day, ledger);
+      if (autoGuard.linked && n(autoGuard.availableForThisSlot) > 0 && plannedQty > n(autoGuard.availableForThisSlot)) plannedQty = n(autoGuard.availableForThisSlot);
+      if (autoGuard.linked && n(autoGuard.availableForThisSlot) <= 0 && (styleTouched || autoTouched || willAuto)) plannedQty = 0;
+    }
     const nextNow = normalizePlanRowForState({ ...draftBeforeQty, planned_qty:plannedQty, day_remaining_after:Math.max(0, 8 - priorHours - finalHours), status: cleanedNow.short_close ? "Short close override" : "Draft", updated_at:new Date().toISOString() });
     const hasContentNow = planStyleText(nextNow) || n(nextNow.planned_qty) || n(nextNow.ops) || n(nextNow.eight_hr_target) || n(nextNow.remaining_hours) || nextNow.stitching_end_date || nextNow.remarks || nextNow.short_close;
+    const allocationGuard = hasContentNow && planStyleText(nextNow) ? planNeedBreakdown(nextNow, rows, planRows, activeDept, line, day, ledger) : null;
+    if (!isPastReportingDate && allocationGuard?.linked && n(nextNow.planned_qty) > n(allocationGuard.availableForThisSlot)) {
+      notify(`${planQuantityAllocationMessage(allocationGuard)}\n\nSplit line is allowed, but you can only plan the remaining unplanned qty. Reduce this slot qty to ${fmt(allocationGuard.availableForThisSlot)} or edit the earlier planned slot.`, "Plan qty already reserved");
+      return;
+    }
+    if (!isPastReportingDate && styleTouched && allocationGuard?.linked && n(allocationGuard.availableForThisSlot) <= 0 && !n(nextNow.planned_qty)) {
+      notify(`${planQuantityAllocationMessage(allocationGuard)}\n\nThis style/component has no unplanned qty left across the future plan. Split line is allowed only when style balance remains.`, "No unplanned qty left");
+      return;
+    }
     setPlanRows(prev=>{
       const existing = (prev||[]).find(p=>p.id===existingNow?.id || (planCellMatches(p, activeDept, line, day) && planSlotNo(p)===n(slotNo)));
       if (!hasContentNow) return (prev||[]).filter(p=>p.id!==existing?.id);
@@ -6119,6 +6281,17 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     const remaining = Math.max(0, 8 - allForDay.reduce((a,p)=>a+planHours(p),0));
     updateCell(line, day, nextSlot, { remaining_hours:remaining, qty_auto_mode:true, remarks:"NEXT STYLE" });
   }
+  function planCascadeForwardDays(startDay, maxSlots=120){
+    const out = [];
+    const d = parseYmd(startDay || today());
+    let guard = 0;
+    while(out.length < maxSlots && guard < maxSlots + 40){
+      if(d.getDay() !== 0) out.push(ymd(d));
+      d.setDate(d.getDate()+1);
+      guard++;
+    }
+    return out;
+  }
   function autoFillCascadeFromSlot(line, day, slotNo){
     const current = findCellSlot(line, day, slotNo);
     const styleText = planStyleText(current);
@@ -6126,15 +6299,16 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     if (!linked) { notify("Select/link a style from Styles master first. Free-text styles cannot auto-cascade because order qty/feed is unknown.", "Cascade needs a linked style"); return; }
     const target = n(current?.eight_hr_target) || defaultFullDayOutputForStyle(linked);
     if (!target) { notify("Enter Full-day target first. Cascade needs daily output to calculate hours and qty.", "Full-day target missing"); return; }
-    const startIdx = weekDays.indexOf(day);
-    if (startIdx < 0) return;
+    const cascadeDays = planCascadeForwardDays(day, 120);
+    const startIdx = 0;
     const lineKey = planCellLineKey(activeDept,line);
-    const startRemain = remainingForStyleAsOf(linked, activeDept, day, planRows, ledger).remaining || n(linked.order_qty);
+    const startNeed = planNeedBreakdown({ ...(current || {}), row_id:linked.id, order_no:linked.order_no, style_no:linked.style_no, style_input:linked.style_no, colour:linked.colour, component:linked.component, dept:activeDept, line:lineKey, plan_date:day, slot_no:slotNo, planned_qty:0 }, rows, planRows, activeDept, line, day, ledger);
+    const startRemain = n(startNeed.availableForThisSlot) || remainingForStyleAsOf(linked, activeDept, day, planRows, ledger).remaining || n(linked.order_qty);
     let qtyLeft = Math.max(0, startRemain);
     const generated = [];
     let simulatedRows = [...(planRows||[])];
-    for (let i=startIdx; i<weekDays.length && qtyLeft>0; i++){
-      const d = weekDays[i];
+    for (let i=startIdx; i<cascadeDays.length && qtyLeft>0; i++){
+      const d = cascadeDays[i];
       const allForDay = lineDayPlanRows(planRows, activeDept, line, d);
       const linkedKey = styleKeyOf(linked);
       const sameStyle = allForDay.find(p=>p.row_id===linked.id || styleKeyOf(p)===linkedKey);
@@ -6151,7 +6325,10 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
       const productiveHours = Math.max(0, hoursCap - lostHours);
       const maxQtyForHours = Math.max(0, Math.round((target / 8) * productiveHours));
       if (!maxQtyForHours) continue;
-      const qty = Math.min(qtyLeft, maxQtyForHours);
+      const dayNeed = planNeedBreakdown({ ...baseWithSlot, row_id:linked.id, order_no:linked.order_no, style_no:linked.style_no, style_input:linked.style_no, colour:linked.colour, component:linked.component, planned_qty:0 }, rows, simulatedRows, activeDept, line, d, ledger);
+      const dayQtyAvailable = Math.max(0, n(dayNeed.availableForThisSlot));
+      if (!dayQtyAvailable) continue;
+      const qty = Math.min(qtyLeft, maxQtyForHours, dayQtyAvailable);
       const neededProductionHours = target ? (qty * 8) / target : 0;
       const neededHoursRaw = neededProductionHours + lostHours;
       const planHrs = Math.max(0.25, Math.min(hoursCap, Math.ceil(neededHoursRaw * 4) / 4));
@@ -6184,7 +6361,7 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
       generated.push(generatedRow);
       simulatedRows = [...simulatedRows.filter(p=>!(String(p.dept)===String(generatedRow.dept) && String(p.line||"")===String(generatedRow.line||"") && String(p.plan_date||"").slice(0,10)===String(generatedRow.plan_date||"").slice(0,10) && planSlotNo(p)===planSlotNo(generatedRow))), generatedRow];
     }
-    if (!generated.length) { notify("No available hours found in this week for this line. Add a slot or reduce existing planned hours.", "Cascade could not run"); return; }
+    if (!generated.length) { notify("No available hours found in the forward planning horizon for this line. Add a slot or reduce existing planned hours.", "Cascade could not run"); return; }
     const generatedIds = new Set(generated.map(g=>String(g.id)));
     const generatedKeys = new Set(generated.map(g=>[g.dept,g.line,g.plan_date,planSlotNo(g)].join("|")));
     const linkedKeyForCascade = styleKeyOf(linked);
@@ -6197,7 +6374,7 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     futureSameStyleRows.forEach(old=>onPlanDelete?.(old, { dept:activeDept, line:lineKey, day:old.plan_date, slot_no:planSlotNo(old), reason:"auto_cascade_replaced_future_same_style" }));
     generated.forEach(row=>schedulePlanSave(row, line, row.plan_date));
     const msg = qtyLeft > 0
-      ? `Auto-filled ${generated.length} plan slot(s). ${fmt(qtyLeft)} qty still remains after this week.`
+      ? `Auto-filled ${generated.length} plan slot(s). ${fmt(qtyLeft)} qty still remains after the forward planning horizon.`
       : `Auto-filled ${generated.length} plan slot(s) and finished ${linked.style_no} on ${generated[generated.length-1].plan_date}.`;
     notify(msg, "Auto cascade complete");
   }
@@ -6385,10 +6562,11 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
                 const need = has && planStyleText(p) ? planNeedBreakdown({ ...p, changeover:effChange }, rows, planRows, activeDept, line, day, ledger) : null;
                 const chInfo = has && effChange ? changeoverHoursInfo(line, day, slotNo, p) : null;
                 const actualInfo = has ? cellActualInfo(p) : null;
-                const liveOpen = has && linked ? n(entryFieldContext(linked, activeDept, "output").open) : null;
-                const overOpen = has && liveOpen !== null ? Math.max(0, planReportQty(p) - liveOpen) : 0;
+                const overOpen = has && linked ? liveOpenPlanOverage(p, linked, activeDept) : 0;
+                const allocationOver = has && !isHistoricalPlanReportingRow(p) && need?.over;
+                const historicalReporting = has && isHistoricalPlanReportingRow(p);
                 const daySummary = slotNo === 1 ? lineDayHoursSummary(line, day) : null;
-                const tone = need?.afterThisSlot < 0 ? "late" : need?.projectedFeed > 0 && need?.availableForThisSlot >= n(p.planned_qty) ? "warn" : has ? "ok" : "empty";
+                const tone = allocationOver ? "late" : need?.projectedFeed > 0 && need?.availableForThisSlot >= n(p.planned_qty) ? "warn" : has ? "ok" : "empty";
                 return <td key={`${line}-${day}-${slotNo}`} className={`compact-plan-cell ${tone} ${effChange ? "changeover" : ""}`}>
                   <button className="compact-plan-cell-btn" onClick={()=>{ setEditCell({ line, day, slotNo }); setEditorAutoOpen(false); }}>
                     {has ? <>
@@ -6397,7 +6575,9 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
                       <div className="c-metrics"><b>{fmt(planReportQty(p))}</b><span>{fmt(planCapacityOps(p))} ops</span></div>
                       <div className="c-note">{cellTinyText(p) || (effChange ? "changeover" : "")}</div>
                       {actualInfo && <div className={`c-ready ${actualInfo.tone}`}>Actual {fmt(actualInfo.achieved)} / Plan {fmt(actualInfo.planned)}{actualInfo.done ? " · done" : ""}</div>}
-                      {overOpen > 0 && <div className="c-ready late">Plan qty is {fmt(overOpen)} more than what's actually still open now — re-check/re-cascade.</div>}
+                      {allocationOver && <div className="c-ready late">Qty over-reserved: only {fmt(need?.availableForThisSlot)} left after this week’s other planned slots.</div>}
+                      {overOpen > 0 && <div className="c-ready late">Future plan exceeds current open by {fmt(overOpen)} — re-check/re-cascade.</div>}
+                      {historicalReporting && actualInfo && <div className="c-ready info">Old plan: reporting target only</div>}
                       {need && <div className={`c-ready ${planLoadReadyInfo({ ...p, changeover:effChange }, rows, planRows, activeDept, line, day, ledger).tone}`}>Load: {planLoadReadyShort({ ...p, changeover:effChange }, rows, planRows, activeDept, line, day, ledger)}</div>}
                       {effChange && chInfo && <div className="c-changeover">Changeover · <span className="lost">Lost {fmt(chInfo.lost)}h</span> · <span className="left">{fmt(chInfo.productive)}h production</span> · <span className="free">{fmt(chInfo.after)}h free</span></div>}
                       {showTargets && <div className="c-auto">{p.cover_recovery_slot ? "Cover target · no OPS/hours" : `${effChange ? "CO" : "100%"} · ${fmt(planCapacityHours(p))}h · auto ${fmt(planAutoQtyFromTarget({ ...p, changeover:effChange }))}`}</div>}
@@ -6414,7 +6594,17 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
     </div>
     {editCell && editor && <div className="mt-plan-editor-backdrop" onClick={()=>setEditCell(null)}><div className="mt-plan-editor" onClick={e=>e.stopPropagation()}>
       <div className="mt-plan-editor-head"><div><b>{editCell.line} · {shortDayLabel(editCell.day)}</b><span>Slot {editCell.slotNo}{editorLinked ? ` · ${[editorLinked.colour, editorLinked.component].filter(Boolean).join(" · ")}` : ""}</span></div><button className="mt-btn" onClick={()=>setEditCell(null)}><X size={14}/></button></div>
-      {(() => { const liveOpen = editorLinked ? n(entryFieldContext(editorLinked, activeDept, "output").open) : null; const over = liveOpen !== null ? Math.max(0, n(editor?.planned_qty) - liveOpen) : 0; return liveOpen !== null ? <div className={`mt-plan-actual-sync ${over>0?"warn":"ok"}`}><div><b>Currently open in {stageLabel(activeDept)}:</b> {fmt(liveOpen)} pcs{over>0 ? <span className="mt-small"> — this cell plans {fmt(over)} more than that. It was likely cascaded before recent actuals came in; re-run Auto fill cascade to true it up.</span> : <span className="mt-small"> — this cell's qty fits within what's actually still open.</span>}</div></div> : null; })()}
+      {(() => {
+        const liveOpen = editorLinked ? n(entryFieldContext(editorLinked, activeDept, "output").open) : null;
+        if (liveOpen === null) return null;
+        const historicalReporting = isHistoricalPlanReportingRow(editor);
+        const over = historicalReporting ? 0 : Math.max(0, planReportQty(editor) - liveOpen);
+        return <div className={`mt-plan-actual-sync ${historicalReporting ? "info" : over>0 ? "warn" : "ok"}`}><div><b>{historicalReporting ? "Historical plan row" : `Currently open in ${stageLabel(activeDept)}`}:</b> {fmt(liveOpen)} pcs{historicalReporting ? <span className="mt-small"> — live open is shown for reference only. This old plan remains a reporting target and will not be reduced or blocked by today's open balance.</span> : over>0 ? <span className="mt-small"> — this future/current cell plans {fmt(over)} more than live open. Re-check/re-cascade before execution.</span> : <span className="mt-small"> — this cell's qty fits within what's actually still open.</span>}</div></div>;
+      })()}
+      {(() => {
+        const allocation = editor && planStyleText(editor) ? planNeedBreakdown(editor, rows, planRows, activeDept, editCell.line, editCell.day, ledger) : null;
+        return allocation?.linked && !isHistoricalPlanReportingRow({ ...editor, plan_date:editCell.day }) ? <div className={`mt-plan-actual-sync ${allocation.over ? "warn" : "ok"}`}><div><b>Qty allocation guard:</b> {planQuantityAllocationMessage(allocation)} Split line is allowed; only over-allocating the weekly remaining qty is blocked.</div></div> : null;
+      })()}
       <div className="mt-plan-editor-body">
         <div className="mt-editor-fields-grid">
           <div className="mt-plan-field wide"><label>Style</label><input className="mt-input style-input" list={datalistId} value={planStyleText(editor)} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{style_input:e.target.value})} placeholder="TYPE / PICK STYLE" autoFocus/></div>
@@ -6425,7 +6615,10 @@ function PlanExcelLineBoard({ rows, planRows, setPlanRows, setRows, activeDept, 
           <div className="mt-plan-field wide"><label>Note</label><input className="mt-input" value={editor?.remarks || ""} onChange={e=>updateCell(editCell.line,editCell.day,editCell.slotNo,{remarks:e.target.value})} placeholder="continue / reason"/></div>
         </div>
         {planStyleText(editor) && (!n(editor?.planned_qty) || !n(editor?.ops)) && <div className="mt-mandatory-note"><AlertTriangle size={14}/> Qty/output and OPS/headcount are mandatory once a style is selected. The app now auto-fills defaults; edit them if needed before final team export.</div>}
-        <details className="mt-plan-available-picker no-print"><summary>Available styles to load / stitch first — cross-check by feed</summary><div className="mt-plan-style-picks">{availableStylePickerRows(rows, planRows, activeDept, editCell.day, ledger).slice(0,40).map(({row,available,ready})=><button key={row.id} className={`mt-plan-style-pick ${ready.tone}`} onClick={()=>updateCell(editCell.line,editCell.day,editCell.slotNo,{style_input:row.style_no, row_id:row.id, order_no:row.order_no, buyer:row.buyer, colour:row.colour, component:row.component})}><b>{row.style_no}</b><span>{row.order_no} · {row.buyer} · {row.colour} · {row.component} · possible {fmt(available)} · {ready.label}</span></button>)}</div></details>
+        <details className="mt-plan-available-picker no-print"><summary>Available styles to load / stitch first — cross-check by feed</summary><div className="mt-plan-style-picks">{availableStylePickerRows(rows, planRows, activeDept, editCell.day, ledger, editCell.line, editCell.slotNo).slice(0,40).map(({row,available,ready})=>{
+          const noQtyLeft = n(available) <= 0 && !isHistoricalPlanReportingRow({ plan_date:editCell.day });
+          return <button key={row.id} disabled={noQtyLeft} className={`mt-plan-style-pick ${noQtyLeft ? "late" : ready.tone}`} onClick={()=>updateCell(editCell.line,editCell.day,editCell.slotNo,{style_input:row.style_no, row_id:row.id, order_no:row.order_no, buyer:row.buyer, colour:row.colour, component:row.component})}><b>{row.style_no}</b><span>{row.order_no} · {row.buyer} · {row.colour} · {row.component} · future-plan unplanned qty left {fmt(available)} · {noQtyLeft ? "fully planned already in future plan" : ready.label}</span></button>;
+        })}</div></details>
         {planStyleText(editor) && !editorLinked && <div className="mt-plan-add-style"><b>Not in Styles master.</b><button className="mt-btn primary" onClick={()=>quickAddStyleFromCell(editCell.line,editCell.day,editCell.slotNo)}>+ Add style detail</button></div>}
         {(() => { const ai = editor && planStyleText(editor) ? cellActualInfo(editor) : null; if (!ai) return null; return <div className={`mt-plan-actual-sync ${ai.tone}`}>
           <div><b>Actual so far:</b> {fmt(ai.achieved)} <span className="mt-small">/ plan {fmt(ai.planned)}</span>{ai.done ? <span className="mt-chip mt-ok" style={{marginLeft:6}}>Target met</span> : null}</div>
@@ -6880,7 +7073,7 @@ function PlanningView({ rows, planRows, setPlanRows, ledger, setRows, onPlanUpse
       {isCurrentWeek ? <div className="mt-speed-note" style={{marginTop:8}}><b>Today is {todayLongLabel}</b> — day {todayIdx+1} of {weekDays.length} in this working week ({stageLabel(activeDept)}). Week-to-date: Plan {fmt(wtdPlan)} · Actual {fmt(wtdActual)} · {wtdPlan-wtdActual>0 ? <span style={{color:"var(--fg-late)",fontWeight:800}}>Behind by {fmt(wtdPlan-wtdActual)}</span> : <span style={{color:"var(--fg-ok)",fontWeight:800}}>On/ahead of plan</span>}.</div>
         : <div className="mt-locked-note" style={{marginTop:8}}>Viewing week of {normalizedWeekStart} — this is {todayIso < weekDays[0] ? "a future week" : "a past week"}, not the current week. <button className="mt-btn ghost" onClick={()=>setWeekStart(lineBoardWeekStart(today()))} style={{marginLeft:8}}>Jump to this week</button></div>}
     </div>
-    <div className="mt-section no-print"><div className="mt-filter-row"><button className={`mt-btn ${mode==="stitching"?"primary":"ghost"}`} onClick={()=>setMode("stitching")}>Stitching line board</button><button className={`mt-btn ${mode==="dept"?"primary":"ghost"}`} onClick={()=>setMode("dept")}>Other dept board</button>{mode==="dept" && <select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.filter(s=>!['stitching'].includes(s.key)).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>}<span className="mt-toolbar-label">Week</span><input className="mt-input" type="date" value={weekStart} onChange={e=>setWeekStart(e.target.value)}/><button className="mt-btn ghost" onClick={()=>setWeekStart(lineBoardWeekStart(today()))}>This week</button><button className="mt-btn ghost" onClick={()=>setWeekStart(nextProductionMonday(today()))}>Next week</button><button className={`mt-btn ${fitBoard?"active":"ghost"}`} onClick={()=>setFitBoard(v=>!v)}>Compact board</button><button className={`mt-btn ${showTargets?"active":"ghost"}`} onClick={()=>setShowTargets(v=>!v)}>{showTargets ? "Auto qty calculator: on" : "Auto qty calculator: off"}</button><span className="mt-toolbar-label">Plan View</span>{[["entry","Entry Board"],["simple","Simple View"],["achieved","Achieved Weekly"]].map(([k,l])=><button key={k} className={`mt-btn ${planViewMode===k?"active":"ghost"}`} onClick={()=>setPlanViewMode(k)}>{l}</button>)}<button className="mt-btn primary" onClick={exportWeekDetail}><Download size={14}/>Export plan detail</button>{planSaveState && <span className={`mt-chip ${statusClass(planSaveState.tone)}`}>{planSaveState.text}</span>}</div><div className="mt-plan-slim-note"><b>Simple mode:</b> board shows only style / qty / OPS / finish. Click a cell for auto-target, changeover, load-ready and cascade checks.</div><details className="mt-plan-collapse"><summary><span>Advanced P0 plan rules</span><span className="mt-chip mt-muted">expand</span></summary><div className="mt-plan-collapse-body mt-small">Plan cells autosave to <b>production_plan_rows</b>. Earlier running styles consume balance first. Changeover is fixed lost setup time only when style changes. Projected feed includes upstream plan that is ready by loading date with buffer days, but stays separate from actual-ready feed.</div></details></div>
+    <div className="mt-section no-print"><div className="mt-filter-row"><button className={`mt-btn ${mode==="stitching"?"primary":"ghost"}`} onClick={()=>setMode("stitching")}>Stitching line board</button><button className={`mt-btn ${mode==="dept"?"primary":"ghost"}`} onClick={()=>setMode("dept")}>Other dept board</button>{mode==="dept" && <select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}>{STAGES.filter(s=>!['stitching'].includes(s.key)).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>}<span className="mt-toolbar-label">Week</span><input className="mt-input" type="date" value={weekStart} onChange={e=>setWeekStart(e.target.value)}/><button className="mt-btn ghost" onClick={()=>setWeekStart(lineBoardWeekStart(today()))}>This week</button><button className="mt-btn ghost" onClick={()=>setWeekStart(nextProductionMonday(today()))}>Next week</button><button className={`mt-btn ${fitBoard?"active":"ghost"}`} onClick={()=>setFitBoard(v=>!v)}>Compact board</button><button className={`mt-btn ${showTargets?"active":"ghost"}`} onClick={()=>setShowTargets(v=>!v)}>{showTargets ? "Auto qty calculator: on" : "Auto qty calculator: off"}</button><span className="mt-toolbar-label">Plan View</span>{[["entry","Entry Board"],["simple","Simple View"],["achieved","Achieved Weekly"]].map(([k,l])=><button key={k} className={`mt-btn ${planViewMode===k?"active":"ghost"}`} onClick={()=>setPlanViewMode(k)}>{l}</button>)}<button className="mt-btn primary" onClick={exportWeekDetail}><Download size={14}/>Export plan detail</button>{planSaveState && <span className={`mt-chip ${statusClass(planSaveState.tone)}`}>{planSaveState.text}</span>}</div><div className="mt-plan-slim-note"><b>Simple mode:</b> board shows only style / qty / OPS / finish. Click a cell for auto-target, changeover, load-ready and cascade checks.</div><details className="mt-plan-collapse"><summary><span>Advanced P0 plan rules</span><span className="mt-chip mt-muted">expand</span></summary><div className="mt-plan-collapse-body mt-small">Plan cells autosave to <b>production_plan_rows</b>. Style quantity is reserved across the full future plan, not only the visible week. Earlier/later planned slots both reduce the unplanned balance. Changeover is fixed lost setup time only when style changes. Projected feed includes upstream plan that is ready by loading date with buffer days, but stays separate from actual-ready feed.</div></details></div>
     <div className="mt-section">{planViewMode === "entry" ? <PlanExcelLineBoard rows={rows} planRows={planRows} setPlanRows={setPlanRows} setRows={setRows} activeDept={activeDept} weekDays={weekDays} showTargets={showTargets} fit={fitBoard} ledger={ledger} onPlanUpsert={onPlanUpsert} onPlanDelete={onPlanDelete}/> : <SimplePlanReadingView rows={rows} planRows={planRows} ledger={ledger} activeDept={activeDept} weekDays={weekDays} mode={planViewMode}/>}</div>
     <div className="mt-section"><StylePlanDrilldown rows={rows} planRows={planRows} ledger={ledger} selectedText={selectedStylePlan} setSelectedText={setSelectedStylePlan}/></div>
     <div className="mt-section"><div className="mt-plan-week-total-strip no-print"><span><b>Impact review</b> {fmt(impactRows.length)}</span><span><b>Feed warnings</b> {fmt(projectedRows.filter(r=>String(r.Feed_Status||"").includes("Depends") || String(r.Feed_Status||"").includes("Over")).length)}</span><span><b>Plan rows</b> {fmt(weekPlanRows.length)}</span></div>
@@ -6917,7 +7110,7 @@ function ReviewView({ rows, ledger, planRows }){
   const changeRows = changeLogRows(rows, ledger, { search:historySearch });
   const cellRows = entryLogRows(rows, ledger, { ...filteredLedgerOpts, mode:"detail" });
   const historyRows = historyTab === "receiving" ? receivingRows : historyTab === "changes" ? changeRows : historyTab === "cell" ? cellRows : entryRows;
-  const historyTitle = historyTab === "receiving" ? "Receiving / Issue Day-wise Summary" : historyTab === "changes" ? "Change Log / Corrections / Overrides" : historyTab === "cell" ? "Cell History — Style × Dept × Activity" : "Entry Log — Summary / Detailed";
+  const historyTitle = historyTab === "receiving" ? "Feed / Issue Day-wise Summary" : historyTab === "changes" ? "Change Log / Corrections / Overrides" : historyTab === "cell" ? "Cell History — Style × Dept × Activity" : "Entry Log — Summary / Detailed";
   const historySub = historyTab === "receiving" ? "Day-wise by production actual/activity date, not typed/created date. Same actual dates are combined." : historyTab === "changes" ? "Backdated entries, corrections, P0 sequence overrides and approval-stamped changes." : historyTab === "cell" ? "Cell-level production history grouped by actual date/style/dept/activity with horizontal size columns." : "Summary and detailed log both combine same actual/activity dates; typed time remains audit metadata only.";
   const todayRows = entryLogRows(rows, ledger, { mode:"summary", search:"", dept:"all" }).filter(r=>r.Activity_Date===today());
   function exportReviewSection(){ exportXlsx(`production_review_${section}_${today()}.xlsx`, [{ name:active.title, rows:active.rows }]); }
@@ -6925,7 +7118,7 @@ function ReviewView({ rows, ledger, planRows }){
   function clearHistoryFilters(){ setHistorySearch(""); setHistoryDept("all"); }
   return <div className="mt-review-split">
     <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Review — Coordinator Control Room</h3><div className="mt-panel-sub">Review now combines closure review, reconcile, plan deviation, entry log, cell history and change log. This mirrors the Merch Tracker direction: operational review first, audit trace beside it.</div></div><div className="mt-section no-print"><div className="mt-summary-strip">{Object.entries(sectionMap).map(([k,v])=><button key={k} className={`mt-summary-tile ${section===k?"active":""}`} onClick={()=>setSection(k)}><div className="label">{v.title}</div><div className="value">{v.rows.length}</div><div className="mt-small">review</div></button>)}</div><div className="mt-toolbar"><button className="mt-btn primary" onClick={exportReviewSection}><Download size={14}/>Export Selected Review</button><span className="mt-chip mt-info">Closure rows: {active.rows.length}</span><span className="mt-chip mt-muted">Today ledger groups: {todayRows.length}</span></div></div><div className="mt-section"><SimpleTable title={active.title} sub={active.sub} rows={active.rows} empty="Nothing pending in this review section." exportName={`review_${section}`} /></div><div className="mt-section"><span className="mt-chip mt-info">Closing owner: Production Coordinator</span> <span className="mt-chip mt-muted">Department HOD owns work completion</span> <span className="mt-chip mt-muted">Production Manager only WIP escalation / approvals</span></div></div>
-    <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">History / Entry Log / Change Log</h3><div className="mt-panel-sub">Use this for cell history, overall production entry log, receiving day summary, and change/audit review. All production quantities are grouped by actual/activity date.</div></div><div className="mt-section no-print"><div className="mt-history-kpis"><div className="mt-history-kpi"><div className="label">Ledger rows</div><div className="value">{fmt((ledger||[]).length)}</div></div><div className="mt-history-kpi"><div className="label">Entry groups</div><div className="value">{fmt(entryRows.length)}</div></div><div className="mt-history-kpi"><div className="label">Receiving days</div><div className="value">{fmt(receivingRows.length)}</div></div><div className="mt-history-kpi"><div className="label">Change flags</div><div className="value">{fmt(changeRows.length)}</div></div></div><div className="mt-review-mode-bar"><span className="mt-toolbar-label">View</span>{[["entry_log","Entry Log"],["cell","Cell History"],["receiving","Receiving Summary"],["changes","Change Log"]].map(([k,l])=><button key={k} className={`mt-btn ${historyTab===k?"active":"ghost"}`} onClick={()=>setHistoryTab(k)}>{l}</button>)}<span className="mt-toolbar-label">Mode</span>{[["summary","Summary"],["detail","Detailed"]].map(([k,l])=><button key={k} className={`mt-btn ${historyMode===k?"active":"ghost"}`} onClick={()=>setHistoryMode(k)} disabled={historyTab==="receiving" || historyTab==="changes"}>{l}</button>)}<span className="mt-toolbar-label">Dept</span><select className="mt-select" value={historyDept} onChange={e=>setHistoryDept(e.target.value)}><option value="all">All departments</option>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select><Search size={14}/><input className="mt-input" value={historySearch} onChange={e=>setHistorySearch(e.target.value)} placeholder="style / order / user / source / date" style={{minWidth:240}}/><button className="mt-btn ghost" onClick={clearHistoryFilters}>Clear</button><button className="mt-btn primary" onClick={exportHistory}><Download size={14}/>Export History</button></div></div><div className="mt-section"><SimpleTable title={historyTitle} sub={historySub} rows={historyRows} empty="No history rows match current filters." exportName={`history_${historyTab}_${historyMode}`} /></div></div>
+    <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">History / Entry Log / Change Log</h3><div className="mt-panel-sub">Use this for cell history, overall production entry log, feed day summary, and change/audit review. All production quantities are grouped by actual/activity date.</div></div><div className="mt-section no-print"><div className="mt-history-kpis"><div className="mt-history-kpi"><div className="label">Ledger rows</div><div className="value">{fmt((ledger||[]).length)}</div></div><div className="mt-history-kpi"><div className="label">Entry groups</div><div className="value">{fmt(entryRows.length)}</div></div><div className="mt-history-kpi"><div className="label">Feed days</div><div className="value">{fmt(receivingRows.length)}</div></div><div className="mt-history-kpi"><div className="label">Change flags</div><div className="value">{fmt(changeRows.length)}</div></div></div><div className="mt-review-mode-bar"><span className="mt-toolbar-label">View</span>{[["entry_log","Entry Log"],["cell","Cell History"],["receiving","Feed Summary"],["changes","Change Log"]].map(([k,l])=><button key={k} className={`mt-btn ${historyTab===k?"active":"ghost"}`} onClick={()=>setHistoryTab(k)}>{l}</button>)}<span className="mt-toolbar-label">Mode</span>{[["summary","Summary"],["detail","Detailed"]].map(([k,l])=><button key={k} className={`mt-btn ${historyMode===k?"active":"ghost"}`} onClick={()=>setHistoryMode(k)} disabled={historyTab==="receiving" || historyTab==="changes"}>{l}</button>)}<span className="mt-toolbar-label">Dept</span><select className="mt-select" value={historyDept} onChange={e=>setHistoryDept(e.target.value)}><option value="all">All departments</option>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select><Search size={14}/><input className="mt-input" value={historySearch} onChange={e=>setHistorySearch(e.target.value)} placeholder="style / order / user / source / date" style={{minWidth:240}}/><button className="mt-btn ghost" onClick={clearHistoryFilters}>Clear</button><button className="mt-btn primary" onClick={exportHistory}><Download size={14}/>Export History</button></div></div><div className="mt-section"><SimpleTable title={historyTitle} sub={historySub} rows={historyRows} empty="No history rows match current filters." exportName={`history_${historyTab}_${historyMode}`} /></div></div>
   </div>;
 }
 
@@ -6946,7 +7139,7 @@ function MonthlyComparison({ rows, ledger=[], clearTick=0 }){
   const baseRows = rawPeriodRows.filter(row => (buyer === "All" || row.Buyer === buyer) && (route === "all" || row.Route === route));
   const summary = {
     styles: baseRows.length,
-    stitched: baseRows.reduce((a,row)=>a+n(row.Stitching_Receiving_In_Period),0),
+    stitched: baseRows.reduce((a,row)=>a+n(row.Stitching_Feed_In_Period),0),
     checked: baseRows.reduce((a,row)=>a+n(row.Checking_In_Period),0),
     packed: baseRows.reduce((a,row)=>a+n(row.Packing_In_Period),0),
     dispatched: baseRows.reduce((a,row)=>a+n(row.Dispatch_In_Period),0),
@@ -6959,7 +7152,7 @@ function MonthlyComparison({ rows, ledger=[], clearTick=0 }){
   };
   const tiles = [
     { key:"all", label:"Styles With Period Activity", value:summary.styles, note:"ledger rows in selected month" },
-    { key:"stitched", label:"Stitching Receiving", value:summary.stitched, note:"only posted in this month" },
+    { key:"stitched", label:"Stitching Feed", value:summary.stitched, note:"only posted in this month" },
     { key:"checked", label:"Checking In Period", value:summary.checked, note:"can include old stitched WIP" },
     { key:"old_wip_checked", label:"Old WIP Checked", value:summary.oldWipChecked, note:"checking done from opening stitched WIP" },
     { key:"old_wip_used", label:"Opening WIP Used", value:summary.oldWipUsed, note:"old WIP processed in later stages" },
@@ -6969,7 +7162,7 @@ function MonthlyComparison({ rows, ledger=[], clearTick=0 }){
   ];
   const filtered = baseRows.filter(row=>{
     if (focus === "all") return true;
-    if (focus === "stitched") return n(row.Stitching_Receiving_In_Period) > 0;
+    if (focus === "stitched") return n(row.Stitching_Feed_In_Period) > 0;
     if (focus === "checked") return n(row.Checking_In_Period) > 0;
     if (focus === "old_wip_checked") return n(row.Checking_From_Opening_WIP) > 0;
     if (focus === "old_wip_used") return n(row.Opening_WIP_Used_In_Month) > 0;
@@ -7253,7 +7446,7 @@ function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose
     <div className="mt-section mt-card" style={{marginBottom:12}}><h3 className="mt-panel-title">{stageLabel(stage)} breakup</h3><div className="mt-context-strip"><span className="mt-chip mt-ok">Done {fmt(c.received)}</span><span className="mt-chip mt-warn">Open {fmt(c.open)}</span><span className="mt-chip mt-late">R/A/M {fmt(c.ram)}</span>{c.shortClose ? <span className="mt-chip mt-purple">Short Closed {fmt(c.shortClose)}</span> : null}{c.extra ? <span className="mt-chip mt-purple">Extra/Over {fmt(c.extra)}</span> : null}<span className="mt-chip mt-info">Owner {primaryBucket?.owner || stageOwner(stage)}</span></div>{stage==="cutting" && c.open>0 ? <div style={{marginTop:10}}><button className="mt-btn ghost" onClick={shortCloseCutting}>Short close cutting balance</button><div className="mt-small">Use only when management approves cutting less than order qty. This removes balance from Cutting Pending; it does not add production.</div></div> : null}</div>
     <SizeCumulativeEditor row={row} rows={rows} setRows={setRows} ledger={ledger} setLedger={setLedger} stage={stage} initialField={c.open ? "output" : readyToIssue ? "issued" : "output"} source="wip_view_cell_day_entry" onSharedSave={onSharedSave} />
     <div className="mt-section no-print" style={{paddingLeft:0,paddingRight:0}}><button className="mt-btn ghost" onClick={()=>openRegisterForEdit("all")}><FileSpreadsheet size={14}/>Open Register to edit this dept history</button><span className="mt-small" style={{marginLeft:8}}>Register opens filtered to this order/style/department; use Correct for audit-safe edits.</span></div>
-    {stage!=="cutting" && <details className="mt-fold" open={stage==="stitching"}><summary>Receiving / previous department issue history for {stageLabel(stage)}</summary><div className="mt-section no-print" style={{paddingLeft:0,paddingRight:0}}><button className="mt-btn ghost" onClick={()=>onOpenRegister?.(row, "all", "all")}><FileSpreadsheet size={14}/>Open Register for full receive trail</button></div><SimpleTable title={`${stageLabel(stage)} receiving history`} sub="Previous department issue / receiving trail, horizontal by date/activity with size columns across. Vertical one-size-per-row is reserved only for raw audit ledgers." rows={receivingRows} empty="No receiving / issue history found in ledger yet." /></details>}
+    {stage!=="cutting" && <details className="mt-fold" open={stage==="stitching"}><summary>Feed / previous department issue history for {stageLabel(stage)}</summary><div className="mt-section no-print" style={{paddingLeft:0,paddingRight:0}}><button className="mt-btn ghost" onClick={()=>onOpenRegister?.(row, "all", "all")}><FileSpreadsheet size={14}/>Open Register for full feed trail</button></div><SimpleTable title={`${stageLabel(stage)} feed history`} sub="Previous department issue-forward is the next department Feed. Legacy manual receive rows are shown only as audit history, not normal flow." rows={receivingRows} empty="No feed / issue history found in ledger yet." /></details>}
     <details className="mt-fold" open={false}><summary>Complete {stageLabel(stage)} output / issue / R-A-M history</summary><div className="mt-section no-print" style={{paddingLeft:0,paddingRight:0}}><button className="mt-btn ghost" onClick={()=>openRegisterForEdit("all")}><FileSpreadsheet size={14}/>Open Register to correct output / issue / R-A-M</button></div><SimpleTable title={`${stageLabel(stage)} complete output history`} sub="Good output, issue-forward, rejection, missing, alter defect and alter clear entries for this department. Always grouped horizontally by activity/date with sizes across." rows={outputHistoryRows} empty="No output / issue / R-A-M ledger history found for this department yet." /></details>
     <details className="mt-fold"><summary>View {stageLabel(stage)} size breakup</summary><SimpleTable title={`${stageLabel(stage)} size-wise open quantities`} sub="Only the selected/clicked department. Use this to see what is open by size before entering." rows={sizeRows} empty="No size rows." /></details>
     <details className="mt-fold"><summary>View full style detail / route / history</summary><div className="mt-section"><LazyStylePhoto row={row} large/><div className="mt-grid" style={{gridTemplateColumns:"repeat(3,minmax(0,1fr))", marginBottom:12}}><Kpi label="Overall Status" value={rs.status} note={rs.action} tone={rs.tone}/><Kpi label="Overall Owner" value={rs.owner} note={rs.support || "Primary owner"}/><Kpi label="Overall Open Qty" value={fmt(rs.qty)} note={`${rs.idle || 0} days idle`}/></div></div><SimpleTable title="Open buckets for selected department" sub="Owner chase items for this department." rows={buckets.map(b=>({ Status:b.status, Qty:b.qty, Percent:`${bucketPct(row,b)}%`, Owner:b.owner, Support:b.support, Action:b.action, Idle:`${b.idle||0}d` }))} empty="No open bucket for this department." /><div style={{height:12}}/><SimpleTable title="Full current status drilldown" sub="Full status logic across this style/component." rows={statusBreakdown(row).map(b=>({ Status:b.status, Stage:stageLabel(b.stage), Qty:b.qty, Percent:`${bucketPct(row,b)}%`, Owner:b.owner, Support:b.support, Action:b.action, Idle:`${b.idle||0}d` }))} empty="No open status bucket." /></details>
@@ -8292,7 +8485,7 @@ function SettingsView({ onChanged }){
       <div className="mt-toolbar" style={{alignItems:"flex-start"}}><span className="mt-toolbar-label">Size groups</span><textarea className="mt-input" style={{minWidth:360, minHeight:140}} value={sizeSetsText} onChange={e=>setSizeSetsText(e.target.value)} placeholder={'alpha = XS, S, M, L, XL, XXL\nkids = 2-3Y, 3-4Y, 4-5Y\nwaist = 30, 32, 34, 36'} /><div style={{display:"grid",gap:8}}><button className="mt-btn primary" onClick={saveSizeSets}>Save Size Groups</button><button className="mt-btn ghost" onClick={resetSizeSets}>Reset Defaults</button></div><span className="mt-small">Format: group = size, size, size. Add buyer/category groups anytime, then select them in Styles or bulk upload.</span></div>
     </div>
     <div className="mt-section"><h3 className="mt-panel-title">Bottleneck metric guide</h3><div className="mt-panel-sub">Daily Rate = recent 7-day average output from ledger for that department. Days Cover = queue/open WIP ÷ Daily Rate. Bottleneck Score = Queue WIP + 2×Reconcile Qty + R/A/M Qty, so impossible movements and quality loss rank higher than normal queue.</div></div>
-    <div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included through V6 logic</b><ul className="mt-small"><li>Add/edit production styles manually with horizontal order-size breakup; Order Qty remains master and size shortage/excess is warned in manual and bulk upload.</li><li>Browser fallback persistence keeps style updates after refresh even when Supabase URL/key is not configured correctly.</li><li>Cutting Pending now appears correctly until cut/output/R/A/M/short-close accounts for order qty; Cutting short-close action is available in Cutting detail.</li><li>Editable size groups in Settings; Styles and bulk upload can use custom buyer/category size sets.</li><li>Order-wise rejection dispatch flag: approved rejected pieces can be included in Dispatch feed by size only for that order/style.</li><li>WIP Other Open Split column is now toggleable and hidden by default to avoid duplicate/confusing status reading.</li><li>Simple 6-day Excel-style planning grid: enter total day target by style/line without SMV/OPS complexity</li><li>WIP now separates one Pending Stage from All Activity by Cut %, so the grid stays narrow while still showing the full cut/order breakup</li><li>Selected department detail shows Good Output together with Reject/Missing/Alter and accounted/tail quantities for a complete HOD picture</li><li>Size-wise day entry with previous/updated total cross-check</li><li>Print / embroidery route toggles</li><li>Standard route changed to Checking → Packing → Dispatch; Iron removed as a normal department</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Dispatch hold: no dispatch when reconcile exists or dispatch-blocking R/A/M exceeds configured order %. Optional setting allows approved rejection to be dispatched while Missing/Alter still block.</li><li>Editable stitching line names in Settings used by Planning</li><li>Issued-to-department means accepted/with department; no normal issued-not-received bucket</li><li>Completed-not-issued-forward owner = Production Coordinator + Production Manager</li><li>Individual owner chase: Department HOD owns work-not-completed; Coordinator + Production Manager own completed-not-issued-forward</li><li>Style closure owner = Production Coordinator + Dept HOD; Production Manager handles movement/escalation/approval</li><li>WIP table page-specific filters, sorting, quick status buckets, and size-breakup toggle</li><li>Dashboard uses current-bin WIP logic: once a quantity moves to the next stage, it leaves the previous department bin.</li><li>Dashboard includes daily / 4-4-5 weekly / calendar-month production numbers, department × issue-type board, owner activity breakup, and production meeting focus.</li><li>Department-first dashboard pack: plan-vs-achieved/line efficiency, bottleneck/flow, aging/stuck WIP, quality/loss rate, party/outsource pending.</li><li>Dashboard drilldowns now use dashboard-specific rows, subtotal summaries, real size-stage data where available, and a visible size-source indicator.</li><li>Monthly comparison tab against Stitching Receiving with drillable summary filters</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Open-first WIP sheet modes: Open Control, Order View, Department View, Issue View, and Full Matrix</li><li>Focused WIP cell drawer shows selected department only; DPR entry shows only open styles for selected department/field; entry cells show open, previous, available, new entry, remaining and updated total; reductions/corrections require approval workflow later</li><li>Entry date / backdated audit logic with next-day default, same-day confirmation, reason and approval status</li><li>Live idle recalculation from production ledger where activity exists</li><li>Set convergence: a set packs/ships only min(components); Sets board + WIP chip show packable sets and unmatched pieces</li><li>Backdated entries validate feed as-of the entry date from the ledger; locked (older) backdated entries require reason + explicit manager-approval confirmation and are stamped in the audit ledger</li><li>Single configurable cutting tolerance replaces the old 8%/5%/0% mismatch</li><li>Party/outsource pending is consistent with the WIP open bucket (feed − output − R/A/M); outsourced stages label the with-department bucket as Pending at party</li><li>R/A/M day-entry path and impossible sequence reconcile checks</li><li>Planning tab: stitching line-wise rolling plan, department day-wise plan, department-specific planning pool, manual future plan, style-change-only changeover remaining-hours formula, plan-vs-achieved style adherence, and Review control room. Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-info"><Lock size={12}/> Future RLS</span> <span className="mt-small">Keep this as a development app. We tighten RLS before real users and live factory data.</span></div></div>;
+    <div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included through V6 logic</b><ul className="mt-small"><li>Add/edit production styles manually with horizontal order-size breakup; Order Qty remains master and size shortage/excess is warned in manual and bulk upload.</li><li>Browser fallback persistence keeps style updates after refresh even when Supabase URL/key is not configured correctly.</li><li>Cutting Pending now appears correctly until cut/output/R/A/M/short-close accounts for order qty; Cutting short-close action is available in Cutting detail.</li><li>Editable size groups in Settings; Styles and bulk upload can use custom buyer/category size sets.</li><li>Order-wise rejection dispatch flag: approved rejected pieces can be included in Dispatch feed by size only for that order/style.</li><li>WIP Other Open Split column is now toggleable and hidden by default to avoid duplicate/confusing status reading.</li><li>Simple 6-day Excel-style planning grid: enter total day target by style/line without SMV/OPS complexity</li><li>WIP now separates one Pending Stage from All Activity by Cut %, so the grid stays narrow while still showing the full cut/order breakup</li><li>Selected department detail shows Good Output together with Reject/Missing/Alter and accounted/tail quantities for a complete HOD picture</li><li>Size-wise day entry with previous/updated total cross-check</li><li>Print / embroidery route toggles</li><li>Standard route changed to Checking → Packing → Dispatch; Iron removed as a normal department</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Dispatch hold: no dispatch when reconcile exists or dispatch-blocking R/A/M exceeds configured order %. Optional setting allows approved rejection to be dispatched while Missing/Alter still block.</li><li>Editable stitching line names in Settings used by Planning</li><li>Issue-forward is the next department feed; no separate Receive entry in normal factory flow</li><li>Completed-not-issued-forward owner = Production Coordinator + Production Manager</li><li>Individual owner chase: Department HOD owns work-not-completed; Coordinator + Production Manager own completed-not-issued-forward</li><li>Style closure owner = Production Coordinator + Dept HOD; Production Manager handles movement/escalation/approval</li><li>WIP table page-specific filters, sorting, quick status buckets, and size-breakup toggle</li><li>Dashboard uses current-bin WIP logic: once a quantity moves to the next stage, it leaves the previous department bin.</li><li>Dashboard includes daily / 4-4-5 weekly / calendar-month production numbers, department × issue-type board, owner activity breakup, and production meeting focus.</li><li>Department-first dashboard pack: plan-vs-achieved/line efficiency, bottleneck/flow, aging/stuck WIP, quality/loss rate, party/outsource pending.</li><li>Dashboard drilldowns now use dashboard-specific rows, subtotal summaries, real size-stage data where available, and a visible size-source indicator.</li><li>Monthly comparison tab against Stitching Feed with drillable summary filters</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Open-first WIP sheet modes: Open Control, Order View, Department View, Issue View, and Full Matrix</li><li>Focused WIP cell drawer shows selected department only; DPR entry shows only open styles for selected department/field; entry cells show open, previous, available, new entry, remaining and updated total; reductions/corrections require approval workflow later</li><li>Entry date / backdated audit logic with next-day default, same-day confirmation, reason and approval status</li><li>Live idle recalculation from production ledger where activity exists</li><li>Set convergence: a set packs/ships only min(components); Sets board + WIP chip show packable sets and unmatched pieces</li><li>Backdated entries validate feed as-of the entry date from the ledger; locked (older) backdated entries require reason + explicit manager-approval confirmation and are stamped in the audit ledger</li><li>Single configurable cutting tolerance replaces the old 8%/5%/0% mismatch</li><li>Party/outsource pending is consistent with the WIP open bucket (feed − output − R/A/M); outsourced stages label the with-department bucket as Pending at party</li><li>R/A/M day-entry path and impossible sequence reconcile checks</li><li>Planning tab: stitching line-wise rolling plan, department day-wise plan, department-specific planning pool, manual future plan, style-change-only changeover remaining-hours formula, plan-vs-achieved style adherence, and Review control room. Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-info"><Lock size={12}/> Future RLS</span> <span className="mt-small">Keep this as a development app. We tighten RLS before real users and live factory data.</span></div></div>;
 }
 
 function withLiveIdle(rows, ledger=[], referenceDate=today()){
