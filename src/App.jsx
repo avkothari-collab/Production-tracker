@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V38 BUILD-FIX-ACTION-STATUS";
+const APP_VERSION = "V39 CUTTING-SHORT-IS-OPEN";
 const APP_COMMIT_MESSAGE = "Shows every non-tail pending production action in Current Status with gap quantities only, not last activity or full feed totals.";
 
 
@@ -1378,12 +1378,11 @@ function conservationViolationsForRow(row){
     let over = 0;
     let kind = "";
     if (stage === "cutting") {
-      // Cutting is allowed to exceed order by the configured tolerance.
-      // Extra cut inside tolerance is information, not a conservation error.
+      // Cutting below order/file-release is normal open cutting work, not a wrong entry.
+      // Only flag cutting when accountable cut/R-A-M/short-close exceeds order + tolerance.
       over = Math.max(0, accountable - allowedFeed);
-      const under = Math.max(0, feed - accounted);
-      diff = over || under;
-      kind = over ? "over_tolerance" : (under ? "unaccounted_cutting" : "");
+      diff = over;
+      kind = over ? "over_tolerance" : "";
     } else {
       over = Math.max(0, accountable - feed);
       diff = Math.abs(accounted - feed);
