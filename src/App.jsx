@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V29 DASHBOARD-PRODUCTION-FIX";
-const APP_COMMIT_MESSAGE = "Adds daily/weekly production and R/A/M dashboard drilldowns, keeps WIP history clean, and prevents plan screens from treating planned quantity as actual";
+const APP_VERSION = "V31 MERCH-LIKE-WIP-FILTERS";
+const APP_COMMIT_MESSAGE = "Makes Live WIP filters Merch Tracker-style, fixes dropdown clipping under table cells, and cleans WIP grid polish";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -154,6 +154,13 @@ table.mt-table { width:100%; border-collapse:separate; border-spacing:0; min-wid
 .mt-save-banner { border:2px solid #1f6f54; background:#e9f8ef; color:#14533e; border-radius:12px; padding:10px 12px; font-size:12px; font-weight:900; display:flex; align-items:center; gap:8px; margin-top:10px; }
 .mt-save-banner.warn { border-color:#d59a24; background:#fff8df; color:#7a560f; }
 .mt-conservation-alert { border:2px solid #b42318; background:#fff1ee; border-radius:12px; padding:10px 12px; margin:8px 0; color:#8c241a; font-size:10.5px; font-weight:800; line-height:1.45; }
+.mt-correction-control { border:2px solid var(--accent); background:#fff7ea; border-radius:14px; padding:12px; margin:10px 0 12px; }
+.mt-correction-control-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:8px; margin-top:8px; }
+.mt-correction-control-card { border:1px solid var(--line-2); background:#fffdf8; border-radius:12px; padding:9px; display:grid; gap:4px; }
+.mt-correction-control-card .label { font-size:8.5px; text-transform:uppercase; letter-spacing:.35px; color:var(--muted-2); font-weight:900; }
+.mt-correction-control-card .value { font-family:'Archivo',sans-serif; font-size:18px; font-weight:800; }
+.mt-issue-list { border:1px solid var(--line-2); border-radius:14px; overflow:hidden; background:var(--surface); margin:8px 0 12px; }
+.mt-issue-list-head { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; background:#fff7ea; border-bottom:1px solid var(--line-3); padding:10px 12px; }
 .mt-editor-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
 .mt-delta-pos { color:var(--fg-ok); font-weight:800; }
 .mt-delta-neg { color:var(--fg-late); font-weight:800; }
@@ -440,16 +447,35 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-wip-resize-hint { border-color:#bfd7f2 !important; background:#eef6ff !important; color:#174a7c !important; }
 
 .mt-excel-filter-menu { position:relative; display:block; width:100%; }
-.mt-excel-filter-menu summary { list-style:none; cursor:pointer; border:1px solid var(--on-dark-line); background:var(--surface); color:var(--ink); min-height:28px; padding:5px 7px; font-size:9.5px; font-weight:800; display:flex; align-items:center; justify-content:space-between; gap:6px; }
-.mt-excel-filter-menu summary::-webkit-details-marker { display:none; }
-.mt-excel-filter-menu[open] summary { outline:2px solid rgba(201,111,22,.22); border-color:var(--accent); }
-.mt-excel-filter-pop { position:absolute; top:31px; left:0; z-index:60; width:230px; max-height:320px; overflow:auto; background:var(--surface); color:var(--ink); border:1px solid var(--ink); box-shadow:0 10px 28px rgba(31,31,29,.20); border-radius:8px; padding:8px; }
-.mt-excel-filter-pop .search { width:100%; min-height:28px; border:1px solid var(--line-2); padding:6px 8px; font-size:10px; margin-bottom:6px; }
-.mt-excel-filter-actions { display:flex; gap:5px; margin-bottom:6px; }
-.mt-excel-filter-actions button { min-height:26px; padding:4px 7px; font-size:9px; border:1px solid var(--line-2); background:#fffaf1; cursor:pointer; font-weight:800; }
-.mt-excel-filter-options { display:grid; gap:4px; max-height:180px; overflow:auto; border-top:1px solid var(--line-3); padding-top:6px; }
-.mt-excel-filter-options label { display:flex; align-items:center; gap:6px; font-size:10px; line-height:1.2; padding:3px 2px; cursor:pointer; }
+.mt-excel-filter-button { width:100%; list-style:none; cursor:pointer; border:1px solid var(--on-dark-line); background:var(--surface); color:var(--ink); min-height:28px; padding:5px 7px; font-size:9.5px; font-weight:800; display:flex; align-items:center; justify-content:space-between; gap:6px; text-align:left; }
+.mt-excel-filter-button.active { outline:2px solid rgba(201,111,22,.22); border-color:var(--accent); background:#fff7ea; }
+.mt-excel-filter-button .filter-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mt-excel-filter-button .filter-caret { opacity:.72; font-size:10px; }
+.mt-excel-filter-pop { background:var(--surface); color:var(--ink); border:1px solid var(--ink); box-shadow:0 14px 34px rgba(31,31,29,.24); border-radius:0; padding:0; overflow:hidden; }
+.mt-excel-filter-pop-fixed { position:fixed; z-index:99999; max-height:min(430px, calc(100vh - 18px)); display:flex; flex-direction:column; }
+.mt-excel-filter-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 9px; background:#fffaf1; border-bottom:1px solid var(--line-2); }
+.mt-excel-filter-head b { font-family:'Archivo',sans-serif; font-size:12px; }
+.mt-excel-filter-close { border:1px solid var(--line-2); background:white; min-height:26px; min-width:26px; cursor:pointer; font-weight:900; }
+.mt-excel-filter-pop .search { width:100%; min-height:34px; border:0; border-bottom:1px solid var(--line-2); background:white; padding:8px 10px; font-size:11px; outline:none; }
+.mt-excel-filter-actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; padding:8px; border-bottom:1px solid var(--line-3); }
+.mt-excel-filter-actions button { min-height:31px; padding:6px 8px; font-size:9.5px; border:1px solid var(--line-2); background:#fffaf1; cursor:pointer; font-weight:900; }
+.mt-excel-filter-actions button.dark { background:var(--ink); color:var(--bg); border-color:var(--ink); }
+.mt-excel-filter-options { display:grid; gap:0; max-height:230px; overflow:auto; border-top:0; padding:0; }
+.mt-excel-filter-options label { display:grid; grid-template-columns:22px minmax(0,1fr) auto; align-items:center; gap:6px; font-size:11px; line-height:1.2; padding:8px 9px; cursor:pointer; border-bottom:1px solid var(--line-3); }
+.mt-excel-filter-options label:hover { background:#fffaf1; }
+.mt-excel-filter-options .option-label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .mt-excel-filter-count { color:var(--muted-2); font-size:8.5px; font-weight:800; }
+.mt-excel-filter-only { border:1px solid var(--line-2); background:white; min-height:25px; padding:3px 7px; font-size:9px; font-weight:900; cursor:pointer; }
+.mt-excel-filter-footer { display:flex; gap:6px; padding:8px; background:#fffaf1; border-top:1px solid var(--line-2); }
+.mt-excel-filter-footer button { flex:1; min-height:34px; border:1px solid var(--ink); background:white; font-weight:900; cursor:pointer; }
+.mt-excel-filter-footer button.primary { background:var(--ink); color:var(--bg); }
+.mt-wip-table-wrap .mt-col-filter-row th { overflow:visible !important; }
+.mt-wip-table-wrap .mt-table thead { position:relative; z-index:30; }
+.mt-wip-table-wrap .mt-table tbody { position:relative; z-index:1; }
+.mt-wip-table-wrap .mt-table th { font-size:9.5px; letter-spacing:.15px; }
+.mt-wip-table-wrap .mt-table td { font-size:10.5px; }
+.mt-wip-table-wrap .mt-col-filter-input { border-color:#4a463e; min-height:30px; font-weight:800; }
+.mt-wip-polish-note { color:#174a7c !important; background:#eef6ff !important; border-color:#bfd7f2 !important; }
 .mt-resize-th { position:relative; }
 .mt-resize-grip { position:absolute; top:0; right:-3px; width:7px; height:100%; cursor:col-resize; z-index:40; touch-action:none; }
 .mt-resize-grip::after { content:""; position:absolute; right:2px; top:18%; bottom:18%; border-right:1px solid rgba(201,111,22,.45); opacity:.45; }
@@ -1279,19 +1305,58 @@ function conservationViolationsForRow(row){
   routeFor(row).forEach(stage=>{
     const c = cellBreakup(row, stage);
     if (c.skipped) return;
-    const feed = stage === "cutting" ? n(row.order_qty) : stageFeed(row, stage);
+    const orderQty = n(row.order_qty);
+    const allowedCutQty = orderQty * (1 + cuttingToleranceFrac());
+    const feed = stage === "cutting" ? orderQty : stageFeed(row, stage);
+    const allowedFeed = stage === "cutting" ? allowedCutQty : feed;
     const good = n(c.received);
     const ram = n(c.ram);
     const open = n(c.open);
     const shortClose = stage === "cutting" ? n(c.shortClose) : 0;
-    const accounted = good + ram + open + shortClose;
-    const over = stage === "cutting" ? Math.max(0, good + ram + shortClose - n(row.order_qty) * (1 + cuttingToleranceFrac())) : Math.max(0, good + ram - feed);
-    const diff = Math.abs(accounted - feed);
-    if (over > 0 || diff > 0.5) out.push({ row, stage, feed, good, ram, open, shortClose, diff, over, message:`${row.style_no} ${stageLabel(stage)}: Good ${fmt(good)} + Open ${fmt(open)} + R/A/M ${fmt(ram)}${shortClose ? ` + Short Close ${fmt(shortClose)}` : ""} vs Feed ${fmt(feed)}${over ? `; over ${fmt(over)}` : ""}` });
+    const accountable = good + ram + shortClose;
+    const accounted = accountable + open;
+    let diff = 0;
+    let over = 0;
+    let kind = "";
+    if (stage === "cutting") {
+      // Cutting is allowed to exceed order by the configured tolerance.
+      // Extra cut inside tolerance is information, not a conservation error.
+      over = Math.max(0, accountable - allowedFeed);
+      const under = Math.max(0, feed - accounted);
+      diff = over || under;
+      kind = over ? "over_tolerance" : (under ? "unaccounted_cutting" : "");
+    } else {
+      over = Math.max(0, accountable - feed);
+      diff = Math.abs(accounted - feed);
+      kind = over ? "over_feed" : (diff > 0.5 ? "feed_output_mismatch" : "");
+    }
+    if (diff > 0.5) out.push({
+      row, stage, feed, allowedFeed, good, ram, open, shortClose, accounted, accountable, diff, over, kind,
+      message:`${row.style_no} ${stageLabel(stage)}: Good ${fmt(good)} + Open ${fmt(open)} + R/A/M ${fmt(ram)}${shortClose ? ` + Short Close ${fmt(shortClose)}` : ""} vs Feed ${fmt(feed)}${stage === "cutting" ? ` (allowed up to ${fmt(allowedFeed)})` : ""}${over ? `; over ${fmt(over)}` : ""}`
+    });
   });
   return out;
 }
 function conservationViolationRows(rows=[]){ return (rows || []).flatMap(row=>conservationViolationsForRow(row)); }
+function conservationIssueTableRows(alerts=[]){
+  return (alerts || []).map(a=>({
+    Stage:stageLabel(a.stage),
+    Order:a.row?.order_no || "",
+    Style:a.row?.style_no || "",
+    Buyer:a.row?.buyer || "",
+    Colour:a.row?.colour || "",
+    Component:a.row?.component || "",
+    Feed:n(a.feed),
+    "Allowed Feed":a.stage === "cutting" ? n(a.allowedFeed) : "—",
+    Good:n(a.good),
+    "R/A/M":n(a.ram),
+    Open:n(a.open),
+    "Short Close":n(a.shortClose),
+    Difference:n(a.diff),
+    Reading:a.kind === "over_tolerance" ? "Cutting exceeds configured tolerance" : a.kind === "unaccounted_cutting" ? "Cutting order/feed not fully accounted" : a.kind === "over_feed" ? "Output/RAM exceeds feed" : "Feed/output/RAM/open mismatch",
+    Action:a.stage === "cutting" ? "Open detail → edit cutting output/RAM or open Style Entry for order/feed qty" : "Open detail → correct feed source or output/RAM in Register"
+  }));
+}
 function mismatchedExcelSizeValues(raw, sizeSet){
   const allowed = new Set((getSizeSets()[sizeSet] || []).map(cleanSizeToken));
   const allSizes = Array.from(new Set(Object.values(getSizeSets()).flat())).map(cleanSizeToken);
@@ -2731,7 +2796,7 @@ function entryTypeLabelFromRaw(raw){
   const t = String(raw || "").toLowerCase();
   if (["output","good_output","completed","complete","done"].includes(t)) return "Completed / Output";
   if (["issue","issued"].includes(t)) return "Dept Issue Forward";
-  if (["receive","received"].includes(t)) return "Legacy Receive / Feed";
+  if (["receive","received","legacy_feed"].includes(t)) return "Legacy Receive / Feed";
   if (["reject","rejection"].includes(t)) return "Rejection";
   if (t === "missing") return "Missing";
   if (t === "alter") return "Alter Defect";
@@ -3786,16 +3851,48 @@ function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
   function ExcelFilter({ label, value, onChange, options }){
     const picks = String(value||"").startsWith("multi::") ? String(value).slice(7).split("||").filter(Boolean) : (String(value||"").trim() ? [String(value).trim()] : []);
     const [q,setQ]=useState("");
-    const shown=(options||[]).filter(o=>String(o.label||o.value).toLowerCase().includes(q.toLowerCase()));
+    const [open,setOpen]=useState(false);
+    const [pos,setPos]=useState({ top:0, left:0, width:286 });
+    const btnRef=useRef(null);
+    const popRef=useRef(null);
+    const allOptions=(options||[]).filter(o=>o && o.value !== undefined && o.value !== null);
+    const shown=allOptions.filter(o=>String(o.label||o.value).toLowerCase().includes(q.toLowerCase()));
+    const shownValues=shown.map(o=>String(o.value));
     const toggle=(val)=>{ const set=new Set(picks); set.has(val)?set.delete(val):set.add(val); onChange(excelMultiValue(Array.from(set))); };
-    return <details className="mt-excel-filter-menu"><summary><span>{picks.length ? `${picks.length} selected` : label}</span><span>▾</span></summary><div className="mt-excel-filter-pop"><input className="search" value={q} onChange={e=>setQ(e.target.value)} placeholder="Search filter..."/><div className="mt-excel-filter-actions"><button onClick={()=>onChange(excelMultiValue((options||[]).map(o=>o.value)))}>Select all</button><button onClick={()=>onChange("")}>Clear</button></div><div className="mt-excel-filter-options">{shown.map(o=><label key={o.value}><input type="checkbox" checked={picks.includes(o.value)} onChange={()=>toggle(o.value)}/><span>{o.label}</span>{o.count!=null?<span className="mt-excel-filter-count">{o.count}</span>:null}</label>)}</div></div></details>;
+    const setAll=()=>onChange(excelMultiValue(allOptions.map(o=>String(o.value))));
+    const clear=()=>onChange("");
+    const addShown=()=>{ const set=new Set(picks); shownValues.forEach(v=>set.add(v)); onChange(excelMultiValue(Array.from(set))); };
+    const removeShown=()=>{ const set=new Set(picks); shownValues.forEach(v=>set.delete(v)); onChange(excelMultiValue(Array.from(set))); };
+    const only=(val)=>onChange(excelMultiValue([String(val)]));
+    const openMenu=(e)=>{
+      e.preventDefault(); e.stopPropagation();
+      const r=btnRef.current?.getBoundingClientRect?.();
+      const width=Math.min(330, Math.max(286, r?.width || 286));
+      const left=Math.min(Math.max(8, (r?.left || 8)), Math.max(8, window.innerWidth - width - 8));
+      const top=Math.min((r?.bottom || 0) + 5, Math.max(8, window.innerHeight - 440));
+      setPos({ top, left, width });
+      setOpen(v=>!v);
+    };
+    useEffect(()=>{
+      if(!open) return undefined;
+      const close=(ev)=>{ if(btnRef.current?.contains(ev.target) || popRef.current?.contains(ev.target)) return; setOpen(false); };
+      const key=(ev)=>{ if(ev.key === "Escape") setOpen(false); };
+      const reposition=()=>{ const r=btnRef.current?.getBoundingClientRect?.(); if(!r) return; const width=Math.min(330, Math.max(286, r.width || 286)); setPos({ top:Math.min(r.bottom + 5, Math.max(8, window.innerHeight - 440)), left:Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - width - 8)), width }); };
+      document.addEventListener("mousedown", close, true);
+      document.addEventListener("keydown", key, true);
+      window.addEventListener("scroll", reposition, true);
+      window.addEventListener("resize", reposition);
+      return ()=>{ document.removeEventListener("mousedown", close, true); document.removeEventListener("keydown", key, true); window.removeEventListener("scroll", reposition, true); window.removeEventListener("resize", reposition); };
+    }, [open]);
+    const title = picks.length ? `${picks.length}/${allOptions.length || picks.length} selected` : label;
+    return <div className="mt-excel-filter-menu"><button ref={btnRef} type="button" className={`mt-excel-filter-button ${open || picks.length ? "active" : ""}`} onClick={openMenu}><span className="filter-title">{title}</span><span className="filter-caret">▾</span></button>{open && <div ref={popRef} className="mt-excel-filter-pop mt-excel-filter-pop-fixed" style={{ top:pos.top, left:pos.left, width:pos.width }}><div className="mt-excel-filter-head"><b>Column filter</b><span className="mt-small">{picks.length || 0} of {allOptions.length}</span><button type="button" className="mt-excel-filter-close" onClick={()=>setOpen(false)}>×</button></div><input className="search" value={q} onChange={e=>setQ(e.target.value)} placeholder="type to filter values..." autoFocus/><div className="mt-excel-filter-actions"><button type="button" className="dark" onClick={setAll}>All / clear</button><button type="button" onClick={clear}>Clear filter</button><button type="button" onClick={addShown}>Add matches</button><button type="button" onClick={removeShown}>Uncheck matches</button></div><div className="mt-excel-filter-options">{shown.length ? shown.map(o=><label key={o.value}><input type="checkbox" checked={picks.includes(String(o.value))} onChange={()=>toggle(String(o.value))}/><span className="option-label">{o.label}</span><button className="mt-excel-filter-only" type="button" onClick={(e)=>{e.preventDefault(); e.stopPropagation(); only(o.value);}}>only</button>{o.count!=null?<span className="mt-excel-filter-count">{o.count}</span>:null}</label>) : <div className="mt-small" style={{padding:12}}>No matching values.</div>}</div><div className="mt-excel-filter-footer"><button type="button" onClick={clear}>Clear</button><button type="button" className="primary" onClick={()=>setOpen(false)}>Done</button></div></div>}</div>;
   }
   const stickyClass = (map,key,base="") => `${base ? `${base} ` : ""}${map[key]?.className || ""}`.trim();
   const stickyStyle = (map,key) => map[key]?.style || undefined;
   const matrixSticky = buildStickyMap([{key:"style",visible:true},{key:"status",visible:!!visibleCols.status},{key:"routeProgress",visible:!!showCutActivity},{key:"owner",visible:!!visibleCols.owner},{key:"route",visible:!!visibleCols.route}]);
   const controlSticky = buildStickyMap([{key:"style",visible:true},{key:"status",visible:true},{key:"next",visible:true},{key:"routeProgress",visible:!!showCutActivity}]);
   return <div className="mt-card">
-    <div className="mt-section"><h3 className="mt-panel-title">Live WIP Status — Grid / Open Control</h3><div className="mt-panel-sub">Pending Stage = one main action. Optional Route Progress / Balance shows cut, stage done, issued-forward and pack balance so the sheet stays precise but still traceable.</div>{conservationAlerts.length ? <div className="mt-conservation-alert"><AlertTriangle size={14}/> Conservation violated in {conservationAlerts.length} stage row(s). {conservationAlerts.slice(0,3).map(x=>x.message).join(" | ")}{conservationAlerts.length>3 ? ` | +${conservationAlerts.length-3} more` : ""}</div> : <span className="mt-chip mt-ok">Conservation OK: Good + Open + R/A/M balances against feed</span>}</div>
+    <div className="mt-section"><h3 className="mt-panel-title">Live WIP Status — Grid / Open Control</h3><div className="mt-panel-sub">Pending Stage = one main action. Optional Route Progress / Balance shows cut, stage done, issued-forward and pack balance so the sheet stays precise but still traceable.</div>{conservationAlerts.length ? <><div className="mt-conservation-alert"><AlertTriangle size={14}/> Conservation violated in {conservationAlerts.length} stage row(s). {conservationAlerts.slice(0,3).map(x=>x.message).join(" | ")}{conservationAlerts.length>3 ? ` | +${conservationAlerts.length-3} more` : ""}</div><div className="mt-issue-list"><div className="mt-issue-list-head"><div><b>Correction issue list</b><div className="mt-small">These are the exact styles/stages behind the Live WIP warning. Click a row to open feed/output correction controls.</div></div><span className="mt-chip mt-late">{conservationAlerts.length} issue rows</span></div><SimpleTable title="WIP correction issue list" sub="Click row to open detail. Cutting extra inside tolerance is no longer listed as a violation; only true feed/output mismatches appear here." rows={conservationIssueTableRows(conservationAlerts)} empty="No conservation issues." onRowClick={(r)=>{ const alert = conservationAlerts.find(a=>String(a.row?.order_no||"")===String(r.Order||"") && String(a.row?.style_no||"")===String(r.Style||"") && String(a.row?.colour||"")===String(r.Colour||"") && String(a.row?.component||"")===String(r.Component||"") && stageLabel(a.stage)===String(r.Stage||"")); if (alert) openRowDrill(alert.row, alert.stage); }} /></div></> : <span className="mt-chip mt-ok">Conservation OK: Good + Open + R/A/M balances against feed</span>}</div>
     <div className="mt-section no-print">
       <div className="mt-summary-strip">{summary.map(s=><button key={s.key} className={`mt-summary-tile ${issue===s.key || (s.key==="all"&&issue==="all") ? "active" : ""}`} onClick={()=>setIssue(s.key)}><div className="label">{s.label}</div><div className="value">{typeof s.value === "number" && s.key!=="all" ? fmt(s.value) : s.value}</div><div className="mt-small">{s.note}</div></button>)}</div>
       <div className="mt-filter-row">
@@ -3808,7 +3905,7 @@ function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
         <button className={`mt-btn ${hasGridColumnFilters ? "primary" : "ghost"}`} onClick={clearWipFilters}>Clear WIP Filters</button>
         <span className="mt-page-filter-note">{filtered.length} rows · {controlRows.length} open/control rows</span>
       </div>
-      <div className="mt-view-mode-bar mt-wip-sticky-tools"><span className="mt-toolbar-label">Sheet View</span>{[["matrix","Grid View"],["control","Open Control"],["order","Order View"],["department","Department View"],["issue","Issue View"]].map(([k,l])=><button key={k} className={`mt-btn ${viewMode===k?"active":"ghost"}`} onClick={()=>setViewMode(k)}>{l}</button>)}<button className={`mt-btn ${showCutActivity?"active":"ghost"}`} onClick={()=>setShowCutActivity(v=>!v)}>{showCutActivity ? "Hide Route Progress" : "Show Route Progress"}</button><button className={`mt-btn ${fitColumns?"active":"ghost"}`} onClick={()=>setFitColumns(v=>!v)} title="Fit visible columns into screen like the Merch Tracker grid">{fitColumns ? "Fit columns: on" : "Fit columns: off"}</button><span className="mt-toolbar-label">Width</span><select className="mt-select" value={widthMode} onChange={e=>setWidthMode(e.target.value)} title="Readable column width preset"><option value="compact">Compact</option><option value="comfort">Comfort</option><option value="wide">Wide</option></select><span className="mt-toolbar-label">Freeze</span><select className="mt-select" value={freezeCols} onChange={e=>setFreezeCols(Number(e.target.value))} title="Freeze first N visible columns"><option value={0}>No freeze</option><option value={1}>1 column</option><option value={2}>2 columns</option><option value={3}>3 columns</option><option value={4}>4 columns</option><option value={5}>5 columns</option></select><details className="mt-column-menu"><summary>Columns</summary><div>{[["status","Current Status"],["owner","Owner"],["route","Route"],["stages","Stage cells"],["open","Open Qty"],["idle","Idle"],["action","Next Action"]].map(([k,l])=><label key={k} className="mt-column-choice"><input type="checkbox" checked={!!visibleCols[k]} onChange={()=>toggleWipCol(k)} />{l}</label>)}<button className="mt-btn ghost" style={{marginTop:6}} onClick={resetWipCols}>Reset columns</button></div></details>{currentUserCan("production.export") && <button className="mt-btn primary" onClick={exportCurrentWip}><Download size={14}/>Export Current View</button>}{currentUserCan("production.export") && <button className="mt-btn" onClick={exportStageWip}><Download size={14}/>Export Style Stage Detail</button>}<span className="mt-chip mt-info">Excel-like: frozen header + sort + select filters + column chooser + drag thin header edge to resize</span></div>
+      <div className="mt-view-mode-bar mt-wip-sticky-tools"><span className="mt-toolbar-label">Sheet View</span>{[["matrix","Grid View"],["control","Open Control"],["order","Order View"],["department","Department View"],["issue","Issue View"]].map(([k,l])=><button key={k} className={`mt-btn ${viewMode===k?"active":"ghost"}`} onClick={()=>setViewMode(k)}>{l}</button>)}<button className={`mt-btn ${showCutActivity?"active":"ghost"}`} onClick={()=>setShowCutActivity(v=>!v)}>{showCutActivity ? "Hide Route Progress" : "Show Route Progress"}</button><button className={`mt-btn ${fitColumns?"active":"ghost"}`} onClick={()=>setFitColumns(v=>!v)} title="Fit visible columns into screen like the Merch Tracker grid">{fitColumns ? "Fit columns: on" : "Fit columns: off"}</button><span className="mt-toolbar-label">Width</span><select className="mt-select" value={widthMode} onChange={e=>setWidthMode(e.target.value)} title="Readable column width preset"><option value="compact">Compact</option><option value="comfort">Comfort</option><option value="wide">Wide</option></select><span className="mt-toolbar-label">Freeze</span><select className="mt-select" value={freezeCols} onChange={e=>setFreezeCols(Number(e.target.value))} title="Freeze first N visible columns"><option value={0}>No freeze</option><option value={1}>1 column</option><option value={2}>2 columns</option><option value={3}>3 columns</option><option value={4}>4 columns</option><option value={5}>5 columns</option></select><details className="mt-column-menu"><summary>Columns</summary><div>{[["status","Current Status"],["owner","Owner"],["route","Route"],["stages","Stage cells"],["open","Open Qty"],["idle","Idle"],["action","Next Action"]].map(([k,l])=><label key={k} className="mt-column-choice"><input type="checkbox" checked={!!visibleCols[k]} onChange={()=>toggleWipCol(k)} />{l}</label>)}<button className="mt-btn ghost" style={{marginTop:6}} onClick={resetWipCols}>Reset columns</button></div></details>{currentUserCan("production.export") && <button className="mt-btn primary" onClick={exportCurrentWip}><Download size={14}/>Export Current View</button>}{currentUserCan("production.export") && <button className="mt-btn" onClick={exportStageWip}><Download size={14}/>Export Style Stage Detail</button>}<span className="mt-chip mt-wip-polish-note">Merch-style filters: fixed popup, search, only, select-all, column resize</span></div>
     </div>
     {viewMode === "order" || viewMode === "department" || viewMode === "issue" ? <SimpleTable title={viewMode==="order"?"Order-wise WIP summary":viewMode==="department"?"Department open summary":"Issue-wise open summary"} sub="Summary view first. Click Full Matrix or drill dashboards only when style-level detail is needed." rows={modeRows} empty="No rows in this view." /> : viewMode === "control" ? <div className={`mt-table-wrap mt-wip-table-wrap mt-wip-resizable mt-wip-${widthMode} ${fitColumns?"mt-wip-fit-table":""} ${freezeCols>0?"freeze-active":""}`}><table className="mt-table mt-compact-wip-table"><thead><tr><th className={stickyClass(controlSticky,"style")} style={stickyStyle(controlSticky,"style")}>Open Style / Order</th><th className={stickyClass(controlSticky,"status")} style={stickyStyle(controlSticky,"status")}>Current Status / Entry</th><th className={stickyClass(controlSticky,"next")} style={stickyStyle(controlSticky,"next")}>Next Action</th>{showCutActivity && <th className={stickyClass(controlSticky,"routeProgress")} style={stickyStyle(controlSticky,"routeProgress")}>Route Progress / Balance</th>}<th>Open Qty</th><th>R/A/M</th><th>Idle</th><th>Owner</th></tr></thead><tbody>{controlRows.length ? controlRows.map(({row,status})=>{ const stage=status.stage || routeFor(row)[0] || "cutting"; const st=sdata(row,stage); const c=cellBreakup(row,stage); return <React.Fragment key={row.id}><tr className="drillable" onClick={()=>openRowDrill(row,stage)}><td className={stickyClass(controlSticky,"style")} style={stickyStyle(controlSticky,"style")}><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}</div></div></td><td className={stickyClass(controlSticky,"status")} style={stickyStyle(controlSticky,"status")}><PrimaryPendingStage row={row} onOpen={(st)=>openRowDrill(row,st)} onEntry={onEntry}/></td><td className={stickyClass(controlSticky,"next")} style={stickyStyle(controlSticky,"next")}><div className="mt-small">{status.action}</div></td>{showCutActivity && <td className={stickyClass(controlSticky,"routeProgress")} style={stickyStyle(controlSticky,"routeProgress")}><RouteProgressSnapshot row={row} compact={true} onOpen={(st)=>openRowDrill(row,st)}/></td>}<td><div className="mt-open-big">{fmt(status.qty)}</div><div className="mt-small">{c.note}</div></td><td>{fmt(c.ram)}</td><td>{status.idle}d</td><td><b>{status.owner}</b>{status.support ? <div className="mt-small">Support: {status.support}</div> : null}</td></tr>{sizeBreak && <tr className="mt-subrow"><td colSpan={controlColumnCount}><SizeBreakupStrip row={row} stage={selectedDeptForSize || stage}/></td></tr>}</React.Fragment>; }) : <tr><td colSpan={controlColumnCount} style={{padding:18}}>No open/control rows in the current WIP filters.</td></tr>}</tbody></table></div> : <div className={`mt-table-wrap mt-wip-table-wrap mt-wip-resizable mt-wip-${widthMode} ${fitColumns?"mt-wip-fit-table":""} ${freezeCols>0?"freeze-active":""}`}><table className="mt-table"><thead><tr><RSortTh label="Style" sortKey="style" className={stickyClass(matrixSticky,"style")} style={stickyStyle(matrixSticky,"style")}/>{visibleCols.status && <RSortTh label="Current Status / Entry" sortKey="status" className={stickyClass(matrixSticky,"status")} style={stickyStyle(matrixSticky,"status")}/>}  {showCutActivity && <RTh k="routeProgress" className={stickyClass(matrixSticky,"routeProgress")} style={stickyStyle(matrixSticky,"routeProgress")}>Route Progress / Balance</RTh>} {visibleCols.owner && <RSortTh label="Owner" sortKey="owner" className={stickyClass(matrixSticky,"owner")} style={stickyStyle(matrixSticky,"owner")}/>}  {visibleCols.route && <RSortTh label="Route" sortKey="route" className={stickyClass(matrixSticky,"route")} style={stickyStyle(matrixSticky,"route")}/>}  {visibleCols.stages && STAGES.map(stage=><RTh key={stage.key} k={`stage:${stage.key}`}>{stage.short}</RTh>)} {visibleCols.open && <RSortTh label="Open" sortKey="open"/>} {visibleCols.idle && <RSortTh label="Idle" sortKey="idle"/>} {visibleCols.action && <RTh k="action">Next Action</RTh>}</tr><tr className="mt-col-filter-row"><th className={stickyClass(matrixSticky,"style")} style={stickyStyle(matrixSticky,"style")}><input className="mt-col-filter-input" value={columnFilters.style || ""} onChange={e=>setGridColumnFilter("style", e.target.value)} placeholder="order/style/buyer/colour" /></th>{visibleCols.status && <th className={stickyClass(matrixSticky,"status")} style={stickyStyle(matrixSticky,"status")}><ExcelFilter label="All status" value={columnFilters.status || ""} onChange={v=>setGridColumnFilter("status", v)} options={[{value:"with",label:"With dept"},{value:"ready",label:"Ready next"},{value:"issued",label:"Issued"},{value:"reconcile",label:"Reconcile"},{value:"ram",label:"R/A/M"},{value:"closed",label:"Closed"}]} /></th>} {showCutActivity && <th className={stickyClass(matrixSticky,"routeProgress")} style={stickyStyle(matrixSticky,"routeProgress")}><input className="mt-col-filter-input" value={columnFilters.other || ""} onChange={e=>setGridColumnFilter("other", e.target.value)} placeholder="route progress" /></th>} {visibleCols.owner && <th className={stickyClass(matrixSticky,"owner")} style={stickyStyle(matrixSticky,"owner")}><input className="mt-col-filter-input" value={columnFilters.owner || ""} onChange={e=>setGridColumnFilter("owner", e.target.value)} placeholder="owner" /></th>} {visibleCols.route && <th className={stickyClass(matrixSticky,"route")} style={stickyStyle(matrixSticky,"route")}><input className="mt-col-filter-input" value={columnFilters.route || ""} onChange={e=>setGridColumnFilter("route", e.target.value)} placeholder="route" /></th>} {visibleCols.stages && STAGES.map(stage=><th key={`filter-${stage.key}`} style={colStyle(`stage:${stage.key}`)}><ExcelFilter label="All" value={columnFilters[`stage:${stage.key}`] || ""} onChange={v=>setGridColumnFilter(`stage:${stage.key}`, v)} options={[{value:"open",label:"Open"},{value:"ram",label:"R/A/M"},{value:"skip",label:"Skip"},{value:"over",label:"Over"},{value:"feed",label:"Feed"},{value:"good",label:"Good"}]} /></th>)} {visibleCols.open && <th style={colStyle("open")}><input className="mt-col-filter-input" value={columnFilters.open || ""} onChange={e=>setGridColumnFilter("open", e.target.value)} placeholder="qty" /></th>} {visibleCols.idle && <th style={colStyle("idle")}><input className="mt-col-filter-input" value={columnFilters.idle || ""} onChange={e=>setGridColumnFilter("idle", e.target.value)} placeholder="idle" /></th>} {visibleCols.action && <th style={colStyle("action")}><div style={{display:"flex",gap:4}}><input className="mt-col-filter-input" value={columnFilters.action || ""} onChange={e=>setGridColumnFilter("action", e.target.value)} placeholder="action" /><button className="mt-btn ghost mt-col-filter-clear" onClick={()=>setColumnFilters({})} title="Clear only grid column filters">Clear</button></div></th>}</tr></thead><tbody>
       {filtered.map(row => { const rs = rowStatus(row); const sizeStage = selectedDeptForSize || rs.stage; const openDrill = () => openRowDrill(row, rs.stage || routeFor(row)[0] || "cutting"); return <React.Fragment key={row.id}>
@@ -4275,7 +4372,12 @@ async function saveLedgerToSupabase(newLedger, field){
   return result;
 }
 function receivingHistoryRows(row, stage, ledger=[]){
-  if (!row || stage === "cutting") return [];
+  if (!row) return [];
+  if (stage === "cutting") {
+    const sizes = sizesFor(row);
+    const sizeCols = withHorizontalSizes(row, orderSizeQtyMap(row), sizes);
+    return [{ Actual_Date:row.file_released_date || row.production_file_released_date || row.cutting_file_released_date || "Style Entry", Source_Dept:"Style Entry", Meaning:"Cutting feed = order qty / production file release", ...sizeCols, Total:Object.values(sizeCols).reduce((a,b)=>a+n(b),0), First_Typed_At:"", Last_Typed_At:"", Users:"Style master" }];
+  }
   const route = routeFor(row);
   const idx = route.indexOf(stage);
   const prevStage = idx > 0 ? route[idx-1] : null;
@@ -4284,7 +4386,7 @@ function receivingHistoryRows(row, stage, ledger=[]){
   const matching = (ledger||[]).filter(e=>ledgerRowMatchesStyle(e,row)).filter(e=>{
     const stg = String(e.stage||"");
     const typ = String(e.entry_type || e.entryType || e.type || "").toLowerCase();
-    return (stg === prevStage && ["issue","issued"].includes(typ)) || (stg === stage && ["receive","received"].includes(typ));
+    return (stg === prevStage && ["issue","issued"].includes(typ)) || (stg === stage && ["receive","received","legacy_feed"].includes(typ));
   }).sort((a,b)=>String(b.entry_date||b.date||"").localeCompare(String(a.entry_date||a.date||""))).slice(0,400);
 
   // User-facing history must stay horizontal: one activity/date row with sizes across columns.
@@ -4991,7 +5093,7 @@ function registerActivityLabel(type){
   const t = String(type || "").toLowerCase();
   if (["good_output","output","completed","complete","done"].includes(t)) return "Completed / Output";
   if (["issue","issued"].includes(t)) return "Dept Issue Forward";
-  if (["receive","received"].includes(t)) return "Legacy Receive / Feed";
+  if (["receive","received","legacy_feed"].includes(t)) return "Legacy Receive / Feed";
   if (["reject","rejection"].includes(t)) return "Rejection";
   if (t === "missing") return "Missing";
   if (t === "alter" || t === "alter_issue") return "Alter Defect";
@@ -5052,7 +5154,7 @@ function ledgerEntryFieldEffects(entry){
   const t = ledgerType(entry);
   if (["good_output","output","completed","complete","done"].includes(t)) return [{ field:"output", qty:n(entry.qty ?? entry.delta) }];
   if (["issue","issued"].includes(t)) return [{ field:"issued", qty:n(entry.qty ?? entry.delta) }];
-  if (["receive","received"].includes(t)) return [{ field:"received", qty:n(entry.qty ?? entry.delta) }];
+  if (["receive","received","legacy_feed"].includes(t)) return [{ field:"received", qty:n(entry.qty ?? entry.delta) }];
   if (["reject","rejection"].includes(t)) return [{ field:"reject", qty:n(entry.qty ?? entry.delta) }];
   if (["missing"].includes(t)) return [{ field:"missing", qty:n(entry.qty ?? entry.delta) }];
   if (["alter","alter_issue"].includes(t)) return [{ field:"alter", qty:n(entry.qty ?? entry.delta) }];
@@ -5392,6 +5494,10 @@ function OutputRegisterView({ rows, setRows, ledger, setLedger, focus, clearTick
   const totalIssue = registerRows.reduce((a,r)=>a+n(r.Issue_Forward),0);
   const totalRAM = registerRows.reduce((a,r)=>a+n(r.R_A_M_Total),0);
   const allSizes = allReportSizes(rows);
+  function correctionSizeListForRow(r, field){
+    const m = registerFieldSizeMap(r, field || defaultCorrectionFieldForRegisterRow(r), allSizes);
+    return Array.from(new Set([...allSizes, ...Object.keys(m || {})].map(sz=>String(sz).toUpperCase()).filter(Boolean)));
+  }
   const fieldOptions = [
     ["output", "Completed / Output"],
     ["issued", "Dept Issue Forward"],
@@ -5442,9 +5548,10 @@ function OutputRegisterView({ rows, setRows, ledger, setLedger, focus, clearTick
     if (!correction) return;
     const stage = r._stage || STAGES.find(s=>s.label===r.Department)?.key || "cutting";
     const field = correction.field || defaultCorrectionFieldForRegisterRow(r);
-    const original = registerFieldSizeMap(r, field, allSizes);
+    const correctionSizes = correctionSizeListForRow(r, field);
+    const original = registerFieldSizeMap(r, field, correctionSizes);
     const sizeMap = {};
-    allSizes.forEach(sz=>{
+    correctionSizes.forEach(sz=>{
       const oldQty = n(original[sz]);
       const newQty = n(correction.values?.[sz]);
       const delta = newQty - oldQty;
@@ -5486,10 +5593,10 @@ Save locally in this browser anyway? Other users will not see it until Supabase 
   const summaryRows = registerSummaryRows(registerRows, registerMode);
   const displayRows = registerMode === "detail" ? detailRows : summaryRows;
   const cols = displayRows.length ? Object.keys(displayRows[0]) : (registerMode === "day" ? ["Entry_Date","Department","Rows","Completed_Output","Issue_Forward","Receive","R_A_M_Total","Total_Activity"] : ["Department","Rows","Completed_Output","Issue_Forward","Receive","R_A_M_Total","Total_Activity"]);
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Output / Issue-Receive Register</h3><div className="mt-panel-sub">Horizontal department register. Date-first rows; R/A/M stays in simple columns. To fix an old entry, click Correct and enter the corrected quantity in the row that opens below.</div>{focus && <div className="mt-context-strip" style={{marginTop:8}}><span className="mt-chip mt-info">Opened from WIP</span><span className="mt-chip mt-muted">{focus.order_no}</span><span className="mt-chip mt-muted">{focus.style_no}</span><span className="mt-chip mt-muted">{stageLabel(focus.stage)}</span><span className="mt-small">Register is filtered to this style/dept. Correct rows inline below the date.</span></div>}</div>
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Output / Feed / Correction Register</h3><div className="mt-panel-sub">Horizontal department register. Date-first rows; feed, output, issue and R/A/M can all be corrected from Detail / Edit. Ledger-only clashing sizes also appear in the correction grid so they can be reduced to zero.</div>{focus && <div className="mt-context-strip" style={{marginTop:8}}><span className="mt-chip mt-info">Opened from WIP</span><span className="mt-chip mt-muted">{focus.order_no}</span><span className="mt-chip mt-muted">{focus.style_no}</span><span className="mt-chip mt-muted">{stageLabel(focus.stage)}</span><span className="mt-small">Register is filtered to this style/dept. Correct rows inline below the date.</span></div>}</div>
     <div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-toolbar-label">View</span><div className="mt-toggle-group"><button className={`mt-btn ${registerMode==="summary"?"active":"ghost"}`} onClick={()=>{setRegisterMode("summary"); setCorrection(null);}}>Summary</button><button className={`mt-btn ${registerMode==="day"?"active":"ghost"}`} onClick={()=>{setRegisterMode("day"); setCorrection(null);}}>Day-wise</button><button className={`mt-btn ${registerMode==="detail"?"active":"ghost"}`} onClick={()=>setRegisterMode("detail")}>Detail / Edit</button></div><span className="mt-toolbar-label">From</span><input className="mt-input" type="date" value={from} onChange={e=>setFrom(e.target.value)} /><span className="mt-toolbar-label">To</span><input className="mt-input" type="date" value={to} onChange={e=>setTo(e.target.value)} /><span className="mt-toolbar-label">Dept</span><select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}><option value="all">All departments</option>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select><span className="mt-toolbar-label">Activity</span><select className="mt-select" value={activity} onChange={e=>setActivity(e.target.value)}>{activities.map(a=><option key={a} value={a}>{a==="all"?"All activities":a}</option>)}</select><input className="mt-input" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search order / style / buyer / colour" style={{minWidth:260}}/><button className="mt-btn" onClick={clearRegisterFilters}><X size={14}/>Clear filters</button><button className="mt-btn" onClick={exportRegister}><Download size={14}/>Export</button></div></div>
     <div className="mt-section"><div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">Rows</div><div className="value">{fmt(registerRows.length)}</div><div className="note">date first</div></div><div className="mt-entry-metric"><div className="label">Completed / Output</div><div className="value">{fmt(totalOutput)}</div><div className="note">filtered period</div></div><div className="mt-entry-metric"><div className="label">Issue Forward</div><div className="value">{fmt(totalIssue)}</div><div className="note">filtered period</div></div><div className="mt-entry-metric"><div className="label">R/A/M</div><div className="value">{fmt(totalRAM)}</div><div className="note">simple columns</div></div></div></div>
-    <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}{registerMode === "detail" ? <th className="no-print">Edit</th> : null}</tr></thead><tbody>{displayRows.length ? displayRows.map((r,i)=>{ const fullRow = registerMode === "detail" ? registerRows[i] : null; const rowKey = registerMode === "detail" ? registerCorrectionRowKey(fullRow, i) : [registerMode, r.Entry_Date || "", r.Department || "", i].join("|::|"); const isEditing = registerMode === "detail" && correction?.key === rowKey; return <React.Fragment key={rowKey}><tr>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] === undefined || r[c] === null ? "" : r[c])}</td>)}{registerMode === "detail" ? <td className="no-print"><button className={`mt-btn ${isEditing?"active":"ghost"}`} onClick={()=>isEditing ? setCorrection(null) : beginInlineCorrection(fullRow, i)}>{isEditing ? "Close" : "Correct"}</button></td> : null}</tr>{isEditing && <tr className="mt-correction-row"><td colSpan={cols.length+1}><div className="mt-inline-correction"><div className="mt-correction-head"><b>Correct quantity below original date</b><span className="mt-small">Enter the final correct qty by size. System saves only the difference as an audit correction.</span></div><div className="mt-correction-controls"><label>Correction Date <input className="mt-input" type="date" value={correction.entryDate || fullRow.Entry_Date} onChange={e=>setCorrection(c=>({ ...(c||{}), entryDate:e.target.value }))}/></label><label>Field <select className="mt-select" value={correction.field || defaultCorrectionFieldForRegisterRow(fullRow)} onChange={e=>changeCorrectionField(fullRow, i, e.target.value)}>{fieldOptions.map(([k,l])=><option key={k} value={k}>{l}</option>)}</select></label><label>Reason <input className="mt-input" value={correction.reason || ""} onChange={e=>setCorrection(c=>({ ...(c||{}), reason:e.target.value }))} placeholder="Correction reason" style={{minWidth:240}}/></label><button className="mt-btn primary" onClick={()=>saveInlineCorrection(fullRow, i)}><CheckCircle2 size={14}/>Save correction</button><button className="mt-btn ghost" onClick={()=>setCorrection(null)}>Cancel</button></div><div className="mt-correction-grid">{allSizes.map(sz=>{ const original = n(registerFieldSizeMap(fullRow, correction.field || defaultCorrectionFieldForRegisterRow(fullRow), allSizes)[sz]); const next = n(correction.values?.[sz]); const delta = next - original; return <div className="mt-correction-size" key={sz}><div className="sz">{sz}</div><div className="mt-small">Old {fmt(original)}</div><input className="mt-cell-input" value={Object.prototype.hasOwnProperty.call(correction.values || {}, sz) ? correction.values[sz] : ""} onChange={e=>setCorrectionQty(sz, e.target.value)} placeholder="Correct qty"/><div className={`mt-small ${delta?"warn":""}`}>Diff {delta>0?"+":""}{fmt(delta)}</div></div>; })}</div></div></td></tr>}</React.Fragment>; }) : <tr><td colSpan={cols.length + (registerMode === "detail" ? 1 : 0)} style={{padding:18}}>No activity entries found for this filter.</td></tr>}</tbody></table></div>
+    <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}{registerMode === "detail" ? <th className="no-print">Edit</th> : null}</tr></thead><tbody>{displayRows.length ? displayRows.map((r,i)=>{ const fullRow = registerMode === "detail" ? registerRows[i] : null; const rowKey = registerMode === "detail" ? registerCorrectionRowKey(fullRow, i) : [registerMode, r.Entry_Date || "", r.Department || "", i].join("|::|"); const isEditing = registerMode === "detail" && correction?.key === rowKey; return <React.Fragment key={rowKey}><tr>{cols.map(c=><td key={c}>{typeof r[c] === "number" ? fmt(r[c]) : String(r[c] === undefined || r[c] === null ? "" : r[c])}</td>)}{registerMode === "detail" ? <td className="no-print"><button className={`mt-btn ${isEditing?"active":"ghost"}`} onClick={()=>isEditing ? setCorrection(null) : beginInlineCorrection(fullRow, i)}>{isEditing ? "Close" : "Correct"}</button></td> : null}</tr>{isEditing && <tr className="mt-correction-row"><td colSpan={cols.length+1}><div className="mt-inline-correction"><div className="mt-correction-head"><b>Correct quantity below original date</b><span className="mt-small">Enter the final correct qty by size. System saves only the difference as an audit correction.</span></div><div className="mt-correction-controls"><label>Correction Date <input className="mt-input" type="date" value={correction.entryDate || fullRow.Entry_Date} onChange={e=>setCorrection(c=>({ ...(c||{}), entryDate:e.target.value }))}/></label><label>Field <select className="mt-select" value={correction.field || defaultCorrectionFieldForRegisterRow(fullRow)} onChange={e=>changeCorrectionField(fullRow, i, e.target.value)}>{fieldOptions.map(([k,l])=><option key={k} value={k}>{l}</option>)}</select></label><label>Reason <input className="mt-input" value={correction.reason || ""} onChange={e=>setCorrection(c=>({ ...(c||{}), reason:e.target.value }))} placeholder="Correction reason" style={{minWidth:240}}/></label><button className="mt-btn primary" onClick={()=>saveInlineCorrection(fullRow, i)}><CheckCircle2 size={14}/>Save correction</button><button className="mt-btn ghost" onClick={()=>setCorrection(null)}>Cancel</button></div><div className="mt-correction-grid">{correctionSizeListForRow(fullRow, correction.field || defaultCorrectionFieldForRegisterRow(fullRow)).map(sz=>{ const target = rows.find(x=>String(x.order_no||"")===String(fullRow.Order||"") && String(x.style_no||"")===String(fullRow.Style||"") && String(x.colour||"")===String(fullRow.Colour||"") && String(x.component||"")===String(fullRow.Component||"")) || {}; const masterSizes = new Set(sizesFor(target).map(x=>String(x).toUpperCase())); const original = n(registerFieldSizeMap(fullRow, correction.field || defaultCorrectionFieldForRegisterRow(fullRow), correctionSizeListForRow(fullRow, correction.field || defaultCorrectionFieldForRegisterRow(fullRow)))[sz]); const next = n(correction.values?.[sz]); const delta = next - original; const isMaster = masterSizes.has(String(sz).toUpperCase()); return <div className="mt-correction-size" key={sz}><div className="sz">{sz}</div><div className="mt-small">Old {fmt(original)} {isMaster ? "" : "· not in style size set"}</div><input className="mt-cell-input" value={Object.prototype.hasOwnProperty.call(correction.values || {}, sz) ? correction.values[sz] : ""} onChange={e=>setCorrectionQty(sz, e.target.value)} placeholder="Correct qty"/><div className={`mt-small ${delta?"warn":""}`}>Diff {delta>0?"+":""}{fmt(delta)}</div></div>; })}</div></div></td></tr>}</React.Fragment>; }) : <tr><td colSpan={cols.length + (registerMode === "detail" ? 1 : 0)} style={{padding:18}}>No activity entries found for this filter.</td></tr>}</tbody></table></div>
     <div className="mt-speed-note"><b>Register view rule:</b> Summary is default for management reading. Use Day-wise for department/date breakup. Use Detail / Edit only when correcting old entries. Correction does not overwrite old rows; it posts the difference as a correction ledger row so WIP updates immediately.</div>
   </div>;
 }
@@ -7883,9 +7990,12 @@ function SimpleTable({ title, sub, rows, empty, onRowClick, exportName="" }){
   return <div className={`mt-card mt-readable-table mt-readable-${type}`}><div className="mt-section"><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{infoSub}</div>{canExport ? <button className="mt-btn primary no-print" style={{marginTop:8}} onClick={()=>exportXlsx(`${exportName}_${today()}.xlsx`, [{ name:title, rows:rawRows }])}><Download size={14}/>Export detailed table</button> : null}</div><div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{friendlyTableHeader(c)}</th>)}</tr></thead><tbody>{displayRows.length ? displayRows.map((r,i)=><tr key={i} className={onRowClick ? "drillable" : ""} onClick={()=>onRowClick?.(rawRows[i] || r)}>{cols.map(c=>{ const val = r[c]; return <td key={c} className={simpleTableCellTone(c,val)}>{typeof val === "number" ? fmt(val) : String(val === undefined || val === null ? "" : val)}</td>; })}</tr>) : <tr><td colSpan={Math.max(1,cols.length)} style={{padding:18}}>{empty}</td></tr>}</tbody></table></div>{rawRows.length && displayRows !== rawRows ? <div className="mt-table-note no-print">Showing simplified manager-readable columns. Export keeps the full audit/detail data.</div> : null}</div>;
 }
 
-function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose, onOpenRegister, onSharedSave }){
+function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose, onOpenRegister, onOpenStyle, onSharedSave }){
   const rs = rowStatus(row);
   const stage = stageKey || rs.stage;
+  const route = routeFor(row);
+  const stageIdx = route.indexOf(stage);
+  const prevStageForFeed = stageIdx > 0 ? route[stageIdx - 1] : null;
   const st = sdata(row,stage);
   const c = cellBreakup(row,stage);
   const feed = stage === "cutting" ? n(row.order_qty) : stageFeed(row,stage);
@@ -7933,9 +8043,10 @@ function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose
       <Kpi label="Ready to Issue" value={fmt(readyToIssue)} note="Completed but not moved forward" tone={readyToIssue?"info":"ok"}/>
     </div>
     <div className="mt-section mt-card" style={{marginBottom:12}}><h3 className="mt-panel-title">{stageLabel(stage)} breakup</h3><div className="mt-context-strip"><span className="mt-chip mt-ok">Done {fmt(c.received)}</span><span className="mt-chip mt-warn">Open {fmt(c.open)}</span><span className="mt-chip mt-late">R/A/M {fmt(c.ram)}</span>{c.shortClose ? <span className="mt-chip mt-purple">Short Closed {fmt(c.shortClose)}</span> : null}{c.extra ? <span className="mt-chip mt-purple">Extra/Over {fmt(c.extra)}</span> : null}<span className="mt-chip mt-info">Owner {primaryBucket?.owner || stageOwner(stage)}</span></div>{stage==="cutting" && c.open>0 ? <div style={{marginTop:10}}><button className="mt-btn ghost" onClick={shortCloseCutting}>Short close cutting balance</button><div className="mt-small">Use only when management approves cutting less than order qty. This removes balance from Cutting Pending; it does not add production.</div></div> : null}</div>
+    <div className="mt-correction-control no-print"><h3 className="mt-panel-title">Correction control — feed and output together</h3><div className="mt-panel-sub">Use this when WIP says conservation/feed/output mismatch. Correct the source that is wrong: cutting feed comes from Style Entry order-size qty; other department feed comes from previous department Issue Forward; output/R/A/M is corrected in Register.</div><div className="mt-correction-control-grid"><div className="mt-correction-control-card"><div className="label">Feed source</div><div className="value">{fmt(feed)}</div><div className="mt-small">{stage === "cutting" ? "Order qty / cutting file release" : `${stageLabel(prevStageForFeed)} issue-forward to ${stageLabel(stage)}`}</div>{stage === "cutting" ? <button className="mt-btn ghost" onClick={()=>onOpenStyle?.(row)}><Shirt size={14}/>Edit Style / Cutting Feed</button> : <button className="mt-btn ghost" onClick={()=>onOpenRegister?.(row, prevStageForFeed || stage, "Dept Issue Forward")}><FileSpreadsheet size={14}/>Correct Feed Source</button>}</div><div className="mt-correction-control-card"><div className="label">Output / R-A-M</div><div className="value">{fmt(n(st.output))} / {fmt(ramQty)}</div><div className="mt-small">Good output plus rejection/missing/alter in selected department</div><button className="mt-btn ghost" onClick={()=>openRegisterForEdit("all")}><FileSpreadsheet size={14}/>Correct Output / R-A-M</button></div><div className="mt-correction-control-card"><div className="label">Size clash repair</div><div className="value">Register</div><div className="mt-small">Detail/Edit now shows ledger-only sizes also, so old XL/M/L clashes can be corrected to zero even if not in master size set.</div><button className="mt-btn ghost" onClick={()=>openRegisterForEdit("all")}><FileSpreadsheet size={14}/>Open Correction Grid</button></div></div></div>
     <SizeCumulativeEditor row={row} rows={rows} setRows={setRows} ledger={ledger} setLedger={setLedger} stage={stage} initialField={c.open ? "output" : readyToIssue ? "issued" : "output"} source="wip_view_cell_day_entry" onSharedSave={onSharedSave} />
     <div className="mt-section no-print" style={{paddingLeft:0,paddingRight:0}}><button className="mt-btn ghost" onClick={()=>openRegisterForEdit("all")}><FileSpreadsheet size={14}/>Open Register to edit this dept history</button><span className="mt-small" style={{marginLeft:8}}>Register opens filtered to this order/style/department; use Correct for audit-safe edits.</span></div>
-    {stage!=="cutting" && <details className="mt-fold" open={false}><summary>View feed history summary for {stageLabel(stage)}</summary><div className="mt-section no-print" style={{paddingLeft:0,paddingRight:0}}><button className="mt-btn ghost" onClick={()=>onOpenRegister?.(row, "all", "all")}><FileSpreadsheet size={14}/>Open Register for full audit trail</button></div><SimpleTable title={`${stageLabel(stage)} feed history`} sub="Normal view nets corrections and hides raw source/timestamp rows. Use Register only when you need to audit or correct the original entry." rows={receivingRows} empty="No feed / issue history found in ledger yet." /></details>}
+    <details className="mt-fold" open={false}><summary>View feed history summary for {stageLabel(stage)}</summary><div className="mt-section no-print" style={{paddingLeft:0,paddingRight:0}}>{stage === "cutting" ? <button className="mt-btn ghost" onClick={()=>onOpenStyle?.(row)}><Shirt size={14}/>Open Style Entry to edit cutting feed/order qty</button> : <button className="mt-btn ghost" onClick={()=>onOpenRegister?.(row, prevStageForFeed || stage, "Dept Issue Forward")}><FileSpreadsheet size={14}/>Open Register to correct feed source</button>}</div><SimpleTable title={`${stageLabel(stage)} feed history`} sub="Feed and output are shown separately so the wrong side can be corrected. Cutting feed is the style/order size breakup; downstream feed is previous department Issue Forward." rows={receivingRows} empty="No feed / issue history found yet." /></details>
     <details className="mt-fold" open={false}><summary>View {stageLabel(stage)} activity history summary</summary><div className="mt-section no-print" style={{paddingLeft:0,paddingRight:0}}><button className="mt-btn ghost" onClick={()=>openRegisterForEdit("all")}><FileSpreadsheet size={14}/>Open Register to correct output / issue / R-A-M</button><span className="mt-small" style={{marginLeft:8}}>Corrections are netted here; raw positive/negative ledger rows stay in Register.</span></div><SimpleTable title={`${stageLabel(stage)} activity history`} sub="Clean history for users: Original entry + Correction = Final qty. Raw timestamps, sources and correction rows are hidden from this normal view." rows={outputHistoryRows} empty="No output / issue / R-A-M ledger history found for this department yet." /></details>
     <details className="mt-fold"><summary>View {stageLabel(stage)} size breakup</summary><SimpleTable title={`${stageLabel(stage)} size-wise open quantities`} sub="Only the selected/clicked department. Use this to see what is open by size before entering." rows={sizeRows} empty="No size rows." /></details>
     <details className="mt-fold"><summary>View full style detail / route / history</summary><div className="mt-section"><LazyStylePhoto row={row} large/><div className="mt-grid" style={{gridTemplateColumns:"repeat(3,minmax(0,1fr))", marginBottom:12}}><Kpi label="Overall Status" value={rs.status} note={rs.action} tone={rs.tone}/><Kpi label="Overall Owner" value={rs.owner} note={rs.support || "Primary owner"}/><Kpi label="Overall Open Qty" value={fmt(rs.qty)} note={`${rs.idle || 0} days idle`}/></div></div><SimpleTable title="Open buckets for selected department" sub="Owner chase items for this department." rows={buckets.map(b=>({ Status:b.status, Qty:b.qty, Percent:`${bucketPct(row,b)}%`, Owner:b.owner, Support:b.support, Action:b.action, Idle:`${b.idle||0}d` }))} empty="No open bucket for this department." /><div style={{height:12}}/><SimpleTable title="Full current status drilldown" sub="Full status logic across this style/component." rows={statusBreakdown(row).map(b=>({ Status:b.status, Stage:stageLabel(b.stage), Qty:b.qty, Percent:`${bucketPct(row,b)}%`, Owner:b.owner, Support:b.support, Action:b.action, Idle:`${b.idle||0}d` }))} empty="No open status bucket." /></details>
@@ -8577,7 +8688,7 @@ function styleTemplateRows(){
   ];
 }
 
-function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0, onSharedSave }){
+function StyleManager({ rows, allRows, setRows, ledger, setLedger, focus, clearTick=0, onSharedSave }){
   const emptyForm = {
     id:"", order_no:"", style_no:"", buyer:"", colour:"", component:"", set_components:"", set_piece_count:"", order_qty:"", file_released_qty:"", file_released_date:"", order_size_qty:{}, size_set:"alpha", size_ratio:"", set_id:"", line:"", dispatch_reject_allowed:false,
     print_required:false, embroidery_required:false, priority:"Normal", difficulty:"Normal", photo_url:"", photo_folder_url:""
@@ -8648,6 +8759,11 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, clearTick=0, 
     setMsg({ tone:"info", text:`Editing ${row.style_no} · ${row.colour} · ${row.component}` });
     window.scrollTo({ top:0, behavior:"smooth" });
   }
+  useEffect(()=>{
+    if (!focus) return;
+    const target = (allRows || rows || []).find(r=>String(r.id)===String(focus.id || "") || styleCompositeKey(r)===String(focus.key || ""));
+    if (target) edit(target);
+  }, [focus?.ts]);
   function reset(){ setForm(emptyForm); setMsg(null); }
   async function save(){
     const permission = requireCurrentPermission("production.edit_styles", "add/edit production styles");
@@ -9172,6 +9288,7 @@ export default function App(){
   const [drawer,setDrawer] = useState(null);
   const [dashboardDrill,setDashboardDrill] = useState(null);
   const [registerFocus,setRegisterFocus] = useState(null);
+  const [styleFocus,setStyleFocus] = useState(null);
   const [entryFocus,setEntryFocus] = useState(null);
   const [notice,setNotice] = useState(null);
   const [sharedSync,setSharedSync] = useState(()=>hasValidSupabaseEnv() ? { tone:"warn", text:"Shared sync starting…" } : { tone:"late", text:"Supabase not configured" });
@@ -9423,6 +9540,12 @@ Continue?`);
     setDrawer(null);
     setTab("register");
   }
+  function openStyleFromWip(row){
+    if (!row) return;
+    setStyleFocus({ id:row.id, key:styleCompositeKey(row), ts:Date.now() });
+    setDrawer(null);
+    setTab("styles");
+  }
   function openEntryFromWip(row, stage, field="output"){
     if (!row) return;
     setEntryFocus({ id:uid("entryfocus"), rowKey:styleCompositeKey(row), stage:stage || "cutting", field:field || "output", order_no:row.order_no || "", style_no:row.style_no || "", colour:row.colour || "", component:row.component || "" });
@@ -9506,7 +9629,7 @@ Continue?`);
       <div className="mt-tab-panel" style={{display:tab==="review"?"block":"none"}} aria-hidden={tab!=="review"}><ReviewView rows={visibleRows} ledger={ledger} planRows={planRows}/></div>
       <div className="mt-tab-panel" style={{display:tab==="owners"?"block":"none"}} aria-hidden={tab!=="owners"}><WhoToChase rows={visibleRows}/></div>
       <div className="mt-tab-panel" style={{display:tab==="monthly"?"block":"none"}} aria-hidden={tab!=="monthly"}><MonthlyComparison rows={visibleRows} ledger={ledger} clearTick={clearFiltersTick}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="styles"?"block":"none"}} aria-hidden={tab!=="styles"}><StyleManager rows={visibleRows} allRows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} clearTick={clearFiltersTick} onSharedSave={handleSharedSave}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="styles"?"block":"none"}} aria-hidden={tab!=="styles"}><StyleManager rows={visibleRows} allRows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={styleFocus} clearTick={clearFiltersTick} onSharedSave={handleSharedSave}/></div>
       <div className="mt-tab-panel" style={{display:tab==="routes"?"block":"none"}} aria-hidden={tab!=="routes"}><ProcessRoutes rows={visibleRows} setRows={setRows}/></div>
       <div className="mt-tab-panel" style={{display:tab==="photos"?"block":"none"}} aria-hidden={tab!=="photos"}><PhotoManager rows={visibleRows} setRows={setRows} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="reports"?"block":"none"}} aria-hidden={tab!=="reports"}>{currentUserCan("production.export") ? <Reports rows={visibleRows} ledger={ledger}/> : <PermissionGate permission="production.export" label="Reports"/>}</div>
@@ -9515,7 +9638,7 @@ Continue?`);
         </main>
       </div>
     </div>
-    {drawer && <DetailDrawer row={drawer.row} rows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} stageKey={drawer.stage} onClose={()=>setDrawer(null)} onOpenRegister={openRegisterFromWip} onSharedSave={handleSharedSave}/>} 
+    {drawer && <DetailDrawer row={drawer.row} rows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} stageKey={drawer.stage} onClose={()=>setDrawer(null)} onOpenRegister={openRegisterFromWip} onOpenStyle={openStyleFromWip} onSharedSave={handleSharedSave}/>} 
     {dashboardDrill && <DashboardDrillDrawer drill={dashboardDrill} rows={visibleRows} ledger={ledger} onClose={()=>setDashboardDrill(null)}/>} 
   </div>;
 }
