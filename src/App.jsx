@@ -28,8 +28,38 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V31 MERCH-LIKE-WIP-FILTERS";
-const APP_COMMIT_MESSAGE = "Makes Live WIP filters Merch Tracker-style, fixes dropdown clipping under table cells, and cleans WIP grid polish";
+const APP_VERSION = "V34 STATUS-FEED-OPEN-ISSUE";
+const APP_COMMIT_MESSAGE = "Shows feed, open work and pending issue-forward directly in Current Status, not only Route Progress";
+
+
+const PRODUCTION_APP_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#1f1f1d"/>
+  <path d="M10 48h44v7H10z" fill="#f7f3ea"/>
+  <path d="M13 48V30l10 6v-6l10 6v-6l10 6V20h8v28H13z" fill="#c96f16"/>
+  <path d="M18 42h5v6h-5zm10 0h5v6h-5zm10 0h5v6h-5zm10 0h5v6h-5z" fill="#fff4e3"/>
+  <path d="M43 16h10l-2-6h-6z" fill="#f7f3ea"/>
+</svg>`;
+
+function setProductionAppBrowserIdentity(){
+  if (typeof document === "undefined") return;
+  document.title = "Production DPR / WIP";
+  const svg = PRODUCTION_APP_FAVICON_SVG.trim();
+  const href = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  const selectors = ['link[rel="icon"]','link[rel="shortcut icon"]'];
+  selectors.forEach(sel=>document.querySelectorAll(sel).forEach(node=>node.parentNode?.removeChild(node)));
+  const icon = document.createElement("link");
+  icon.rel = "icon";
+  icon.type = "image/svg+xml";
+  icon.href = href;
+  document.head.appendChild(icon);
+  let apple = document.querySelector('link[rel="apple-touch-icon"]');
+  if (!apple) {
+    apple = document.createElement("link");
+    apple.rel = "apple-touch-icon";
+    document.head.appendChild(apple);
+  }
+  apple.href = href;
+}
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 const CSS = `
@@ -283,6 +313,8 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-status-link.compact .dept-name { font-size:9px; }
 .mt-status-link.compact .dept-qty { font-size:11px; }
 .mt-status-link.compact .dept-pct { font-size:8px; }
+.mt-status-link.compact .mt-small { font-size:8.5px; line-height:1.15; }
+.mt-status-cell-wrap.compact-wrap .mt-status-link.compact { max-width:260px; min-width:170px; }
 .mt-primary-stage-card { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:150px; max-width:190px; border:1px solid rgba(31,31,29,.14); border-radius:11px; background:var(--dept-tint,#fffaf1); color:var(--dept-fg,var(--ink)); padding:7px 8px; cursor:pointer; }
 .mt-primary-stage-card .big { font-family:'Archivo',sans-serif; font-size:16px; font-weight:800; color:var(--ink); }
 .mt-cut-breakup-mini { max-width:240px; min-width:170px; }
@@ -1171,7 +1203,7 @@ function fieldHelp(field){ return ALL_ENTRY_FIELDS.find(f=>f.key===field)?.help 
 
 function stageFeedBySize(row, stageKey){
   const sizes = sizesFor(row);
-  if (stageKey === "cutting") return orderSizeQtyMap(row);
+  if (stageKey === "cutting") return fileReleaseSizeQtyMap(row);
   const route = routeFor(row);
   const idx = route.indexOf(stageKey);
   if (idx <= 0) return orderSizeQtyMap(row);
@@ -1195,16 +1227,16 @@ function entryFieldContext(row, stage, field){
   const idx = route.indexOf(stage);
   const prevStage = idx > 0 ? route[idx-1] : null;
   const nextStage = idx >= 0 && idx < route.length-1 ? route[idx+1] : null;
-  const feed = stage === "cutting" ? n(row.order_qty) : stageFeed(row, stage);
+  const feed = stage === "cutting" ? cuttingBaseQty(row) : stageFeed(row, stage);
   const ram = loss(st);
   if (field === "received") {
-    const available = stage === "cutting" ? n(row.order_qty) : feed;
+    const available = stage === "cutting" ? cuttingBaseQty(row) : feed;
     return {
       mode:"receive",
       available, previous:n(st.received), open:Math.max(0, available - n(st.received)), updatedLabel:"Updated feed",
-      availableLabel: stage === "cutting" ? "Order quantity" : `Feed from ${stageLabel(prevStage)}`,
+      availableLabel: stage === "cutting" ? "Production file release qty" : `Feed from ${stageLabel(prevStage)}`,
       previousLabel:`Already fed to ${stageLabel(stage)}`, openLabel:"Open feed balance",
-      note: stage === "cutting" ? "Cutting usually uses Completed / Output, not receive." : `Feed balance from ${stageLabel(prevStage)} into ${stageLabel(stage)}.`
+      note: stage === "cutting" ? "Cutting starts only after Production File Release. Use Completed / Output for cut quantity." : `Feed balance from ${stageLabel(prevStage)} into ${stageLabel(stage)}.`
     };
   }
   if (field === "issued") {
@@ -1215,21 +1247,21 @@ function entryFieldContext(row, stage, field){
     };
   }
   if (field === "output") {
-    const available = stage === "cutting" ? n(row.order_qty) : feed;
+    const available = stage === "cutting" ? cuttingBaseQty(row) : feed;
     const dispatchRejectNote = stage === "dispatch" && dispatchRejectAllowed(row) ? " Includes approved rejection qty because Settings allows rejection dispatch." : "";
     return {
       mode:"output", available, previous:n(st.output), open: stage === "cutting" ? cuttingAccountableOpen(row) : Math.max(0, available - n(st.output) - ram), updatedLabel:"Updated output",
-      availableLabel: stage === "cutting" ? "Order qty to cut" : (stage === "dispatch" && dispatchRejectAllowed(row) ? "Good issued + approved rejection" : `With ${stageLabel(stage)} / feed`),
+      availableLabel: stage === "cutting" ? "Production file released to cut" : (stage === "dispatch" && dispatchRejectAllowed(row) ? "Good issued + approved rejection" : `With ${stageLabel(stage)} / feed`),
       previousLabel:`Already completed in ${stageLabel(stage)}`, openLabel:`Open work in ${stageLabel(stage)}`,
-      note: stage === "cutting" ? "Enter new cut quantity by size." : `Complete the open work currently with ${stageLabel(stage)}.${dispatchRejectNote}`
+      note: stage === "cutting" ? (isProductionFileReleased(row) ? "Enter new cut quantity by size against released file qty." : "Production file is not released yet — release it first.") : `Complete the open work currently with ${stageLabel(stage)}.${dispatchRejectNote}`
     };
   }
   if (["reject","missing","alter"].includes(field)) {
-    const available = stage === "cutting" ? n(row.order_qty) : feed;
+    const available = stage === "cutting" ? cuttingBaseQty(row) : feed;
     const openWork = Math.max(0, available - n(st.output) - ram);
     return {
       mode:"ram", available, previous:n(st[field]), open:openWork, updatedLabel:`Updated ${fieldLabel(field)}`,
-      availableLabel: stage === "cutting" ? "Order/cut accountable qty" : `With ${stageLabel(stage)} / feed`,
+      availableLabel: stage === "cutting" ? "Released/cut accountable qty" : `With ${stageLabel(stage)} / feed`,
       previousLabel:`Already ${fieldLabel(field)}`, openLabel:"Open balance available to explain",
       note:`Use ${fieldLabel(field)} to explain open balance by size. This affects R/A/M and closure.`
     };
@@ -1256,7 +1288,7 @@ function entryFieldSizeContext(row, stage, field, size){
   const ram = reject + alter + missing;
   if (field === "received") return { available:feed, previous:received, open:Math.max(0, feed-received) };
   if (field === "issued") return { available:output, previous:issued, open:Math.max(0, output-issued) };
-  if (field === "output") { const cutSizeQty = n(orderSizeQtyMap(row)[size]); return { available: stage === "cutting" ? cutSizeQty : feed, previous:output, open:Math.max(0, (stage === "cutting" ? cutSizeQty : feed)-output-ram) }; }
+  if (field === "output") { const cutSizeQty = n(fileReleaseSizeQtyMap(row)[size]); return { available: stage === "cutting" ? cutSizeQty : feed, previous:output, open:Math.max(0, (stage === "cutting" ? cutSizeQty : feed)-output-ram) }; }
   if (["reject","missing","alter"].includes(field)) return { available:feed, previous: n({reject,missing,alter}[field]), open:Math.max(0, feed-output-ram) };
   if (field === "alter_clear") return { available:alter, previous:output, open:alter };
   return { available:0, previous:0, open:0 };
@@ -1489,7 +1521,7 @@ function loss(stage){ return n(stage.reject) + n(stage.alter) + n(stage.missing)
 function stageFeed(row, stageKey){
   const route = routeFor(row);
   const idx = route.indexOf(stageKey);
-  if (idx <= 0) return n(row.order_qty);
+  if (idx <= 0) return stageKey === "cutting" ? cuttingBaseQty(row) : n(row.order_qty);
   const prev = sdata(row, route[idx - 1]);
   const rejectDispatchQty = stageKey === "dispatch" && dispatchRejectAllowed(row) ? preDispatchRejectQty(row) : 0;
   return n(prev.issued) + rejectDispatchQty;
@@ -1502,7 +1534,7 @@ function coordinationOwner(){ return "Production Coordinator + Production Manage
 function cuttingShortCloseQty(row){ return Math.max(0, n(row?.cutting_short_close_qty || row?.short_close_qty || row?.stages?.cutting?.short_close)); }
 function cuttingAccountableOpen(row){
   const st = sdata(row, "cutting");
-  return Math.max(0, n(row.order_qty) - n(st.output) - loss(st) - cuttingShortCloseQty(row));
+  return Math.max(0, cuttingBaseQty(row) - n(st.output) - loss(st) - cuttingShortCloseQty(row));
 }
 
 // ---- Configurable production rules (single source of truth) ----
@@ -1646,16 +1678,33 @@ function dispatchHoldInfo(row){
 }
 function fileReleaseQty(row){ return n(row.file_released_qty || row.production_file_released_qty || row.cutting_file_released_qty || 0); }
 function fileReleaseDate(row){ return row.file_released_date || row.production_file_released_date || row.cutting_file_released_date || ""; }
-function cuttingBaseQty(row){
-  const released = fileReleaseQty(row);
-  return released > 0 ? released : n(row.order_qty);
-}
+function isProductionFileReleased(row){ return fileReleaseQty(row) > 0; }
 function hasFileReleaseGate(row){ return fileReleaseQty(row) > 0 || !!fileReleaseDate(row); }
+function cuttingBaseQty(row){
+  // V32: Cutting feed is a deliberate Production File Release. Do not silently use order qty as feed.
+  return Math.max(0, fileReleaseQty(row));
+}
+function fileReleaseSizeQtyMap(row){
+  const sizes = sizesFor(row);
+  const releaseQty = fileReleaseQty(row);
+  if (releaseQty <= 0) return Object.fromEntries(sizes.map(size=>[size,0]));
+  const orderMap = orderSizeQtyMap(row);
+  const orderTotal = qtyMapTotal(orderMap) || n(row.order_qty) || releaseQty;
+  if (!orderTotal || Math.abs(orderTotal - releaseQty) <= 0.001) return normalizeSizeQtyMap(orderMap, sizes);
+  let used = 0;
+  return Object.fromEntries(sizes.map((size,idx)=>{
+    const qty = idx === sizes.length - 1 ? releaseQty - used : Math.round((releaseQty * n(orderMap[size])) / orderTotal);
+    used += qty;
+    return [size, Math.max(0, qty)];
+  }));
+}
 function fileReleaseStatusText(row){
   const rel = fileReleaseQty(row);
-  if (!hasFileReleaseGate(row)) return "File release not entered";
   if (rel <= 0) return "File not released";
   return `File released ${fmt(rel)}${fileReleaseDate(row)?` · ${fileReleaseDate(row)}`:""}`;
+}
+function fileReleaseNeedText(row){
+  return `Release production file to Cutting before DPR cutting output. Order qty ${fmt(row?.order_qty)}.`;
 }
 
 function issueBuckets(row){
@@ -1669,10 +1718,13 @@ function issueBuckets(row){
     if (key === "cutting") {
       const shortClose = cuttingShortCloseQty(row);
       const cutBase = cuttingBaseQty(row);
-      const overCut = Math.max(0, n(st.output) - cutBase);
+      const overCut = cutBase > 0 ? Math.max(0, n(st.output) - cutBase) : Math.max(0, n(st.output));
+      if (!isProductionFileReleased(row) && n(row.order_qty) > 0) {
+        buckets.push({ type:"cutting_pending", status:"File not released", qty:n(row.order_qty), owner:stageOwner(key), support:"Production Coordinator / Manager must release production file", stage:key, tone:"warn", action:"Release production file to Cutting before cutting output.", idle });
+      }
       const cutPending = Math.max(0, cutBase - n(st.output) - loss(st) - cuttingShortCloseQty(row));
       if (cutPending > 0) {
-        buckets.push({ type:"cutting_pending", status:hasFileReleaseGate(row) && !fileReleaseQty(row) ? "File not released" : "Cut open", qty:cutPending, owner:stageOwner(key), support:"Production Coordinator follow-up; option to short close genuine balance", stage:key, tone:idle >= 3 ? "warn" : "info", action:hasFileReleaseGate(row) && !fileReleaseQty(row) ? "Release production file to Cutting before cutting output." : "Cut remaining released/order quantity or short close approved tail.", idle });
+        buckets.push({ type:"cutting_pending", status:"Cut open", qty:cutPending, owner:stageOwner(key), support:"Production Coordinator follow-up; option to short close genuine balance", stage:key, tone:idle >= 3 ? "warn" : "info", action:"Cut remaining released quantity or short close approved tail.", idle });
       }
       if (shortClose > 0) {
         buckets.push({ type:"short_closed", status:"Cutting Short Closed", qty:shortClose, owner:hodAndCoordinator(key), support:"Keep reason/approval until governance queue is added", stage:key, tone:"purple", action:"Short-closed balance is removed from cutting pending, not treated as produced.", idle });
@@ -1785,8 +1837,8 @@ function StatusCell({ row, onOpen }){
   if (!parts.length) return <div className="mt-status-stack"><span className="mt-chip mt-ok">Closed / Balanced</span><div className="mt-status-line">No open production issue</div></div>;
   return <div className="mt-status-stack"><StatusDeptLinks row={row} onOpen={onOpen} compact={false}/></div>;
 }
-function PrimaryPendingStage({ row, onOpen, onEntry }){
-  return <CurrentStatusLinks row={row} onEntry={onEntry} onOpen={onOpen} compact={true}/>;
+function PrimaryPendingStage({ row, onOpen, onEntry, onRelease }){
+  return <CurrentStatusLinks row={row} onEntry={onEntry} onOpen={onOpen} onRelease={onRelease} compact={true}/>;
 }
 function statusClass(tone){ return tone === "late" ? "mt-late" : tone === "warn" ? "mt-warn" : tone === "ok" ? "mt-ok" : tone === "purple" ? "mt-purple" : tone === "info" ? "mt-info" : "mt-muted"; }
 function deptClass(stageKey){ return stageKey ? `mt-dept-${stageKey}` : ""; }
@@ -1839,16 +1891,16 @@ function currentMovementStatusParts(row){
   const route = routeFor(row);
   const parts = [];
   const cut = sdata(row, "cutting");
-  const cutPending = cuttingAccountableOpen(row);
-  if (cutPending > 0) parts.push({ type:"cutting_pending", stage:"cutting", label:hasFileReleaseGate(row) && !fileReleaseQty(row) ? "File not released" : "Cut open", qty:cutPending, tone:cutPending <= Math.max(10, Math.round(cuttingBaseQty(row)*0.05)) ? "warn" : "info", field:"output", note:"Enter cutting output / short close" });
+  const cutPending = isProductionFileReleased(row) ? cuttingAccountableOpen(row) : n(row.order_qty);
+  if (cutPending > 0) parts.push({ type:"cutting_pending", stage:"cutting", label:isProductionFileReleased(row) ? "Cut open" : "File not released", qty:cutPending, tone:isProductionFileReleased(row) && cutPending <= Math.max(10, Math.round(cuttingBaseQty(row)*0.05)) ? "warn" : "info", field:"output", note:isProductionFileReleased(row) ? "Enter cutting output / short close" : "Release production file before cutting output" });
   // Cutting is also an active movement stage. If cut output is complete but not issued,
   // current status must say Ready for Stitching, not Closed/Balanced.
   const cutNextStage = route[route.indexOf("cutting") + 1];
   const cutReadyNext = Math.max(0, n(cut.output) - n(cut.issued));
-  if (cutReadyNext > 0 && cutNextStage) parts.push({ type:"ready_next", stage:"cutting", toStage:cutNextStage, label:`Cut open`, qty:cutReadyNext, tone:"info", field:"issued", note:`Issue cut quantity to ${stageLabel(cutNextStage)}` });
+  if (cutReadyNext > 0 && cutNextStage) parts.push({ type:"ready_next", stage:"cutting", toStage:cutNextStage, label:`Pending issue to ${stageLabel(cutNextStage)}`, qty:cutReadyNext, tone:"info", field:"issued", note:`Issue cut quantity to ${stageLabel(cutNextStage)}` });
   if (n(cut.issued) > 0 && cutNextStage) {
     const nextOutput = n(sdata(row,cutNextStage).output) + n(sdata(row,cutNextStage).reject) + n(sdata(row,cutNextStage).alter) + n(sdata(row,cutNextStage).missing);
-    if (nextOutput < n(cut.issued)) parts.push({ type:"issued_forward", stage:"cutting", toStage:cutNextStage, label:"Cut issued", qty:n(cut.issued), tone:"purple", field:"issued", note:`Issued to ${stageLabel(cutNextStage)}` });
+    if (nextOutput < n(cut.issued)) parts.push({ type:"issued_forward", stage:"cutting", toStage:cutNextStage, label:`Feed to ${stageLabel(cutNextStage)}`, qty:n(cut.issued), tone:"purple", field:"issued", note:`Issued to ${stageLabel(cutNextStage)}` });
   }
   // Show active production positions only. Tail / short-close / closure buckets are intentionally ignored here.
   route.forEach((stage, idx)=>{
@@ -1860,15 +1912,15 @@ function currentMovementStatusParts(row){
     const issued = n(st.issued);
     const accountedPct = feed > 0 ? ((output + loss) / feed) * 100 : 0;
     const withDept = Math.max(0, feed - output - loss);
-    if (withDept > 0) parts.push({ type:"with_dept", stage, label: withDept <= Math.max(10, Math.round(feed*0.05)) ? "Tail" : `${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} open`, qty:withDept, tone:withDept <= Math.max(10, Math.round(feed*0.05)) ? "warn" : "info", field:"output", note:"Enter department output" });
+    if (withDept > 0) parts.push({ type:"with_dept", stage, label: withDept <= Math.max(10, Math.round(feed*0.05)) ? "Tail open" : `Open work in ${stageLabel(stage)}`, qty:withDept, tone:withDept <= Math.max(10, Math.round(feed*0.05)) ? "warn" : "info", field:"output", note:"Enter department output" });
     const nextStage = route[idx+1];
     const readyNext = Math.max(0, output - issued);
-    if (readyNext > 0 && nextStage) parts.push({ type:"ready_next", stage, toStage:nextStage, label:`${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} open`, qty:readyNext, tone:"info", field:"issued", note:"Enter issue forward" });
+    if (readyNext > 0 && nextStage) parts.push({ type:"ready_next", stage, toStage:nextStage, label:`Pending issue to ${stageLabel(nextStage)}`, qty:readyNext, tone:"info", field:"issued", note:"Enter issue forward" });
     // User asked current status to show real movement like Stitching issued also. Keep this as movement evidence, not closure.
     if (issued > 0 && nextStage) {
       const nextOutput = n(sdata(row,nextStage).output) + n(sdata(row,nextStage).reject) + n(sdata(row,nextStage).alter) + n(sdata(row,nextStage).missing);
       const stillRelevant = nextOutput < issued;
-      if (stillRelevant) parts.push({ type:"issued_forward", stage, toStage:nextStage, label:`${STAGE_BY_KEY[stage]?.short || stageLabel(stage)} issued`, qty:issued, tone:"purple", field:"issued", note:`Issued to ${stageLabel(nextStage)}` });
+      if (stillRelevant) parts.push({ type:"issued_forward", stage, toStage:nextStage, label:`Feed to ${stageLabel(nextStage)}`, qty:issued, tone:"purple", field:"issued", note:`Issued to ${stageLabel(nextStage)}` });
     }
   });
   // If there is no active position but there are blocking errors, show reconcile/RAM from issue buckets as the action.
@@ -1884,7 +1936,7 @@ function routeProgressSnapshot(row){
   const cutQty = Math.max(n(cutSt.output), n(cutSt.received));
   const cutBase = cuttingBaseQty(row);
   const parts = [];
-  if (hasFileReleaseGate(row)) parts.push({ stage:"cutting", label:fileReleaseStatusText(row), qty:fileReleaseQty(row), tone:fileReleaseQty(row)>0?"info":"warn", title:"Production file release controls what Cutting is allowed to start." });
+  parts.push({ stage:"cutting", label:fileReleaseStatusText(row), qty:fileReleaseQty(row) || n(row.order_qty), tone:isProductionFileReleased(row)?"info":"warn", title:"Production file release controls what Cutting is allowed to start." });
   if (cutQty > 0) parts.push({ stage:"cutting", label:`Cut done ${fmt(cutQty)}`, qty:cutQty, tone:"ok", title:`${pctOf(cutQty, cutBase)}% of released/cut base · ${pctOf(cutQty, orderQty)}% of order` });
   const cutOpen = Math.max(0, cutQty - n(cutSt.issued));
   if (cutOpen > 0) parts.push({ stage:"cutting", label:`Cut open ${fmt(cutOpen)}`, qty:cutOpen, tone:cutOpen <= Math.max(10, Math.round((cutQty||orderQty)*0.05))?"warn":"info", title:"Cut quantity not yet issued forward; small balance appears as tail." });
@@ -1904,14 +1956,39 @@ function routeProgressSnapshot(row){
   return parts;
 }
 
-function CurrentStatusLinks({ row, onEntry, onOpen, compact=false }){
+function movementStatusMeta(row, part){
+  if (!part) return "";
+  const stage = part.stage;
+  const st = sdata(row, stage);
+  const route = routeFor(row);
+  const nextStage = part.toStage || route[route.indexOf(stage)+1];
+  const feed = stage === "cutting" ? cuttingBaseQty(row) : stageFeed(row, stage);
+  const output = n(st.output);
+  const ram = n(st.reject) + n(st.alter) + n(st.missing);
+  const issued = n(st.issued);
+  const openWork = stage === "cutting" ? cuttingAccountableOpen(row) : Math.max(0, feed - output - ram);
+  const pendingIssue = Math.max(0, output - issued);
+  if (part.type === "cutting_pending" && !isProductionFileReleased(row)) return `Order ${fmt(row.order_qty)} · release file first`;
+  if (part.type === "cutting_pending") return `Feed ${fmt(feed)} · open ${fmt(openWork)} · pending issue ${fmt(pendingIssue)}`;
+  if (part.type === "with_dept") return `Feed ${fmt(feed)} · output ${fmt(output)} · open ${fmt(openWork)}`;
+  if (part.type === "ready_next") return `Output ${fmt(output)} · issued ${fmt(issued)} · pending ${fmt(pendingIssue)}${nextStage ? ` to ${stageLabel(nextStage)}` : ""}`;
+  if (part.type === "issued_forward") {
+    const next = nextStage ? sdata(row, nextStage) : null;
+    const nextAccounted = next ? n(next.output) + n(next.reject) + n(next.alter) + n(next.missing) : 0;
+    return `${fmt(issued)} feed sent${nextStage ? ` to ${stageLabel(nextStage)}` : ""}${nextStage ? ` · next open ${fmt(Math.max(0, issued - nextAccounted))}` : ""}`;
+  }
+  if (part.type === "ram") return `Feed ${fmt(feed)} · R/A/M ${fmt(ram)} · open ${fmt(openWork)}`;
+  return feed ? `Feed ${fmt(feed)} · open ${fmt(openWork)} · pending issue ${fmt(pendingIssue)}` : "";
+}
+
+function CurrentStatusLinks({ row, onEntry, onOpen, onRelease, compact=false }){
   const allParts = currentMovementStatusParts(row);
-  const parts = allParts.slice(0, compact ? 1 : 8);
+  const parts = allParts.slice(0, compact ? 4 : 10);
   if (!parts.length) return <button className="mt-primary-stage-card mt-dept-dispatch" onClick={(e)=>e.stopPropagation()} title="No active production status"><span><b>Closed</b><br/><span className="mt-small">Balanced</span></span><span className="big">100%</span></button>;
-  return <div className="mt-status-cell-wrap compact-wrap">{parts.map((p,idx)=><button key={`${p.type}-${p.stage}-${idx}`} className={`mt-status-link ${deptClass(p.stage)}`} onClick={(e)=>{ e.stopPropagation(); onEntry ? onEntry(row, p.stage, p.field || currentStatusEntryField(p)) : onOpen?.(p.stage,p); }} title={`${p.note || p["action"] || "Open DPR Entry"}. Click to open DPR Entry for ${stageLabel(p.stage)} · ${fieldLabel(p.field || currentStatusEntryField(p))}`}>
-    <span><span className="dept-name">{stageLabel(p.stage)}</span><br/><span className="mt-small">{p.label || shortStatusLabel(p)}</span></span>
+  return <div className="mt-status-cell-wrap compact-wrap">{parts.map((p,idx)=><button key={`${p.type}-${p.stage}-${idx}`} className={`mt-status-link ${compact ? "compact" : ""} ${deptClass(p.stage)}`} onClick={(e)=>{ e.stopPropagation(); if (p.type === "cutting_pending" && p.stage === "cutting" && !isProductionFileReleased(row) && onRelease) onRelease(row, "wip_current_status"); else onEntry ? onEntry(row, p.stage, p.field || currentStatusEntryField(p)) : onOpen?.(p.stage,p); }} title={p.type === "cutting_pending" && p.stage === "cutting" && !isProductionFileReleased(row) ? "Release production file to Cutting" : `${p.note || p["action"] || "Open DPR Entry"}. ${movementStatusMeta(row,p)}. Click to open DPR Entry for ${stageLabel(p.stage)} · ${fieldLabel(p.field || currentStatusEntryField(p))}`}>
+    <span><span className="dept-name">{stageLabel(p.stage)}</span><br/><span className="mt-small">{p.label || shortStatusLabel(p)}</span><br/><span className="mt-small">{movementStatusMeta(row,p)}</span></span>
     <span style={{textAlign:"right"}}><span className="dept-qty">{fmt(p.qty)}</span><br/><span className="dept-pct">{dualBaseText(row,p.qty)}</span></span>
-  </button>)}{compact && allParts.length>1 ? <div className="mt-current-split-note">Summary only · +{allParts.length-1} split in Route Progress</div> : allParts.length>1 ? <div className="mt-current-split-note">Current movement split · click to enter/edit DPR</div> : null}</div>;
+  </button>)}{compact && allParts.length>parts.length ? <div className="mt-current-split-note">Showing key feed/open/issue movements · +{allParts.length-parts.length} more in Route Progress</div> : allParts.length>parts.length ? <div className="mt-current-split-note">Current status includes feed/open/pending issue · +{allParts.length-parts.length} more in Route Progress</div> : <div className="mt-current-split-note">Status shows feed, open work and pending issue-forward</div>}</div>;
 }
 function RouteProgressSnapshot({ row, onOpen, compact=false }){
   const parts = routeProgressSnapshot(row).slice(0, compact ? 8 : 12);
@@ -1962,7 +2039,7 @@ function wipStageFilterText(row, stageKey){
   const c = cellBreakup(row, stageKey);
   if (c.skipped) return `${stageLabel(stageKey)} ${STAGE_BY_KEY[stageKey]?.short || ""} skip inactive route not active`;
   const st = sdata(row, stageKey);
-  const feed = stageKey === "cutting" ? n(row.order_qty) : stageFeed(row, stageKey);
+  const feed = stageKey === "cutting" ? cuttingBaseQty(row) : stageFeed(row, stageKey);
   const pct = feed > 0 ? Math.round((n(c.received) * 1000) / feed) / 10 : 0;
   return [
     stageLabel(stageKey), STAGE_BY_KEY[stageKey]?.short, c.note, `${pct}%`,
@@ -2749,7 +2826,7 @@ function Kpi({ label, value, note, tone }){
 function StageCell({ row, stageKey, onOpen, style=null }){
   const c = cellBreakup(row, stageKey);
   if (c.skipped) return <td style={style||undefined}><div className="mt-stage-cell"><span className="mt-chip mt-muted">Skip</span><div className="mt-cell-note">Route not active</div></div></td>;
-  const feed = stageKey === "cutting" ? n(row.order_qty) : stageFeed(row, stageKey);
+  const feed = stageKey === "cutting" ? cuttingBaseQty(row) : stageFeed(row, stageKey);
   const pct = feed > 0 ? Math.round((n(c.received) * 1000) / feed) / 10 : 0;
   return <td style={style||undefined} className={`mt-clickable-cell dept-focus ${deptClass(stageKey)}`} onClick={() => onOpen?.(row, stageKey)} title="Click for department detail / size-wise WIP entry">
     <div className={`mt-stage-cell dept-focus ${deptClass(stageKey)}`}>
@@ -3405,7 +3482,7 @@ function reconciliationBoardRows(rows, ledger=[]){
       .map(bucket => {
         const stage = bucket.stage;
         const st = sdata(row, stage);
-        const feed = stage === "cutting" ? n(row.order_qty) : stageFeed(row, stage);
+        const feed = stage === "cutting" ? cuttingBaseQty(row) : stageFeed(row, stage);
         return {
           stage,
           type: bucket.type,
@@ -3757,7 +3834,7 @@ function DashboardDrillDrawer({ drill, rows, ledger=[], onClose }){
   </div>;
 }
 
-function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
+function WipStatus({ rows, onOpen, onEntry, onRelease, clearTick=0 }){
   const [localSearch,setLocalSearch] = useState(()=>safeJsonLoad(uiStorageKey("wip_search"), ""));
   const [dept,setDept] = useState(()=>safeJsonLoad(uiStorageKey("wip_dept"), "all"));
   const [issue,setIssue] = useState(()=>safeJsonLoad(uiStorageKey("wip_issue"), "all"));
@@ -3911,12 +3988,12 @@ function WipStatus({ rows, onOpen, onEntry, clearTick=0 }){
       {filtered.map(row => { const rs = rowStatus(row); const sizeStage = selectedDeptForSize || rs.stage; const openDrill = () => openRowDrill(row, rs.stage || routeFor(row)[0] || "cutting"); return <React.Fragment key={row.id}>
         <tr>
           <td className={stickyClass(matrixSticky,"style","mt-clickable-cell")} style={{...colStyle("style"), ...(stickyStyle(matrixSticky,"style")||{})}} onClick={openDrill} title="Click to open selected/current department"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>{row.set_id ? (()=>{ const si=setPackInfo(row, rows); return <span className="mt-chip mt-purple" title="Set can only ship min(components)"><Layers size={11}/>Set {row.set_id}{si ? ` · pack ${fmt(si.cap)}${si.unmatched>0?` · ${fmt(si.unmatched)} unmatched`:""}` : ""}</span>; })() : null}<div className="mt-drill-hint">Open detail</div></div></div></td>
-          {visibleCols.status && <td className={stickyClass(matrixSticky,"status","mt-clickable-cell")} style={{...colStyle("status"), ...(stickyStyle(matrixSticky,"status")||{})}} onClick={openDrill}><PrimaryPendingStage row={row} onOpen={(stage)=>onOpen?.(row, stage)} onEntry={onEntry}/><div className="mt-small">Idle {rs.idle}d</div></td>}
+          {visibleCols.status && <td className={stickyClass(matrixSticky,"status","mt-clickable-cell")} style={{...colStyle("status"), ...(stickyStyle(matrixSticky,"status")||{})}} onClick={openDrill}><PrimaryPendingStage row={row} onOpen={(stage)=>onOpen?.(row, stage)} onEntry={onEntry} onRelease={onRelease}/><div className="mt-small">Idle {rs.idle}d</div></td>}
           {showCutActivity && <td className={stickyClass(matrixSticky,"routeProgress")} style={{...colStyle("routeProgress"), ...(stickyStyle(matrixSticky,"routeProgress")||{})}}><RouteProgressSnapshot row={row} compact={true} onOpen={(stage)=>onOpen?.(row, stage)}/></td>}
           {visibleCols.owner && <td className={stickyClass(matrixSticky,"owner","mt-clickable-cell")} style={{...colStyle("owner"), ...(stickyStyle(matrixSticky,"owner")||{})}} onClick={openDrill}><b>{rs.owner}</b>{rs.support ? <div className="mt-small">Support: {rs.support}</div> : null}</td>}
           {visibleCols.route && <td className={stickyClass(matrixSticky,"route","mt-clickable-cell")} style={{...colStyle("route"), ...(stickyStyle(matrixSticky,"route")||{})}} onClick={openDrill}><span className="mt-chip mt-info">{routeType(row)}</span><div style={{marginTop:4}}>{routeFor(row).map(k=><span key={k} className="mt-chip mt-muted" style={{margin:"0 3px 3px 0"}}>{STAGE_BY_KEY[k].short}</span>)}</div></td>}
           {visibleCols.stages && STAGES.map(s=><StageCell key={s.key} row={row} stageKey={s.key} onOpen={onOpen} style={colStyle(`stage:${s.key}`)}/>) }
-          {visibleCols.open && <td className="mt-clickable-cell" style={colStyle("open")} onClick={openDrill}><b>{fmt(rs.qty)}</b></td>}{visibleCols.idle && <td className="mt-clickable-cell" style={colStyle("idle")} onClick={openDrill}>{rs.idle}d</td>}{visibleCols.action && <td className="mt-clickable-cell" style={colStyle("action")} onClick={openDrill}>{rs.action}</td>}
+          {visibleCols.open && <td className="mt-clickable-cell" style={colStyle("open")} onClick={openDrill}><b>{fmt(rs.qty)}</b></td>}{visibleCols.idle && <td className="mt-clickable-cell" style={colStyle("idle")} onClick={openDrill}>{rs.idle}d</td>}{visibleCols.action && <td className="mt-clickable-cell" style={colStyle("action")} onClick={openDrill}>{!isProductionFileReleased(row) ? <button className="mt-btn primary" onClick={(e)=>{e.stopPropagation(); onRelease?.(row, "wip_matrix_action");}}>Release File</button> : rs.action}</td>}
         </tr>
         {sizeBreak && <tr className="mt-subrow"><td colSpan={matrixColumnCount}><SizeBreakupStrip row={row} stage={sizeStage}/></td></tr>}
       </React.Fragment>;})}
@@ -4065,7 +4142,7 @@ function confirmEntryChecks({ entryDate, changes, stage, field, reason }){
   return window.confirm(`Confirm production entry before saving\n\n${notes.map((x,i)=>`${i+1}. ${x}`).join("\n")}\n\nStage: ${stageLabel(stage)}\nField: ${fieldLabel(field)}\nEntry date: ${entryDate}${reason ? `\nReason: ${reason}` : ""}`);
 }
 function cumulativeAllowedTotal(row, stage, field, ledger=null, asOfDate=null){
-  if (stage === "cutting") return n(row.order_qty) * (1 + cuttingToleranceFrac());
+  if (stage === "cutting") return cuttingBaseQty(row) * (1 + cuttingToleranceFrac());
   const hasDate = !!(ledger && asOfDate);
   const feed = hasDate ? feedAsOfDate(row, ledger, stage, asOfDate).qty : stageFeed(row, stage);
   if (["received","reject","alter","missing"].includes(field)) return feed;
@@ -4147,8 +4224,8 @@ function fieldQtyAsOfDate(row, ledger, stage, field, asOfDate){
 }
 function feedAsOfDate(row, ledger, stage, asOfDate){
   if (stage === "cutting") {
-    const sizes = normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row));
-    const total = sizeMapTotal(sizes) || n(row.order_qty);
+    const sizes = fileReleaseSizeQtyMap(row);
+    const total = qtyMapTotal(sizes) || cuttingBaseQty(row);
     return { hasLedger:false, sizes, qty:total };
   }
   const route = routeFor(row);
@@ -4243,6 +4320,7 @@ function validateDailyEntry(row, stage, field, getVal, ledger=null, entryDate=nu
   const messages = [];
   const sizeEntries = Object.fromEntries(sizesFor(row).map(size=>[size, getDailyEntryQty(getVal,row,size)]));
   if (!entryTotal) return { allowed:cumulativeAllowedTotal(row, stage, field === "alter_clear" ? "output" : field, ledger, entryDate), entryTotal:0, oldTotal:0, updatedTotal:0, blocked:false, messages, overCut:false };
+  if (stage === "cutting" && !isProductionFileReleased(row)) messages.push("Production file is not released to Cutting yet. Release the file first from Live WIP, DPR Entry, or Styles.");
   if (field === "alter_clear") {
     const oldAlterAsOf = ledger && entryDate ? fieldQtyAsOfDate(row, ledger, stage, "alter", entryDate) : { sizes:Object.fromEntries(sizeMatrix(row, stage, "alter").map(x=>[x.size,n(x.qty)])), qty:sizeMatrix(row, stage, "alter").reduce((a,x)=>a+n(x.qty),0), hasLedger:false };
     const oldOutputAsOf = ledger && entryDate ? fieldQtyAsOfDate(row, ledger, stage, "output", entryDate) : { qty:sizeMatrix(row, stage, "output").reduce((a,x)=>a+n(x.qty),0) };
@@ -4250,7 +4328,7 @@ function validateDailyEntry(row, stage, field, getVal, ledger=null, entryDate=nu
     const oldAlter = n(oldAlterAsOf.qty);
     const oldOutput = n(oldOutputAsOf.qty);
     const updatedOutput = oldOutput + entryTotal;
-    const feed = stage === "cutting" ? { qty:n(row.order_qty), sizes:normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row)) } : feedAsOfDate(row, ledger, stage, entryDate);
+    const feed = stage === "cutting" ? { qty:cuttingBaseQty(row), sizes:fileReleaseSizeQtyMap(row) } : feedAsOfDate(row, ledger, stage, entryDate);
     const st = sdata(row, stage);
     const updatedRam = n(st.reject) + Math.max(0, oldAlter - entryTotal) + n(st.missing);
     if (overSizes.length) messages.push(`Alter clear above pending alter as-of ${entryDate} in size(s): ${overSizes.join(", ")}`);
@@ -4264,7 +4342,7 @@ function validateDailyEntry(row, stage, field, getVal, ledger=null, entryDate=nu
   const updatedTotal = oldTotal + entryTotal;
   const validation = validateCumulativeEdit(row, stage, field, updatedTotal, ledger, entryDate);
   const dateMessages = dateLevelQuantityIssues(row, ledger, stage, field, entryDate, sizeEntries);
-  const overCut = stage === "cutting" && updatedTotal > n(row.order_qty);
+  const overCut = stage === "cutting" && updatedTotal > cuttingBaseQty(row);
   return { ...validation, messages:[...(validation.messages || []), ...dateMessages], dateMessages, p0DateViolation:dateMessages.length>0, entryTotal, oldTotal, updatedTotal, blocked:validation.blocked || dateMessages.length>0, overCut };
 }
 function applyDailySizeEntries({ rows, targetRows, stage, field, getVal }){
@@ -4608,7 +4686,7 @@ Save locally in this browser anyway? Other users will not see it until Supabase 
   </div>;
 }
 
-function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave }){
+function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onRelease, onSharedSave }){
   const [stage, setStage] = useState(()=>safeJsonLoad(uiStorageKey("entry_stage"), "stitching"));
   const [field, setField] = useState(()=>safeJsonLoad(uiStorageKey("entry_field"), "output"));
   const [entryDate, setEntryDate] = useState(()=>safeJsonLoad(uiStorageKey("entry_date"), defaultEntryDate(ledger)));
@@ -4648,7 +4726,7 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onSharedSave
   useEffect(()=>{ setSelectedRowId(""); setStyleEditKey(null); setStyleDeptFilter("all"); }, [viewMode]);
 
   const allStageRows = rows.filter(r => routeFor(r).includes(stage));
-  const activeRows = allStageRows.filter(r => entryOpenQty(r, stage, field) > 0);
+  const activeRows = allStageRows.filter(r => entryOpenQty(r, stage, field) > 0 || (stage === "cutting" && field === "output" && !isProductionFileReleased(r)));
 
   function entryMapForRowDate(row, date){
     const matchType = String(entryTypeForField(field)).toLowerCase();
@@ -4932,6 +5010,7 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
         </div>
       </details>}
       {risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated entries are report flags only. Quantity/feed/P0 sequence clashes still appear in Reconcile Review.</div>}
+      {stage === "cutting" && field === "output" && activeRows.some(r=>!isProductionFileReleased(r)) ? <div className="mt-release-card no-print"><div className="title">Production file release needed</div><div className="mt-small">Rows below with 0 open are not released yet. Click Release File beside the style; cutting output stays blocked until release.</div></div> : null}
       {!operatorSimpleMode && <div className="mt-toggle-row" style={{marginTop:8}}>
         <span className="mt-toolbar-label">View</span>
         <button className={`mt-btn ${viewMode==="date"?"active":"ghost"}`} onClick={()=>setViewMode("date")}>Date view</button>
@@ -4969,7 +5048,7 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
           <td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>
             {todayMap.total ? <div className="mt-today-badge">Entered today: {fmt(todayMap.total)}</div> : null}
             <div className="mt-entry-row-actions">
-              <button className="mt-btn" onClick={()=>fillRowOpen(row)}>Fill open</button>
+              {stage === "cutting" && !isProductionFileReleased(row) ? <button className="mt-btn primary" onClick={()=>onRelease?.(row, "dpr_entry")}>Release File</button> : <button className="mt-btn" onClick={()=>fillRowOpen(row)}>Fill open</button>}
               <button className="mt-btn ghost" onClick={()=>clearRow(row)}>Clear</button>
               {!operatorSimpleMode && todayMap.total ? <button className={`mt-btn ghost ${isCorrecting?"active":""}`} onClick={()=>isCorrecting?setCorrectRowId(null):beginCorrection(row)}>{isCorrecting?"Close edit":"Edit today's entry"}</button> : null}
             </div>
@@ -4985,7 +5064,7 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
           </td> : <td key={sz} className="mt-small">—</td>)}
           <td><b>{fmt(rowNew)}</b></td>
           <td><b>{fmt(rowRemaining)}</b></td>
-          <td>{v.blocked ? <span className="mt-chip mt-late">Blocked</span> : v.overCut ? <span className="mt-chip mt-purple">Extra cut</span> : v.entryTotal ? <span className="mt-chip mt-warn">Ready</span> : <span className="mt-chip mt-ok">OK</span>}
+          <td>{stage === "cutting" && !isProductionFileReleased(row) ? <span className="mt-chip mt-warn">Release file first</span> : v.blocked ? <span className="mt-chip mt-late">Blocked</span> : v.overCut ? <span className="mt-chip mt-purple">Extra cut</span> : v.entryTotal ? <span className="mt-chip mt-warn">Ready</span> : <span className="mt-chip mt-ok">OK</span>}
             {v.blocked ? <div className="mt-small">{v.messages?.join("; ")}</div> : null}
           </td>
         </tr>
@@ -7990,7 +8069,7 @@ function SimpleTable({ title, sub, rows, empty, onRowClick, exportName="" }){
   return <div className={`mt-card mt-readable-table mt-readable-${type}`}><div className="mt-section"><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{infoSub}</div>{canExport ? <button className="mt-btn primary no-print" style={{marginTop:8}} onClick={()=>exportXlsx(`${exportName}_${today()}.xlsx`, [{ name:title, rows:rawRows }])}><Download size={14}/>Export detailed table</button> : null}</div><div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{friendlyTableHeader(c)}</th>)}</tr></thead><tbody>{displayRows.length ? displayRows.map((r,i)=><tr key={i} className={onRowClick ? "drillable" : ""} onClick={()=>onRowClick?.(rawRows[i] || r)}>{cols.map(c=>{ const val = r[c]; return <td key={c} className={simpleTableCellTone(c,val)}>{typeof val === "number" ? fmt(val) : String(val === undefined || val === null ? "" : val)}</td>; })}</tr>) : <tr><td colSpan={Math.max(1,cols.length)} style={{padding:18}}>{empty}</td></tr>}</tbody></table></div>{rawRows.length && displayRows !== rawRows ? <div className="mt-table-note no-print">Showing simplified manager-readable columns. Export keeps the full audit/detail data.</div> : null}</div>;
 }
 
-function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose, onOpenRegister, onOpenStyle, onSharedSave }){
+function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose, onOpenRegister, onOpenStyle, onRelease, onSharedSave }){
   const rs = rowStatus(row);
   const stage = stageKey || rs.stage;
   const route = routeFor(row);
@@ -7998,7 +8077,7 @@ function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose
   const prevStageForFeed = stageIdx > 0 ? route[stageIdx - 1] : null;
   const st = sdata(row,stage);
   const c = cellBreakup(row,stage);
-  const feed = stage === "cutting" ? n(row.order_qty) : stageFeed(row,stage);
+  const feed = stage === "cutting" ? cuttingBaseQty(row) : stageFeed(row,stage);
   const readyToIssue = Math.max(0, n(st.output) - n(st.issued));
   const rejectQty = n(st.reject);
   const alterQty = n(st.alter);
@@ -8036,14 +8115,15 @@ function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose
   }
   return <div className="mt-drawer"><div className="mt-drawer-head"><div><div style={{fontFamily:"'Archivo',sans-serif", fontSize:20, fontWeight:800}}>{stageLabel(stage)} · {row.style_no}</div><div className="mt-sub">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div></div><button className="mt-btn" onClick={onClose}><X size={16}/></button></div><div className="mt-drawer-body">
     <div className="mt-entry-highlight"><strong>Focused WIP cell: {stageLabel(stage)}</strong><div className="mt-context-strip"><span className="mt-chip mt-info">Selected dept only</span><span className="mt-chip mt-muted">Order {row.order_no}</span><span className="mt-chip mt-muted">{row.colour} · {row.component}</span>{primaryBucket && <span className={`mt-chip ${statusClass(primaryBucket.tone)}`}>{primaryBucket.status}</span>}</div><div className="mt-panel-sub" style={{marginTop:6}}>Only the clicked department's breakup is shown first. Full style/route detail is collapsed below.</div></div>
+    {stage === "cutting" && !isProductionFileReleased(row) ? <div className="mt-release-card no-print"><div className="title">Production file not released</div><div className="mt-small">Cutting feed is locked at 0 until the file is released. This prevents accidental cutting output before the production file handover.</div><button className="mt-btn primary" onClick={()=>onRelease?.(row, "wip_detail")}>Release Production File</button></div> : stage === "cutting" ? <div className="mt-release-card no-print"><div className="title">{fileReleaseStatusText(row)}</div><div className="mt-small">Released size feed is used as Cutting feed and DPR cap.</div><button className="mt-btn ghost" onClick={()=>onRelease?.(row, "wip_detail_edit")}>Edit Release</button></div> : null}
     <div className="mt-grid" style={{gridTemplateColumns:"repeat(4,minmax(0,1fr))", marginBottom:12}}>
-      <Kpi label={stage === "cutting" ? "Order Qty" : "Feed to Dept"} value={fmt(feed)} note={stage === "cutting" ? "Cutting base" : "Previous dept issued/accepted"}/>
+      <Kpi label={stage === "cutting" ? "Released Feed" : "Feed to Dept"} value={fmt(feed)} note={stage === "cutting" ? (isProductionFileReleased(row) ? "Production file released to Cutting" : "Not released yet") : "Previous dept issued/accepted"}/>
       <Kpi label="Completed / Output" value={`Good ${fmt(n(st.output))}`} note={<span>Reject {fmt(rejectQty)} · Missing {fmt(missingQty)} · Alter {fmt(alterQty)}<br/>Accounted {fmt(accountedQty)} / {fmt(feed)}</span>} tone={ramQty ? "warn" : "ok"}/>
       <Kpi label="Open / Tail Action" value={fmt(c.open)} note={<span>Work open {fmt(c.open)} · Tail {fmt(tailQty)}<br/>Use R/A/M rows if balance is not production.</span>} tone={c.open || tailQty ? "warn" : "ok"}/>
       <Kpi label="Ready to Issue" value={fmt(readyToIssue)} note="Completed but not moved forward" tone={readyToIssue?"info":"ok"}/>
     </div>
     <div className="mt-section mt-card" style={{marginBottom:12}}><h3 className="mt-panel-title">{stageLabel(stage)} breakup</h3><div className="mt-context-strip"><span className="mt-chip mt-ok">Done {fmt(c.received)}</span><span className="mt-chip mt-warn">Open {fmt(c.open)}</span><span className="mt-chip mt-late">R/A/M {fmt(c.ram)}</span>{c.shortClose ? <span className="mt-chip mt-purple">Short Closed {fmt(c.shortClose)}</span> : null}{c.extra ? <span className="mt-chip mt-purple">Extra/Over {fmt(c.extra)}</span> : null}<span className="mt-chip mt-info">Owner {primaryBucket?.owner || stageOwner(stage)}</span></div>{stage==="cutting" && c.open>0 ? <div style={{marginTop:10}}><button className="mt-btn ghost" onClick={shortCloseCutting}>Short close cutting balance</button><div className="mt-small">Use only when management approves cutting less than order qty. This removes balance from Cutting Pending; it does not add production.</div></div> : null}</div>
-    <div className="mt-correction-control no-print"><h3 className="mt-panel-title">Correction control — feed and output together</h3><div className="mt-panel-sub">Use this when WIP says conservation/feed/output mismatch. Correct the source that is wrong: cutting feed comes from Style Entry order-size qty; other department feed comes from previous department Issue Forward; output/R/A/M is corrected in Register.</div><div className="mt-correction-control-grid"><div className="mt-correction-control-card"><div className="label">Feed source</div><div className="value">{fmt(feed)}</div><div className="mt-small">{stage === "cutting" ? "Order qty / cutting file release" : `${stageLabel(prevStageForFeed)} issue-forward to ${stageLabel(stage)}`}</div>{stage === "cutting" ? <button className="mt-btn ghost" onClick={()=>onOpenStyle?.(row)}><Shirt size={14}/>Edit Style / Cutting Feed</button> : <button className="mt-btn ghost" onClick={()=>onOpenRegister?.(row, prevStageForFeed || stage, "Dept Issue Forward")}><FileSpreadsheet size={14}/>Correct Feed Source</button>}</div><div className="mt-correction-control-card"><div className="label">Output / R-A-M</div><div className="value">{fmt(n(st.output))} / {fmt(ramQty)}</div><div className="mt-small">Good output plus rejection/missing/alter in selected department</div><button className="mt-btn ghost" onClick={()=>openRegisterForEdit("all")}><FileSpreadsheet size={14}/>Correct Output / R-A-M</button></div><div className="mt-correction-control-card"><div className="label">Size clash repair</div><div className="value">Register</div><div className="mt-small">Detail/Edit now shows ledger-only sizes also, so old XL/M/L clashes can be corrected to zero even if not in master size set.</div><button className="mt-btn ghost" onClick={()=>openRegisterForEdit("all")}><FileSpreadsheet size={14}/>Open Correction Grid</button></div></div></div>
+    <div className="mt-correction-control no-print"><h3 className="mt-panel-title">Correction control — feed and output together</h3><div className="mt-panel-sub">Use this when WIP says conservation/feed/output mismatch. Correct the source that is wrong: cutting feed comes from Style Entry order-size qty; other department feed comes from previous department Issue Forward; output/R/A/M is corrected in Register.</div><div className="mt-correction-control-grid"><div className="mt-correction-control-card"><div className="label">Feed source</div><div className="value">{fmt(feed)}</div><div className="mt-small">{stage === "cutting" ? "Order qty / cutting file release" : `${stageLabel(prevStageForFeed)} issue-forward to ${stageLabel(stage)}`}</div>{stage === "cutting" ? <><button className="mt-btn primary" onClick={()=>onRelease?.(row, "wip_correction_control")}><CheckCircle2 size={14}/>Release / Edit File</button><button className="mt-btn ghost" onClick={()=>onOpenStyle?.(row)}><Shirt size={14}/>Edit Style Master</button></> : <button className="mt-btn ghost" onClick={()=>onOpenRegister?.(row, prevStageForFeed || stage, "Dept Issue Forward")}><FileSpreadsheet size={14}/>Correct Feed Source</button>}</div><div className="mt-correction-control-card"><div className="label">Output / R-A-M</div><div className="value">{fmt(n(st.output))} / {fmt(ramQty)}</div><div className="mt-small">Good output plus rejection/missing/alter in selected department</div><button className="mt-btn ghost" onClick={()=>openRegisterForEdit("all")}><FileSpreadsheet size={14}/>Correct Output / R-A-M</button></div><div className="mt-correction-control-card"><div className="label">Size clash repair</div><div className="value">Register</div><div className="mt-small">Detail/Edit now shows ledger-only sizes also, so old XL/M/L clashes can be corrected to zero even if not in master size set.</div><button className="mt-btn ghost" onClick={()=>openRegisterForEdit("all")}><FileSpreadsheet size={14}/>Open Correction Grid</button></div></div></div>
     <SizeCumulativeEditor row={row} rows={rows} setRows={setRows} ledger={ledger} setLedger={setLedger} stage={stage} initialField={c.open ? "output" : readyToIssue ? "issued" : "output"} source="wip_view_cell_day_entry" onSharedSave={onSharedSave} />
     <div className="mt-section no-print" style={{paddingLeft:0,paddingRight:0}}><button className="mt-btn ghost" onClick={()=>openRegisterForEdit("all")}><FileSpreadsheet size={14}/>Open Register to edit this dept history</button><span className="mt-small" style={{marginLeft:8}}>Register opens filtered to this order/style/department; use Correct for audit-safe edits.</span></div>
     <details className="mt-fold" open={false}><summary>View feed history summary for {stageLabel(stage)}</summary><div className="mt-section no-print" style={{paddingLeft:0,paddingRight:0}}>{stage === "cutting" ? <button className="mt-btn ghost" onClick={()=>onOpenStyle?.(row)}><Shirt size={14}/>Open Style Entry to edit cutting feed/order qty</button> : <button className="mt-btn ghost" onClick={()=>onOpenRegister?.(row, prevStageForFeed || stage, "Dept Issue Forward")}><FileSpreadsheet size={14}/>Open Register to correct feed source</button>}</div><SimpleTable title={`${stageLabel(stage)} feed history`} sub="Feed and output are shown separately so the wrong side can be corrected. Cutting feed is the style/order size breakup; downstream feed is previous department Issue Forward." rows={receivingRows} empty="No feed / issue history found yet." /></details>
@@ -8051,6 +8131,34 @@ function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose
     <details className="mt-fold"><summary>View {stageLabel(stage)} size breakup</summary><SimpleTable title={`${stageLabel(stage)} size-wise open quantities`} sub="Only the selected/clicked department. Use this to see what is open by size before entering." rows={sizeRows} empty="No size rows." /></details>
     <details className="mt-fold"><summary>View full style detail / route / history</summary><div className="mt-section"><LazyStylePhoto row={row} large/><div className="mt-grid" style={{gridTemplateColumns:"repeat(3,minmax(0,1fr))", marginBottom:12}}><Kpi label="Overall Status" value={rs.status} note={rs.action} tone={rs.tone}/><Kpi label="Overall Owner" value={rs.owner} note={rs.support || "Primary owner"}/><Kpi label="Overall Open Qty" value={fmt(rs.qty)} note={`${rs.idle || 0} days idle`}/></div></div><SimpleTable title="Open buckets for selected department" sub="Owner chase items for this department." rows={buckets.map(b=>({ Status:b.status, Qty:b.qty, Percent:`${bucketPct(row,b)}%`, Owner:b.owner, Support:b.support, Action:b.action, Idle:`${b.idle||0}d` }))} empty="No open bucket for this department." /><div style={{height:12}}/><SimpleTable title="Full current status drilldown" sub="Full status logic across this style/component." rows={statusBreakdown(row).map(b=>({ Status:b.status, Stage:stageLabel(b.stage), Qty:b.qty, Percent:`${bucketPct(row,b)}%`, Owner:b.owner, Support:b.support, Action:b.action, Idle:`${b.idle||0}d` }))} empty="No open status bucket." /></details>
   </div></div>;
+}
+
+
+function ProductionFileReleaseModal({ row, source="", onClose, onSave }){
+  const [qty,setQty] = useState(()=>String(fileReleaseQty(row) || n(row?.order_qty) || ""));
+  const [date,setDate] = useState(()=>fileReleaseDate(row) || today());
+  const [reason,setReason] = useState(()=>isProductionFileReleased(row) ? "Release correction / update" : "Production file released to Cutting");
+  const cleanQty = n(qty);
+  const previewRow = { ...(row || {}), file_released_qty:cleanQty, file_released_date:date };
+  const releaseMap = fileReleaseSizeQtyMap(previewRow);
+  const releaseTotal = qtyMapTotal(releaseMap);
+  const orderTotal = n(row?.order_qty);
+  const overAllowed = cleanQty > orderTotal * (1 + cuttingToleranceFrac());
+  const existingCut = n(sdata(row,"cutting").output) + loss(sdata(row,"cutting"));
+  const belowExisting = cleanQty > 0 && existingCut > cleanQty;
+  return <div className="mt-update-backdrop no-print"><div className="mt-release-modal"><div className="head"><div><div style={{fontFamily:"'Archivo',sans-serif", fontWeight:800, fontSize:18}}>Release Production File to Cutting</div><div className="mt-sub">{row?.style_no} · {row?.order_no} · {row?.colour} · {row?.component}</div></div><button className="mt-btn" onClick={onClose}><X size={16}/></button></div>
+    <div className="body">
+      <div className="mt-speed-note"><b>Meaning:</b> this is the official handover to Cutting. After save, Cutting feed and DPR caps come from this release quantity. It is not a stitching/printing issue-forward row.</div>
+      <div className="mt-two">
+        <div><label className="mt-small">Release qty</label><input className="mt-input mandatory" type="number" value={qty} onChange={e=>setQty(e.target.value)} /></div>
+        <div><label className="mt-small">Release date</label><input className="mt-input mandatory" type="date" value={date} onChange={e=>setDate(e.target.value)} /></div>
+      </div>
+      <div><label className="mt-small">Reason / handover note</label><input className="mt-input" style={{width:"100%"}} value={reason} onChange={e=>setReason(e.target.value)} placeholder="Production file released to Cutting" /></div>
+      <div className="mt-context-strip"><span className="mt-chip mt-muted">Order {fmt(orderTotal)}</span><span className={`mt-chip ${isProductionFileReleased(previewRow)?"mt-ok":"mt-warn"}`}>{fileReleaseStatusText(previewRow)}</span><span className="mt-chip mt-info">Generated size feed {fmt(releaseTotal)}</span>{overAllowed ? <span className="mt-chip mt-late">Above tolerance</span> : null}{belowExisting ? <span className="mt-chip mt-late">Below existing cut output</span> : null}</div>
+      {belowExisting ? <div className="mt-locked-note">Existing cutting accounted qty is {fmt(existingCut)}, which is above this release qty. Increase release qty or correct old cutting output/R/A/M first.</div> : null}
+      <div><h3 className="mt-panel-title">Released size feed preview</h3><div className="mt-panel-sub">Size split is derived from the style order size breakup and scaled to the released qty. For exact size changes, edit Style size breakup first, then release.</div><div className="mt-release-size-grid" style={{marginTop:8}}>{sizesFor(row).map(size=><div className="mt-release-size-cell" key={size}><b>{fmt(releaseMap[size])}</b><span>{size}</span></div>)}</div></div>
+      <div style={{display:"flex", justifyContent:"flex-end", gap:8, flexWrap:"wrap"}}><button className="mt-btn ghost" onClick={onClose}>Cancel</button><button className="mt-btn primary" disabled={!cleanQty || belowExisting} onClick={()=>onSave?.({ qty:cleanQty, date, reason, source })}><CheckCircle2 size={14}/>Save Release</button></div>
+    </div></div></div>;
 }
 
 function sanitizePhotoName(text){
@@ -8688,7 +8796,7 @@ function styleTemplateRows(){
   ];
 }
 
-function StyleManager({ rows, allRows, setRows, ledger, setLedger, focus, clearTick=0, onSharedSave }){
+function StyleManager({ rows, allRows, setRows, ledger, setLedger, focus, clearTick=0, onRelease, onSharedSave }){
   const emptyForm = {
     id:"", order_no:"", style_no:"", buyer:"", colour:"", component:"", set_components:"", set_piece_count:"", order_qty:"", file_released_qty:"", file_released_date:"", order_size_qty:{}, size_set:"alpha", size_ratio:"", set_id:"", line:"", dispatch_reject_allowed:false,
     print_required:false, embroidery_required:false, priority:"Normal", difficulty:"Normal", photo_url:"", photo_folder_url:""
@@ -9049,7 +9157,7 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
     </div>
     <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Style List / Edit / Hard Delete</h3><div className="mt-panel-sub">Search, edit, delete unused rows, or hard delete demo rows with activity. For live production, hard delete should be replaced by archive/approval governance.</div></div>
       <div className="mt-section no-print"><div className="mt-toolbar"><Search size={14}/><input className="mt-input" value={q} onChange={e=>setQ(e.target.value)} placeholder="Search order / style / buyer / colour"/><span className="mt-chip mt-muted">{tableRows.length} rows</span></div></div>
-      <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style</th><th>Order</th><th>Buyer</th><th>Colour</th><th>Component</th><th>Qty</th><th>Route</th><th>Activity</th><th>Action</th></tr></thead><tbody>{tableRows.map(row=>{ const hasLedger=(ledger||[]).some(x=>ledgerRowMatchesStyle(x,row)); const hasActivity=styleHasStageActivity(row)||hasLedger; return <tr key={row.id}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.set_id ? `Set ${row.set_id} · ` : ""}{row.size_set}{row.size_ratio ? ` · Ratio ${row.size_ratio}` : ""}</div></div></div></td><td>{row.order_no}</td><td>{row.buyer}</td><td>{row.colour}</td><td>{row.component}</td><td><b>{fmt(row.order_qty)}</b><div className="mt-small">{fileReleaseStatusText(row)}</div><div className="mt-small">{explicitOrderSizeQtyTotal(row) ? sizesFor(row).map(sz=>`${sz} ${fmt(normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row))[sz]||0)}`).join(" · ") : <span style={{color:"var(--fg-warn)", fontWeight:800}}>Size breakup missing</span>}</div></td><td>{routeFor(row).map(stageLabel).join(" → ")}</td><td>{hasActivity ? <span className="mt-chip mt-warn">Has activity</span> : <span className="mt-chip mt-ok">Unused</span>}</td><td><button className="mt-btn" onClick={()=>edit(row)}>Edit</button> <button className="mt-btn ghost" disabled={busy} onClick={()=>remove(row)}>{hasActivity ? "Hard Delete" : "Delete"}</button>{hasActivity && <div className="mt-small">Demo cleanup only; removes matching ledger locally.</div>}</td></tr>; })}</tbody></table></div>
+      <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style</th><th>Order</th><th>Buyer</th><th>Colour</th><th>Component</th><th>Qty</th><th>Route</th><th>Activity</th><th>Action</th></tr></thead><tbody>{tableRows.map(row=>{ const hasLedger=(ledger||[]).some(x=>ledgerRowMatchesStyle(x,row)); const hasActivity=styleHasStageActivity(row)||hasLedger; return <tr key={row.id}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.set_id ? `Set ${row.set_id} · ` : ""}{row.size_set}{row.size_ratio ? ` · Ratio ${row.size_ratio}` : ""}</div></div></div></td><td>{row.order_no}</td><td>{row.buyer}</td><td>{row.colour}</td><td>{row.component}</td><td><b>{fmt(row.order_qty)}</b><div className="mt-small">{fileReleaseStatusText(row)}</div><div className="mt-small">{explicitOrderSizeQtyTotal(row) ? sizesFor(row).map(sz=>`${sz} ${fmt(normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row))[sz]||0)}`).join(" · ") : <span style={{color:"var(--fg-warn)", fontWeight:800}}>Size breakup missing</span>}</div></td><td>{routeFor(row).map(stageLabel).join(" → ")}</td><td>{hasActivity ? <span className="mt-chip mt-warn">Has activity</span> : <span className="mt-chip mt-ok">Unused</span>}</td><td><button className="mt-btn primary" onClick={()=>onRelease?.(row, "styles_list")}>{isProductionFileReleased(row) ? "Edit Release" : "Release File"}</button> <button className="mt-btn" onClick={()=>edit(row)}>Edit</button> <button className="mt-btn ghost" disabled={busy} onClick={()=>remove(row)}>{hasActivity ? "Hard Delete" : "Delete"}</button>{hasActivity && <div className="mt-small">Demo cleanup only; removes matching ledger locally.</div>}</td></tr>; })}</tbody></table></div>
     </div>
   </div>;
 }
@@ -9290,6 +9398,7 @@ export default function App(){
   const [registerFocus,setRegisterFocus] = useState(null);
   const [styleFocus,setStyleFocus] = useState(null);
   const [entryFocus,setEntryFocus] = useState(null);
+  const [releaseFocus,setReleaseFocus] = useState(null);
   const [notice,setNotice] = useState(null);
   const [sharedSync,setSharedSync] = useState(()=>hasValidSupabaseEnv() ? { tone:"warn", text:"Shared sync starting…" } : { tone:"late", text:"Supabase not configured" });
   const [planSaveState,setPlanSaveState] = useState(()=>hasValidSupabaseEnv() ? { tone:"warn", text:"Plan sync starting…" } : { tone:"warn", text:"Plan browser-only" });
@@ -9301,6 +9410,7 @@ export default function App(){
   const [showLogin,setShowLogin] = useState(()=>{ const p=currentUserProfile(); return !p.name || !emailLooksValid(p.email) || (p.access_status && p.access_status !== "approved"); });
   const [presenceRows,setPresenceRows] = useState([]);
   const presenceChannelRef = useRef(null);
+  useEffect(()=>{ setProductionAppBrowserIdentity(); }, []);
   useEffect(()=>{ safeJsonSave(LOCAL_ROWS_KEY, rows); }, [rows]);
   useEffect(()=>{ if (userProfile?.name && emailLooksValid(userProfile.email) && (!userProfile.access_status || userProfile.access_status === "approved")) { saveCurrentUserProfile(userProfile); upsertProductionAppUser(userProfile); recordUserSession("app_open", userProfile, { tab }); } }, [userProfile?.name, userProfile?.role, userProfile?.department, userProfile?.access_status]);
   useEffect(()=>{ safeJsonSave(LOCAL_LEDGER_KEY, ledger); }, [ledger]);
@@ -9511,6 +9621,36 @@ Continue?`);
     setSharedSync({ tone:"ok", text:`${label} saved to Supabase · refreshing shared data…` });
     setTimeout(()=>pullSharedData(true, `${label} after-save refresh`), 700);
   }
+  function openReleaseFromAnyScreen(row, source=""){
+    if (!row) return;
+    setReleaseFocus({ row, source, ts:Date.now() });
+  }
+  async function saveProductionFileRelease(row, payload={}){
+    const permission = requireCurrentPermission("production.edit_styles", "release production file to Cutting");
+    if (permission) { setNotice({ tone:"late", text:permission.error.message }); return; }
+    const qty = n(payload.qty);
+    const date = String(payload.date || today()).slice(0,10);
+    const reason = String(payload.reason || "Production file released to Cutting").trim();
+    if (!row || !qty || qty <= 0) { setNotice({ tone:"late", text:"Release qty must be more than 0." }); return; }
+    if (qty > n(row.order_qty) * (1 + cuttingToleranceFrac())) {
+      const ok = window.confirm(`Released qty ${fmt(qty)} is above order qty ${fmt(row.order_qty)} + cutting tolerance ${PROD_SETTINGS.cuttingTolerancePct}%. Continue only if approved.`);
+      if (!ok) return;
+    }
+    const key = styleCompositeKey(row);
+    const baseRow = rows.find(r=>styleCompositeKey(r)===key) || row;
+    const calcRow = calcRows.find(r=>styleCompositeKey(r)===key) || row;
+    const updatedBase = { ...baseRow, file_released_qty:qty, file_released_date:date };
+    const updatedForSave = { ...calcRow, file_released_qty:qty, file_released_date:date };
+    setRows(prev=>prev.map(r=>styleCompositeKey(r)===key ? { ...r, file_released_qty:qty, file_released_date:date } : r));
+    setReleaseFocus(null);
+    setNotice({ tone:"warn", text:`Saving production file release for ${row.style_no} · ${fmt(qty)} pcs…` });
+    const result = await robustUpsertOrdersToSupabase([updatedForSave]);
+    if (result?.error) { setNotice({ tone:"late", text:`Release saved locally, Supabase failed: ${result.error.message}` }); return; }
+    if (result?.warning || result?.skipped) { setNotice({ tone:"warn", text:`Release saved locally only: ${result.warning || "Supabase skipped"}` }); return; }
+    recordProductionAudit("production_file_release", { table_name:"production_orders", order_no:row.order_no, style_no:row.style_no, colour:row.colour, component:row.component, entry_type:"production_file_release", entry_date:date, qty, source:payload.source || releaseFocus?.source || "Release modal", metadata:{ reason, previous_qty:fileReleaseQty(baseRow), previous_date:fileReleaseDate(baseRow), released_size_qty:fileReleaseSizeQtyMap(updatedBase) } });
+    setNotice({ tone:"ok", text:`Production file released: ${row.style_no} · ${fmt(qty)} pcs · ${date}. Cutting feed is now active.` });
+    handleSharedSave(result, "Production file release");
+  }
   async function seedSupabase(){
     if(!hasValidSupabaseEnv()){ setNotice({tone:"warn", text:supabaseConfigWarning()}); return; }
     try {
@@ -9611,7 +9751,7 @@ Continue?`);
   return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
     <style>{FONT + CSS}</style>
     <LoginDialog open={showLogin} force={!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
-    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Dashboard production views are active: daily/weekly department output, line output, R/A/M % vs output, cleaner WIP history, and plan actuals now read only from DPR ledger.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
+    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Production File Release is active in Live WIP, DPR Entry and Styles. Cutting feed now comes from released file qty.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
     <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Review · Reports. Supabase-first autosave · email login · audit/cell history · Excel-like exports.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className="mt-chip mt-info">{presenceSummaryText(presenceRows)}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${navCollapsed?"active":"ghost"}`} onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand left navigation"><Layers size={14}/>{navCollapsed?"Expand tabs":"Collapse tabs"}</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={recalculateStageQtyFromLedger} title="Admin recovery: rebuilds production_orders.stage_qty from production_entries ledger. Rows without ledger are left unchanged."><RefreshCw size={14}/>Recalc Totals</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div></div><PresenceStrip peers={presenceRows}/></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
@@ -9623,13 +9763,13 @@ Continue?`);
       <div className="mt-tab-panel" style={{display:tab==="dashboard"?"block":"none"}} aria-hidden={tab!=="dashboard"}><Dashboard rows={visibleRows} ledger={ledger} planRows={planRows} onDrill={setDashboardDrill} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="manager"?"block":"none"}} aria-hidden={tab!=="manager"}><ManagerActionCenter rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} ledger={ledger} onPlanUpsert={savePlanRowShared}/></div>
       <div className="mt-tab-panel" style={{display:tab==="planning"?"block":"none"}} aria-hidden={tab!=="planning"}><PlanningView rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} setRows={setRows} ledger={ledger} onPlanUpsert={savePlanRowShared} onPlanDelete={deletePlanCellShared} planSaveState={planSaveState}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="wip"?"block":"none"}} aria-hidden={tab!=="wip"}><WipStatus rows={visibleRows} onOpen={(row,stage)=>setDrawer({row,stage})} onEntry={openEntryFromWip} clearTick={clearFiltersTick}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="entry"?"block":"none"}} aria-hidden={tab!=="entry"}><QuickEntry rows={visibleRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={entryFocus} onSharedSave={handleSharedSave}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="wip"?"block":"none"}} aria-hidden={tab!=="wip"}><WipStatus rows={visibleRows} onOpen={(row,stage)=>setDrawer({row,stage})} onEntry={openEntryFromWip} onRelease={openReleaseFromAnyScreen} clearTick={clearFiltersTick}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="entry"?"block":"none"}} aria-hidden={tab!=="entry"}><QuickEntry rows={visibleRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={entryFocus} onRelease={openReleaseFromAnyScreen} onSharedSave={handleSharedSave}/></div>
       <div className="mt-tab-panel" style={{display:tab==="register"?"block":"none"}} aria-hidden={tab!=="register"}><OutputRegisterView rows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={registerFocus} clearTick={clearFiltersTick} onSharedSave={handleSharedSave}/></div>
       <div className="mt-tab-panel" style={{display:tab==="review"?"block":"none"}} aria-hidden={tab!=="review"}><ReviewView rows={visibleRows} ledger={ledger} planRows={planRows}/></div>
       <div className="mt-tab-panel" style={{display:tab==="owners"?"block":"none"}} aria-hidden={tab!=="owners"}><WhoToChase rows={visibleRows}/></div>
       <div className="mt-tab-panel" style={{display:tab==="monthly"?"block":"none"}} aria-hidden={tab!=="monthly"}><MonthlyComparison rows={visibleRows} ledger={ledger} clearTick={clearFiltersTick}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="styles"?"block":"none"}} aria-hidden={tab!=="styles"}><StyleManager rows={visibleRows} allRows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={styleFocus} clearTick={clearFiltersTick} onSharedSave={handleSharedSave}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="styles"?"block":"none"}} aria-hidden={tab!=="styles"}><StyleManager rows={visibleRows} allRows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={styleFocus} clearTick={clearFiltersTick} onRelease={openReleaseFromAnyScreen} onSharedSave={handleSharedSave}/></div>
       <div className="mt-tab-panel" style={{display:tab==="routes"?"block":"none"}} aria-hidden={tab!=="routes"}><ProcessRoutes rows={visibleRows} setRows={setRows}/></div>
       <div className="mt-tab-panel" style={{display:tab==="photos"?"block":"none"}} aria-hidden={tab!=="photos"}><PhotoManager rows={visibleRows} setRows={setRows} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="reports"?"block":"none"}} aria-hidden={tab!=="reports"}>{currentUserCan("production.export") ? <Reports rows={visibleRows} ledger={ledger}/> : <PermissionGate permission="production.export" label="Reports"/>}</div>
@@ -9638,7 +9778,8 @@ Continue?`);
         </main>
       </div>
     </div>
-    {drawer && <DetailDrawer row={drawer.row} rows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} stageKey={drawer.stage} onClose={()=>setDrawer(null)} onOpenRegister={openRegisterFromWip} onOpenStyle={openStyleFromWip} onSharedSave={handleSharedSave}/>} 
+    {releaseFocus && <ProductionFileReleaseModal row={releaseFocus.row} source={releaseFocus.source} onClose={()=>setReleaseFocus(null)} onSave={(payload)=>saveProductionFileRelease(releaseFocus.row, payload)} />}
+    {drawer && <DetailDrawer row={drawer.row} rows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} stageKey={drawer.stage} onClose={()=>setDrawer(null)} onOpenRegister={openRegisterFromWip} onOpenStyle={openStyleFromWip} onRelease={openReleaseFromAnyScreen} onSharedSave={handleSharedSave}/>} 
     {dashboardDrill && <DashboardDrillDrawer drill={dashboardDrill} rows={visibleRows} ledger={ledger} onClose={()=>setDashboardDrill(null)}/>} 
   </div>;
 }
