@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V43 DPR-STYLE-DRILL-ENTRY";
-const APP_COMMIT_MESSAGE = "Improves production file release visibility, blocks over-release unless approved, and adds fast-fill by order or existing cut qty.";
+const APP_VERSION = "V44 DPR-DRILL-FILTER-FIX";
+const APP_COMMIT_MESSAGE = "Fixes WIP current-status drilldown so it opens DPR style entry without wiping WIP/global filters.";
 
 
 const PRODUCTION_APP_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -4925,22 +4925,22 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onRelease, o
   useEffect(()=>safeJsonSave(uiStorageKey("entry_view_mode"), viewMode), [viewMode]);
   useEffect(()=>{
     if (!focus?.id) return;
-    setStage(focus.stage || "cutting");
-    setField(focus.field || "output");
+    const nextStage = focus.stage || "cutting";
+    const nextField = focus.field || "output";
+    setStage(nextStage);
+    setField(nextField);
     setDraft({});
-    if (focus.rowKey) {
-      const match = rows.find(r=>styleCompositeKey(r)===focus.rowKey);
-      if (match) {
-        setViewMode("style");
-        setSelectedRowId(match.id);
-        setStyleDeptFilter(focus.stage || "all");
-        setStyleSearch("");
-      }
+    const match = rows.find(r=>String(r.id)===String(focus.rowId || "")) || (focus.rowKey ? rows.find(r=>styleCompositeKey(r)===focus.rowKey) : null);
+    if (match) {
+      setViewMode("style");
+      setSelectedRowId(match.id);
+      setStyleDeptFilter(nextStage || "all");
+      setStyleSearch("");
     }
-  }, [focus?.id]);
+  }, [focus?.id, rows.length]);
   useEffect(()=>{ setCorrectRowId(null); setCorrectDraft({}); }, [entryDate, stage, field]);
   useEffect(()=>{ setStyleEditKey(null); setStyleCorrectDraft({}); setStyleCorrectReason(""); }, [selectedRowId]);
-  useEffect(()=>{ setSelectedRowId(""); setStyleEditKey(null); setStyleDeptFilter("all"); }, [viewMode]);
+  useEffect(()=>{ if (viewMode !== "style") { setSelectedRowId(""); setStyleEditKey(null); setStyleDeptFilter("all"); } }, [viewMode]);
 
   const allStageRows = rows.filter(r => routeFor(r).includes(stage));
   const activeRows = allStageRows.filter(r => entryOpenQty(r, stage, field) > 0 || (stage === "cutting" && field === "output" && !isProductionFileReleased(r)));
@@ -10082,9 +10082,23 @@ Continue?`);
   }
   function openEntryFromWip(row, stage, field="output"){
     if (!row) return;
-    setEntryFocus({ id:uid("entryfocus"), rowKey:styleCompositeKey(row), stage:stage || "cutting", field:field || "output", viewMode:"style", order_no:row.order_no || "", style_no:row.style_no || "", colour:row.colour || "", component:row.component || "" });
-    setOrder(row.order_no || "All");
-    setQuery([row.style_no, row.colour, row.component].filter(Boolean).join(" "));
+    // Drilldown must not mutate the global/WIP filters. Earlier versions set the
+    // page-level order/query here, which made the WIP grid go to 0 rows and also
+    // meant DPR Entry sometimes received an already-filtered row list before the
+    // focus effect could find the style. The focus object is enough to open the
+    // exact style in DPR Style View.
+    setEntryFocus({
+      id:uid("entryfocus"),
+      rowKey:styleCompositeKey(row),
+      rowId:row.id,
+      stage:stage || "cutting",
+      field:field || "output",
+      viewMode:"style",
+      order_no:row.order_no || "",
+      style_no:row.style_no || "",
+      colour:row.colour || "",
+      component:row.component || ""
+    });
     setDrawer(null);
     setTab("entry");
   }
@@ -10158,7 +10172,7 @@ Continue?`);
       <div className="mt-tab-panel" style={{display:tab==="manager"?"block":"none"}} aria-hidden={tab!=="manager"}><ManagerActionCenter rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} ledger={ledger} onPlanUpsert={savePlanRowShared}/></div>
       <div className="mt-tab-panel" style={{display:tab==="planning"?"block":"none"}} aria-hidden={tab!=="planning"}><PlanningView rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} setRows={setRows} ledger={ledger} onPlanUpsert={savePlanRowShared} onPlanDelete={deletePlanCellShared} planSaveState={planSaveState}/></div>
       <div className="mt-tab-panel" style={{display:tab==="wip"?"block":"none"}} aria-hidden={tab!=="wip"}><WipStatus rows={visibleRows} onOpen={(row,stage)=>setDrawer({row,stage})} onEntry={openEntryFromWip} onRelease={openReleaseFromAnyScreen} clearTick={clearFiltersTick}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="entry"?"block":"none"}} aria-hidden={tab!=="entry"}><QuickEntry rows={visibleRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={entryFocus} onRelease={openReleaseFromAnyScreen} onSharedSave={handleSharedSave}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="entry"?"block":"none"}} aria-hidden={tab!=="entry"}><QuickEntry rows={rows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={entryFocus} onRelease={openReleaseFromAnyScreen} onSharedSave={handleSharedSave}/></div>
       <div className="mt-tab-panel" style={{display:tab==="register"?"block":"none"}} aria-hidden={tab!=="register"}><OutputRegisterView rows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={registerFocus} clearTick={clearFiltersTick} onSharedSave={handleSharedSave}/></div>
       <div className="mt-tab-panel" style={{display:tab==="review"?"block":"none"}} aria-hidden={tab!=="review"}><ReviewView rows={visibleRows} ledger={ledger} planRows={planRows}/></div>
       <div className="mt-tab-panel" style={{display:tab==="owners"?"block":"none"}} aria-hidden={tab!=="owners"}><WhoToChase rows={visibleRows}/></div>
