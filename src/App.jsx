@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V44 DPR-DRILL-FILTER-FIX";
-const APP_COMMIT_MESSAGE = "Fixes WIP current-status drilldown so it opens DPR style entry without wiping WIP/global filters.";
+const APP_VERSION = "V48_DPR_INLINE_CORRECTION_VIEWS";
+const APP_COMMIT_MESSAGE = "Adds direct inline correction editing inside DPR Date and Dept views without forcing Style View.";
 
 
 const PRODUCTION_APP_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -4043,6 +4043,7 @@ function WipStatus({ rows, onOpen, onEntry, onRelease, clearTick=0 }){
   const [localSearch,setLocalSearch] = useState(()=>safeJsonLoad(uiStorageKey("wip_search"), ""));
   const [dept,setDept] = useState(()=>safeJsonLoad(uiStorageKey("wip_dept"), "all"));
   const [issue,setIssue] = useState(()=>safeJsonLoad(uiStorageKey("wip_issue"), "all"));
+  const [readyTarget,setReadyTarget] = useState(()=>safeJsonLoad(uiStorageKey("wip_ready_target"), "all"));
   const [owner,setOwner] = useState(()=>safeJsonLoad(uiStorageKey("wip_owner"), "all"));
   const [route,setRoute] = useState(()=>safeJsonLoad(uiStorageKey("wip_route"), "all"));
   const [viewMode,setViewMode] = useState(()=>safeJsonLoad(uiStorageKey("wip_view_mode"), "matrix"));
@@ -4055,6 +4056,7 @@ function WipStatus({ rows, onOpen, onEntry, onRelease, clearTick=0 }){
   useEffect(()=>safeJsonSave(uiStorageKey("wip_search"), localSearch), [localSearch]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_dept"), dept), [dept]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_issue"), issue), [issue]);
+  useEffect(()=>safeJsonSave(uiStorageKey("wip_ready_target"), readyTarget), [readyTarget]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_owner"), owner), [owner]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_route"), route), [route]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_view_mode"), viewMode), [viewMode]);
@@ -4064,7 +4066,7 @@ function WipStatus({ rows, onOpen, onEntry, onRelease, clearTick=0 }){
   useEffect(()=>safeJsonSave(uiStorageKey("wip_freeze_cols"), freezeCols), [freezeCols]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_width_mode"), widthMode), [widthMode]);
   useEffect(()=>safeJsonSave(uiStorageKey("wip_visible_cols"), visibleCols), [visibleCols]);
-  useEffect(()=>{ if (!clearTick) return; setLocalSearch(""); setDept("all"); setIssue("all"); setOwner("all"); setRoute("all"); setViewMode("matrix"); setColumnFilters({}); setFreezeCols(1); setVisibleCols({ release:true, status:true, tail:true, owner:true, route:true, stages:true, open:true, idle:false, action:true }); setSort({key:"open",dir:"desc"}); }, [clearTick]);
+  useEffect(()=>{ if (!clearTick) return; setLocalSearch(""); setDept("all"); setIssue("all"); setReadyTarget("all"); setOwner("all"); setRoute("all"); setViewMode("matrix"); setColumnFilters({}); setFreezeCols(1); setVisibleCols({ release:true, status:true, tail:true, owner:true, route:true, stages:true, open:true, idle:false, action:true }); setSort({key:"open",dir:"desc"}); }, [clearTick]);
   const [showCutActivity,setShowCutActivity] = useState(false);
   const [sizeBreak,setSizeBreak] = useState(false);
   const [sort,setSort] = useState({ key:"open", dir:"desc" });
@@ -4073,7 +4075,7 @@ function WipStatus({ rows, onOpen, onEntry, onRelease, clearTick=0 }){
   const filtered = rows.filter(row=>{
     const routeOk = route === "all" || routeType(row) === route;
     const deptOk = dept === "all" || routeFor(row).includes(dept);
-    const issueOk = rowMatchesBucketFilter(row, issue);
+    const issueOk = rowMatchesBucketFilter(row, issue) && (issue !== "completed_not_issued" || rowReadyForTargetDept(row, readyTarget));
     const ownerOk = owner === "all" || rowOwnerNames(row).includes(owner);
     const text = [row.order_no,row.style_no,row.buyer,row.colour,row.component,statusText(row),rowStatus(row).owner,routeType(row)].join(" ").toLowerCase();
     const searchOk = !searchText || text.includes(searchText);
@@ -4098,7 +4100,7 @@ function WipStatus({ rows, onOpen, onEntry, onRelease, clearTick=0 }){
   const setGridColumnFilter = (key, value) => setColumnFilters(prev => ({ ...(prev || {}), [key]:value }));
   const toggleWipCol = (key) => setVisibleCols(prev => ({ ...(prev || {}), [key]: !prev?.[key] }));
   const resetWipCols = () => setVisibleCols({ release:true, status:true, tail:true, owner:true, route:true, stages:true, open:true, idle:false, action:true });
-  const clearWipFilters = () => { setLocalSearch(""); setDept("all"); setIssue("all"); setOwner("all"); setRoute("all"); setColumnFilters({}); setSort({key:"open",dir:"desc"}); };
+  const clearWipFilters = () => { setLocalSearch(""); setDept("all"); setIssue("all"); setReadyTarget("all"); setOwner("all"); setRoute("all"); setColumnFilters({}); setSort({key:"open",dir:"desc"}); };
   const controlRows = wipControlRows(filtered);
   const openRowDrill = (row, stage) => onOpen?.(row, stage || rowStatus(row).stage || routeFor(row)[0] || "cutting");
   const modeRows = viewMode === "order" ? wipOrderViewRows(filtered) : viewMode === "department" ? departmentCurrentRows(filtered).map(({stage,...r})=>r) : viewMode === "issue" ? departmentIssueRows(filtered).map(({stage,type,...r})=>r) : [];
@@ -4181,7 +4183,7 @@ function WipStatus({ rows, onOpen, onEntry, onRelease, clearTick=0 }){
       <div className="mt-filter-row">
         <div className="mt-filter-group"><span className="mt-toolbar-label">WIP Search</span><Search size={14}/><input className="mt-input" value={localSearch} onChange={e=>setLocalSearch(e.target.value)} placeholder="order / style / buyer / status / owner" style={{minWidth:230}}/></div>
         <div className="mt-filter-group"><span className="mt-toolbar-label">Dept</span><select className="mt-select" value={dept} onChange={e=>setDept(e.target.value)}><option value="all">All departments</option>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select></div>
-        <div className="mt-filter-group"><span className="mt-toolbar-label">Issue</span><select className="mt-select" value={issue} onChange={e=>setIssue(e.target.value)}><option value="all">All open/closed</option><option value="completed_not_issued">Ready for next dept</option><option value="received_not_processed">With department</option><option value="ram">R/A/M</option><option value="reconcile">Reconcile</option><option value="dispatch_hold">Dispatch Hold</option><option value="tail_balance">Tail Status</option><option value="closed">Closed / balanced</option></select></div>
+        <div className="mt-filter-group"><span className="mt-toolbar-label">Issue</span><select className="mt-select" value={issue} onChange={e=>setIssue(e.target.value)}><option value="all">All open/closed</option><option value="completed_not_issued">Ready for next dept</option><option value="received_not_processed">With department</option><option value="ram">R/A/M</option><option value="reconcile">Reconcile</option><option value="dispatch_hold">Dispatch Hold</option><option value="tail_balance">Tail Status</option><option value="closed">Closed / balanced</option></select></div>{issue === "completed_not_issued" && <div className="mt-filter-group"><span className="mt-toolbar-label">Ready to</span><select className="mt-select" value={readyTarget} onChange={e=>setReadyTarget(e.target.value)}><option value="all">Any next dept</option>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select></div>}
         <div className="mt-filter-group"><span className="mt-toolbar-label">Owner</span><select className="mt-select" value={owner} onChange={e=>setOwner(e.target.value)}>{owners.map(o=><option key={o} value={o}>{o === "all" ? "All owners" : o}</option>)}</select></div>
         <div className="mt-filter-group"><span className="mt-toolbar-label">Route</span><select className="mt-select" value={route} onChange={e=>setRoute(e.target.value)}><option value="all">All routes</option><option>Plain</option><option>Print</option><option>Embroidery</option><option>Print + Emb</option></select></div>
         <button className={`mt-btn ${sizeBreak?"primary":"ghost"}`} onClick={()=>setSizeBreak(v=>!v)}><Layers size={14}/>Size breakup</button>
@@ -4311,7 +4313,7 @@ function validateCumulativeEdit(row, stage, field, newTotal, ledger=null, asOfDa
   return { allowed, blocked, messages, ...t, dispatchHold };
 }
 function confirmEntryChecks({ entryDate, changes, stage, field, reason }){
-  const risk = backdateRisk(entryDate);
+  const risk = entryDate ? backdateRisk(entryDate) : { days:0, label:"All dates review", tone:"info", locked:false, sameDay:false, future:false, reportOnly:true };
   if (risk.future) { alert("Future-dated production entries are blocked."); return false; }
   const notes = [];
   if (risk.sameDay) notes.push("Same-day entry: factory rule says production entries are normally done next day. Confirm only if this is intentional.");
@@ -4853,6 +4855,8 @@ function SizeCumulativeEditor({ row, rows, setRows, ledger, setLedger, stage, in
   const fillOpen = () => setDraft(d=>{ const nd={...d}; sizeContexts.forEach(x=>{ nd[`${row.id}|${x.size}`]=String(Math.max(0,n(x.open))); }); return nd; });
   const clear = () => setDraft({});
   async function save(){
+    if (!entryDate) { alert("Choose entry date before saving. Date is optional only for review tables, not for posting DPR quantity."); return; }
+    if (entryStageIsAll || entryFieldIsAll) { alert("Choose one department and one action before saving. All departments/action mode is for review only."); return; }
     if (saveLockRef.current) { notify("Save already in progress. Please wait.", "Duplicate save blocked"); return; }
     if (!changes.length) { alert("No new size-wise quantity entered."); return; }
     const sizeGate = entrySizeGateMessages(changes, { allowNegativeLegacy:false });
@@ -4894,6 +4898,132 @@ Save locally in this browser anyway? Other users will not see it until Supabase 
   </div>;
 }
 
+
+function dprMovementFieldKeys(field){
+  if (field === "all_movement" || field === "all") return ["output", "issued"];
+  return [field || "output"];
+}
+function dprEntryActivityRows(rows=[], ledger=[], { date="", dept="all", field="all_movement", limit=600 }={}){
+  const rowByKey = new Map((rows||[]).map(r=>[styleCompositeKey(r), r]));
+  const types = new Set(dprMovementFieldKeys(field).map(entryTypeForField).map(x=>String(x).toLowerCase()));
+  const groups = new Map();
+  (ledger||[]).forEach(e=>{
+    const row = findRowForLedger(rows, e);
+    if (!row) return;
+    const stg = ledgerStage(e);
+    const typ = String(ledgerType(e) || "").toLowerCase();
+    const dt = ledgerDate(e);
+    if (date && dt !== date) return;
+    if (dept && dept !== "all" && stg !== dept) return;
+    if (types.size && !types.has(typ)) return;
+    const key = [styleCompositeKey(row), dt, stg, typ].join("|::|");
+    if (!groups.has(key)) groups.set(key, {
+      Date:dt || "—",
+      Department:stageLabel(stg),
+      Action:registerActivityLabel(typ),
+      Order:row.order_no,
+      Style:row.style_no,
+      Buyer:row.buyer,
+      Colour:row.colour,
+      Component:row.component,
+      Net_Total:0,
+      Total:0,
+      Sizes:{},
+      Entry_Rows:0,
+      Positive_Rows:0,
+      Correction_Rows:0,
+      Correction_Qty:0,
+      First_Typed_At:e.created_at || e.createdAt || "",
+      Last_Typed_At:e.created_at || e.createdAt || "",
+      Users:new Set(),
+      _sortDate:dt || "",
+      _rowId:row.id,
+      _rowKey:styleCompositeKey(row),
+      _stageKey:stg,
+      _entryType:typ
+    });
+    const g = groups.get(key);
+    const qty = n(e.qty ?? e.delta);
+    const src = String(e.entry_source || e.source || e.reason || "").toLowerCase();
+    const isCorrectionRow = qty < 0 || src.includes("correction") || src.includes("void") || src.includes("reverse");
+    const sz = String(e.size || e.size_code || e.size_name || "").trim().toUpperCase();
+    g.Total += qty;
+    g.Net_Total += qty;
+    g.Entry_Rows += 1;
+    if (isCorrectionRow) { g.Correction_Rows += 1; g.Correction_Qty += qty; }
+    else { g.Positive_Rows += 1; }
+    if (sz) g.Sizes[sz] = n(g.Sizes[sz]) + qty;
+    const by = e.changed_by || e.created_by || e.user || "";
+    if (by) g.Users.add(by);
+    const ca = e.created_at || e.createdAt || "";
+    if (ca && (!g.First_Typed_At || String(ca) < String(g.First_Typed_At))) g.First_Typed_At = ca;
+    if (ca && (!g.Last_Typed_At || String(ca) > String(g.Last_Typed_At))) g.Last_Typed_At = ca;
+  });
+  return Array.from(groups.values()).sort((a,b)=>String(b._sortDate).localeCompare(String(a._sortDate)) || String(a.Department).localeCompare(String(b.Department)) || String(a.Style).localeCompare(String(b.Style))).slice(0, limit).map(g=>({
+    Date:g.Date,
+    Department:g.Department,
+    Action:g.Action,
+    Order:g.Order,
+    Style:g.Style,
+    Buyer:g.Buyer,
+    Colour:g.Colour,
+    Component:g.Component,
+    Net_Total:g.Net_Total,
+    Total:g.Total,
+    Size_Breakup:Object.entries(g.Sizes||{}).filter(([,v])=>n(v)).map(([k,v])=>`${k} ${fmt(v)}`).join(" · ") || "—",
+    Posting:g.Correction_Rows ? `Final after ${g.Correction_Rows} correction/reversal row(s)` : "Original entry",
+    Entry_Rows:g.Entry_Rows,
+    Correction_Rows:g.Correction_Rows,
+    Correction_Qty:g.Correction_Rows ? g.Correction_Qty : "—",
+    Edit:"Click row to correct final qty",
+    Users:Array.from(g.Users||[]).join(", ") || "—",
+    First_Typed_At:g.First_Typed_At || "—",
+    Last_Typed_At:g.Last_Typed_At || "—",
+    _rowId:g._rowId,
+    _rowKey:g._rowKey,
+    _stageKey:g._stageKey,
+    _entryType:g._entryType,
+    _sizes:g.Sizes || {}
+  }));
+}
+function dprOpenActionRows(rows=[], { dept="all", field="all_movement", limit=800 }={}){
+  const stages = dept === "all" ? STAGES.map(s=>s.key) : [dept];
+  const fields = dprMovementFieldKeys(field);
+  const out=[];
+  (rows||[]).forEach(row=>{
+    stages.forEach(stg=>{
+      if (!routeFor(row).includes(stg)) return;
+      fields.forEach(f=>{
+        if (!ENTRY_FIELDS.some(x=>x.key===f)) return;
+        const open = entryOpenQty(row, stg, f);
+        if (open <= 0) return;
+        out.push({
+          Department:stageLabel(stg),
+          Action:fieldLabel(f),
+          Order:row.order_no,
+          Style:row.style_no,
+          Buyer:row.buyer,
+          Colour:row.colour,
+          Component:row.component,
+          Open_Qty:open,
+          Feed_or_Source:entryFieldContext(row, stg, f).available,
+          Already_Done:entryFieldContext(row, stg, f).previous,
+          Next_Action:f === "issued" ? `Issue/feed to ${stageLabel(routeFor(row)[routeFor(row).indexOf(stg)+1] || "next dept")}` : `${stageLabel(stg)} output entry pending`,
+          _rowId:row.id,
+          _rowKey:styleCompositeKey(row),
+          _stageKey:stg,
+          _fieldKey:f
+        });
+      });
+    });
+  });
+  return out.sort((a,b)=>n(b.Open_Qty)-n(a.Open_Qty) || String(a.Department).localeCompare(String(b.Department))).slice(0, limit);
+}
+function rowReadyForTargetDept(row, targetDept){
+  if (!targetDept || targetDept === "all") return true;
+  return issueBuckets(row).some(b=>b.type === "completed_not_issued" && b.toStage === targetDept && n(b.qty)>0);
+}
+
 function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onRelease, onSharedSave }){
   const [stage, setStage] = useState(()=>safeJsonLoad(uiStorageKey("entry_stage"), "stitching"));
   const [field, setField] = useState(()=>safeJsonLoad(uiStorageKey("entry_field"), "output"));
@@ -4912,6 +5042,9 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onRelease, o
   const [styleEditKey, setStyleEditKey] = useState(null);
   const [styleCorrectDraft, setStyleCorrectDraft] = useState({});
   const [styleCorrectReason, setStyleCorrectReason] = useState("");
+  const [dprEditKey, setDprEditKey] = useState(null);
+  const [dprCorrectDraft, setDprCorrectDraft] = useState({});
+  const [dprCorrectReason, setDprCorrectReason] = useState("");
   const [lastSaveMsg, setLastSaveMsg] = useState(null);
   const operatorSimpleMode = isOperatorEntryMode();
   useEffect(()=>{ if (operatorSimpleMode && viewMode !== "date") setViewMode("date"); }, [operatorSimpleMode, viewMode]);
@@ -4938,12 +5071,17 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onRelease, o
       setStyleSearch("");
     }
   }, [focus?.id, rows.length]);
-  useEffect(()=>{ setCorrectRowId(null); setCorrectDraft({}); }, [entryDate, stage, field]);
+  useEffect(()=>{ setCorrectRowId(null); setCorrectDraft({}); setDprEditKey(null); setDprCorrectDraft({}); setDprCorrectReason(""); }, [entryDate, stage, field]);
   useEffect(()=>{ setStyleEditKey(null); setStyleCorrectDraft({}); setStyleCorrectReason(""); }, [selectedRowId]);
   useEffect(()=>{ if (viewMode !== "style") { setSelectedRowId(""); setStyleEditKey(null); setStyleDeptFilter("all"); } }, [viewMode]);
 
-  const allStageRows = rows.filter(r => routeFor(r).includes(stage));
-  const activeRows = allStageRows.filter(r => entryOpenQty(r, stage, field) > 0 || (stage === "cutting" && field === "output" && !isProductionFileReleased(r)));
+  const entryStageIsAll = stage === "all";
+  const entryFieldIsAll = field === "all_movement" || field === "all";
+  const allStageRows = entryStageIsAll ? [] : rows.filter(r => routeFor(r).includes(stage));
+  const activeRows = entryStageIsAll || entryFieldIsAll ? [] : allStageRows.filter(r => entryOpenQty(r, stage, field) > 0 || (stage === "cutting" && field === "output" && !isProductionFileReleased(r)));
+  const dprDateActivityRows = dprEntryActivityRows(rows, ledger, { date:entryDate, dept:stage, field });
+  const dprDeptActivityRows = dprEntryActivityRows(rows, ledger, { dept:stage, field, limit:800 });
+  const dprOpenRowsForSelection = dprOpenActionRows(rows, { dept:stage, field });
 
   function entryMapForRowDate(row, date){
     const matchType = String(entryTypeForField(field)).toLowerCase();
@@ -4999,7 +5137,137 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onRelease, o
   const selectedStyleHistory = selectedStyleRow ? styleHistoryRows(selectedStyleRow, styleDeptFilter) : [];
   const selectedStyleDeptOptions = selectedStyleRow ? routeFor(selectedStyleRow) : [];
   const selectedStyleSizes = selectedStyleRow ? sizesFor(selectedStyleRow) : [];
-  const selectedStyleValidation = selectedStyleRow ? validateDailyEntry(selectedStyleRow, stage, field, (r,size)=>getDailyEntryQty(()=>draft[`${selectedStyleRow.id}|${size}`], r, size), ledger, entryDate) : null;
+  const selectedStyleValidation = selectedStyleRow && entryDate ? validateDailyEntry(selectedStyleRow, stage, field, (r,size)=>getDailyEntryQty(()=>draft[`${selectedStyleRow.id}|${size}`], r, size), ledger, entryDate) : null;
+  function findStyleFromDprRow(raw){
+    return rows.find(r=>String(r.id)===String(raw?._rowId || ""))
+      || (raw?._rowKey ? rows.find(r=>styleCompositeKey(r)===raw._rowKey) : null)
+      || rows.find(r=>String(r.order_no||"")===String(raw?.Order||"") && String(r.style_no||"")===String(raw?.Style||"") && String(r.colour||"")===String(raw?.Colour||"") && String(r.component||"")===String(raw?.Component||""))
+      || null;
+  }
+  function openDprHistoryForEdit(raw){
+    const row = findStyleFromDprRow(raw);
+    if (!row) { alert("Could not find the style row for this DPR entry."); return; }
+    const stg = raw?._stageKey || stage;
+    const typ = raw?._entryType || entryTypeForField(field);
+    const dt = raw?.Date || raw?.date || "";
+    setViewMode("style");
+    setSelectedRowId(row.id);
+    setStyleSearch("");
+    setStyleDeptFilter(stg || "all");
+    setStage(stg || "stitching");
+    setField(fieldForEntryType(typ));
+    if (dt) setEntryDate(dt);
+    const g = styleHistoryRows(row, stg || "all").find(x=>String(x.date)===String(dt) && String(x.stage)===String(stg) && String(x.type).toLowerCase()===String(typ).toLowerCase());
+    if (g) beginStyleCorrection(row, g);
+  }
+  function openDprOpenRowForEntry(raw){
+    const row = findStyleFromDprRow(raw);
+    if (!row) { alert("Could not find the style row for this open balance."); return; }
+    const stg = raw?._stageKey || stage;
+    const f = raw?._fieldKey || field;
+    setViewMode("style");
+    setSelectedRowId(row.id);
+    setStyleSearch("");
+    setStyleDeptFilter(stg || "all");
+    setStage(stg || "stitching");
+    setField(f || "output");
+    setStyleEditKey(null);
+  }
+  function dprActivityKey(raw){
+    return [raw?._rowKey || raw?._rowId || raw?.Style || "", raw?.Date || "", raw?._stageKey || raw?.Department || "", raw?._entryType || raw?.Action || ""].join("|::|");
+  }
+  function dprActivityGroup(raw){
+    return {
+      date:raw?.Date || "",
+      stage:raw?._stageKey || stage,
+      type:raw?._entryType || entryTypeForField(fieldForEntryType(raw?._entryType || field)),
+      sizes:{ ...(raw?._sizes || {}) },
+      total:n(raw?.Net_Total ?? raw?.Total)
+    };
+  }
+  function dprActivityHasSizeSplit(raw){
+    return Object.values(raw?._sizes || {}).some(v=>n(v)!==0);
+  }
+  function dprActivityEditableSizeKeys(row, raw){
+    const fromEntry = Object.keys(raw?._sizes || {}).filter(k=>n((raw?._sizes || {})[k])!==0 || (raw?._sizes || {})[k]!==undefined);
+    const fromMaster = row ? sizesFor(row) : [];
+    const seen = new Set();
+    const out = [];
+    [...fromEntry, ...fromMaster].forEach(k=>{ const key=String(k); if (!seen.has(key)) { seen.add(key); out.push(key); } });
+    return out;
+  }
+  function beginDprInlineCorrection(raw){
+    const row = findStyleFromDprRow(raw);
+    if (!row) { alert("Could not find the style row for this DPR entry."); return; }
+    const key = dprActivityKey(raw);
+    const nd = {};
+    if (dprActivityHasSizeSplit(raw)) dprActivityEditableSizeKeys(row, raw).forEach(sz=>{ if (n((raw._sizes||{})[sz])) nd[`${key}|${sz}`] = String(n((raw._sizes||{})[sz])); });
+    else nd[`${key}|__total__`] = String(n(raw?.Net_Total ?? raw?.Total));
+    setDprCorrectDraft(nd);
+    setDprCorrectReason("");
+    setDprEditKey(key);
+  }
+  function dprCorrectVal(key, size){ const k = `${key}|${size}`; return dprCorrectDraft[k] !== undefined ? dprCorrectDraft[k] : ""; }
+  function setDprCorrectVal(key, size, val){ setDprCorrectDraft(d=>({ ...d, [`${key}|${size}`]: String(val).replace(/[^0-9-]/g,"").replace(/(?!^)-/g,"") })); }
+  async function saveDprInlineCorrection(raw){
+    const row = findStyleFromDprRow(raw);
+    if (!row) { alert("Could not find the style row for this DPR entry."); return; }
+    const key = dprActivityKey(raw);
+    const correctionStage = raw?._stageKey || stage;
+    const correctionType = raw?._entryType || entryTypeForField(field);
+    const correctionField = fieldForEntryType(correctionType);
+    const correctionDate = raw?.Date || entryDate;
+    const hasSplit = dprActivityHasSizeSplit(raw);
+    let changes;
+    if (!hasSplit) {
+      const oldQty = n(raw?.Net_Total ?? raw?.Total);
+      const rawNext = dprCorrectDraft[`${key}|__total__`];
+      const newQty = rawNext === undefined ? oldQty : n(rawNext);
+      const delta = newQty - oldQty;
+      changes = delta ? [{ row, size:"", oldQty, newQty, delta }] : [];
+    } else {
+      changes = dprActivityEditableSizeKeys(row, raw).map(size=>{
+        const oldQty = n((raw._sizes||{})[size]);
+        const rawNext = dprCorrectDraft[`${key}|${size}`];
+        const newQty = rawNext === undefined ? oldQty : n(rawNext);
+        const delta = newQty - oldQty;
+        if (!delta) return null;
+        return { row, size, oldQty, newQty, delta };
+      }).filter(Boolean);
+    }
+    if (!changes.length) { alert("No change made to this DPR row."); return; }
+    const sizeGate = entrySizeGateMessages(changes, { allowNegativeLegacy:true });
+    if (sizeGate.length) { alert(`Blocked by size master gate:
+
+${sizeGate.slice(0,8).join("\n")}`); return; }
+    if (!String(dprCorrectReason||"").trim()) { alert("Reason is required to correct an old DPR entry."); return; }
+    const summary = changes.map(c=>`${c.size||"Total"}: ${fmt(c.oldQty)} -> ${fmt(c.newQty)}`).join("\n");
+    if (!window.confirm(`Correct this row directly in ${viewMode === "dept" ? "Dept View" : "Date View"}?
+
+${correctionDate} · ${stageLabel(correctionStage)} · ${registerActivityLabel(correctionType)} · ${row.style_no}
+
+${summary}
+
+Only the difference is saved as an audit-safe correction; original history remains visible.`)) return;
+    const newLedger = buildLedgerRows({ changes, stage:correctionStage, field:correctionField, entryDate:correctionDate, reason:dprCorrectReason, source:"dpr_inline_view_correction" });
+    const sharedResult = await saveLedgerToSupabase(newLedger, correctionField);
+    if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
+      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
+      if (!window.confirm(`Shared Supabase save did not confirm: ${msg}
+
+Save locally in this browser anyway?`)) return;
+    }
+    const totalDelta = changes.reduce((a,c)=>a+n(c.delta),0);
+    const deltaMap = Object.fromEntries(changes.filter(c=>c.size).map(c=>[c.size, c.delta]));
+    const getValForApply = hasSplit ? (r,size)=>n(deltaMap[size]) : (r,size)=>{ const list=sizesFor(r); return size===list[0] ? totalDelta : 0; };
+    setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:[row], stage:correctionStage, field:correctionField, getVal:getValForApply }));
+    setLedger(prev => mergeLedgerPrependUnique(prev, newLedger));
+    setDprEditKey(null);
+    setDprCorrectDraft({});
+    setDprCorrectReason("");
+    setLastSaveMsg({ tone:"ok", text:`Corrected: ${row.style_no} · ${stageLabel(correctionStage)} · ${registerActivityLabel(correctionType)} · ${correctionDate}` });
+    onSharedSave?.(sharedResult, "DPR inline view correction");
+  }
   function styleCorrectVal(key, size){ const k = `${key}|${size}`; return styleCorrectDraft[k] !== undefined ? styleCorrectDraft[k] : ""; }
   function setStyleCorrectVal(key, size, val){ setStyleCorrectDraft(d=>({ ...d, [`${key}|${size}`]: String(val).replace(/[^0-9-]/g,"").replace(/(?!^)-/g,"") })); }
   function groupKeyOf(g){ return `${g.date}|${g.stage}|${g.type}`; }
@@ -5155,6 +5423,8 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
   }
 
   async function saveSelectedStyleDayEntry(){
+    if (!entryDate) { alert("Choose entry date before saving this style. Date is optional only for review tables."); return; }
+    if (entryStageIsAll || entryFieldIsAll) { alert("Choose one department and one action before saving this style."); return; }
     const row = selectedStyleRow;
     if (!row) { alert("Choose a style first."); return; }
     if (saveLockRef.current) { notify("Save already in progress. Please wait.", "Duplicate save blocked"); return; }
@@ -5201,6 +5471,7 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
   function correctVal(row, size){ const key = `${row.id}|${size}`; return correctDraft[key] !== undefined ? correctDraft[key] : ""; }
   function setCorrectVal(row, size, val){ setCorrectDraft(d=>({ ...d, [`${row.id}|${size}`]: String(val).replace(/[^0-9]/g,"") })); }
   async function saveCorrection(row){
+    if (!entryDate) { alert("Choose a date to edit today's/date entry, or use Style view history to edit a past entry."); return; }
     const map = todayEntryMap(row);
     const sizes = sizesFor(row);
     const changes = sizes.map(size=>{
@@ -5233,6 +5504,48 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
     onSharedSave?.(sharedResult, "DPR entry correction");
   }
 
+  function DprActivityEditableTable({ title, sub, rows:activityRows, empty }){
+    const raw = Array.isArray(activityRows) ? activityRows : [];
+    const cols = ["Date","Department","Action","Style","Colour","Component","Net_Total","Size_Breakup","Posting"];
+    return <div className="mt-card mt-readable-table mt-readable-feed">
+      <div className="mt-section"><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{sub}</div></div>
+      <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{friendlyTableHeader(c)}</th>)}<th className="no-print">Edit here</th></tr></thead><tbody>
+        {raw.length ? raw.map((r,i)=>{
+          const key = dprActivityKey(r);
+          const row = findStyleFromDprRow(r);
+          const isEditing = dprEditKey === key;
+          return <React.Fragment key={key || i}>
+            <tr>
+              {cols.map(c=>{ const val=r[c]; return <td key={c} className={simpleTableCellTone(c,val)}>{typeof val === "number" ? fmt(val) : String(val === undefined || val === null ? "" : val)}</td>; })}
+              <td className="no-print"><button className={`mt-btn ${isEditing?"active":"ghost"}`} onClick={(e)=>{e.stopPropagation(); isEditing ? setDprEditKey(null) : beginDprInlineCorrection(r);}}>{isEditing ? "Close" : "Correct"}</button></td>
+            </tr>
+            {isEditing && <tr className="mt-correction-row"><td colSpan={cols.length+1}>
+              <div className="mt-inline-correction">
+                <div className="mt-correction-head"><b>Correct here: {r.Date} · {r.Department} · {r.Action}</b><span className="mt-small">No Style View jump. Enter corrected final quantity by size; system saves only the difference as an audit correction.</span></div>
+                <div className="mt-correction-controls"><label>Reason <input className="mt-input" value={dprCorrectReason} onChange={e=>setDprCorrectReason(e.target.value)} placeholder="Correction reason" style={{minWidth:260}}/></label><button className="mt-btn primary" onClick={()=>saveDprInlineCorrection(r)}><CheckCircle2 size={14}/>Save correction</button><button className="mt-btn ghost" onClick={()=>setDprEditKey(null)}>Cancel</button></div>
+                <div className="mt-correction-grid">
+                  {!dprActivityHasSizeSplit(r) ? (()=>{
+                    const oldQty = n(r.Net_Total ?? r.Total);
+                    const nextQty = n(dprCorrectVal(key, "__total__") || 0);
+                    const delta = nextQty - oldQty;
+                    return <div className="mt-correction-size"><div className="sz">Total</div><div className="mt-small">Old {fmt(oldQty)}</div><input className="mt-cell-input" style={{width:"100%"}} value={dprCorrectVal(key,"__total__")} onChange={e=>setDprCorrectVal(key,"__total__",e.target.value)} placeholder="Correct qty"/><div className={`mt-small ${delta?"warn":""}`}>Diff {delta>0?"+":""}{fmt(delta)}</div></div>;
+                  })() : dprActivityEditableSizeKeys(row, r).map(sz=>{
+                    const oldQty = n((r._sizes||{})[sz]);
+                    const nextQty = n(dprCorrectVal(key, sz) || 0);
+                    const delta = nextQty - oldQty;
+                    const masterSizes = new Set((row ? sizesFor(row) : []).map(x=>String(x).toUpperCase()));
+                    const isMaster = masterSizes.has(String(sz).toUpperCase());
+                    return <div className="mt-correction-size" key={sz || "__blank__"}><div className="sz">{sz || "(no size)"}</div><div className="mt-small">Old {fmt(oldQty)} {isMaster ? "" : "· not in style size set"}</div><input className="mt-cell-input" style={{width:"100%"}} value={dprCorrectVal(key, sz)} onChange={e=>setDprCorrectVal(key, sz, e.target.value)} placeholder="Correct qty"/><div className={`mt-small ${delta?"warn":""}`}>Diff {delta>0?"+":""}{fmt(delta)}</div></div>;
+                  })}
+                </div>
+              </div>
+            </td></tr>}
+          </React.Fragment>;
+        }) : <tr><td colSpan={cols.length+1} style={{padding:18}}>{empty}</td></tr>}
+      </tbody></table></div>
+    </div>;
+  }
+
   const totalOpenForField = activeRows.reduce((a,row)=>a+entryOpenQty(row,stage,field),0);
   const totalNewEntry = activeRows.reduce((a,row)=>a+validate(row).entryTotal,0);
   const totals = entryContextTotals(activeRows, stage, field);
@@ -5241,19 +5554,21 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
   return <div className="mt-card">
     <div className="mt-section">
       <h3 className="mt-panel-title">DPR Quick Entry</h3>
-      <div className="mt-panel-sub">{stageLabel(stage)} · {fieldLabel(field)} for {entryDate}. {operatorSimpleMode ? "Operator mode shows only the core entry task: date, department, style rows, size numbers and save confirmation." : "Rows already entered today stay visible, highlighted, so supervisors can correct them right here."}</div>
+      <div className="mt-panel-sub">{stageLabel(stage)} · {fieldLabel(field)} {entryDate ? `for ${entryDate}` : "across all dates"}. Date is optional for review; choose a date only when posting/saving a DPR entry. {operatorSimpleMode ? "Operator mode shows only the core entry task: date, department, style rows, size numbers and save confirmation." : "Rows in Date/Dept views are directly editable inline; Style View is only for full style-level detail."}</div>
       {operatorSimpleMode && <span className="mt-chip mt-info">Operator-safe mode</span>}
       {lastSaveMsg && <div className={`mt-save-banner ${lastSaveMsg.tone === "warn" ? "warn" : ""}`}><CheckCircle2 size={16}/>{lastSaveMsg.text}</div>}
     </div>
     <div className="mt-section no-print">
       <div className="mt-toolbar">
         <span className="mt-toolbar-label">Date</span>
-        <input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} />
+        <input className="mt-input mt-entry-date" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} />
+        <button className="mt-btn ghost" onClick={()=>setEntryDate("")}>All dates</button>
+        <button className="mt-btn ghost" onClick={()=>setEntryDate(today())}>Today</button>
         <span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span>
         <span className="mt-toolbar-label">Dept</span>
-        <select className="mt-select" value={stage} onChange={e=>{setStage(e.target.value); setDraft({});}}>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>
+        <select className="mt-select" value={stage} onChange={e=>{setStage(e.target.value); setDraft({});}}><option value="all">All departments</option>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>
         <span className="mt-toolbar-label">Action</span>
-        <select className="mt-select" value={field} onChange={e=>{setField(e.target.value); setDraft({});}}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>
+        <select className="mt-select" value={field} onChange={e=>{setField(e.target.value); setDraft({});}}><option value="all_movement">All issued / completed</option>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>
         {stage === "stitching" && <><span className="mt-toolbar-label">Line</span><select className="mt-select" value={entryLine} onChange={e=>setEntryLine(e.target.value)}>{productionLineNames().map(l=><option key={l} value={l}>{l}</option>)}</select></>}
         <button className="mt-btn" onClick={fillAllOpen}>Auto-fill all open</button>
         <button className="mt-btn primary" onClick={save} disabled={isSaving}><CheckCircle2 size={14}/>{isSaving ? "Saving..." : "Save Day Entry"}</button>
@@ -5265,20 +5580,28 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
           {risk.days>1 && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate reason optional/report flag" style={{minWidth:240, marginTop:8}}/>}
         </div>
       </details>}
-      {risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated entries are report flags only. Quantity/feed/P0 sequence clashes still appear in Reconcile Review.</div>}
+      {entryDate && risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated entries are report flags only. Quantity/feed/P0 sequence clashes still appear in Reconcile Review.</div>}
       {stage === "cutting" && field === "output" && activeRows.some(r=>!isProductionFileReleased(r)) ? <div className="mt-release-card no-print"><div className="title">Production file release needed</div><div className="mt-small">Rows below with 0 open are not released yet. Click Release File beside the style; cutting output stays blocked until release.</div></div> : null}
       {!operatorSimpleMode && <div className="mt-toggle-row" style={{marginTop:8}}>
         <span className="mt-toolbar-label">View</span>
         <button className={`mt-btn ${viewMode==="date"?"active":"ghost"}`} onClick={()=>setViewMode("date")}>Date view</button>
+        <button className={`mt-btn ${viewMode==="dept"?"active":"ghost"}`} onClick={()=>setViewMode("dept")}>Dept view</button>
         <button className={`mt-btn ${viewMode==="style"?"active":"ghost"}`} onClick={()=>setViewMode("style")}>Style view</button>
         {viewMode==="style" && <span className="mt-small">Pick a style below to see its entire history — every department, every action, every date — with edit anywhere.</span>}
       </div>}
-      <details className="mt-fold" style={{marginTop:8}}>
+      {entryDate ? <details className="mt-fold" style={{marginTop:8}}>
         <summary><span>Day-close summary for {entryDate}</span><span className="mt-chip mt-muted">{dayCloseSummaryRows(ledger, entryDate).length} activity rows</span></summary>
         <div className="mt-plan-collapse-body"><SimpleTable title={`Day Close — ${entryDate}`} sub="Human reconciliation point: review what was entered today before closing the day." rows={dayCloseSummaryRows(ledger, entryDate)} empty="No DPR rows saved for this date yet." /></div>
-      </details>
+      </details> : <div className="mt-speed-note" style={{marginTop:8}}>All dates review mode. Pick a date only when saving a new DPR entry or reviewing day close.</div>}
     </div>
-    {viewMode === "date" ? <>
+    {viewMode === "dept" ? <div className="mt-section">
+      <DprActivityEditableTable title={`${stage === "all" ? "All departments" : stageLabel(stage)} DPR history`} sub="Dept view: shows entries across dates for the selected department/action filter. Correct old entries directly here; original and correction rows remain in audit history." rows={dprDeptActivityRows} empty="No entries match this department/action filter." />
+    </div> : viewMode === "date" ? <>
+    <div className="mt-section">
+      <DprActivityEditableTable title={entryDate ? `Entered on ${entryDate}` : "Entered across all dates"} sub="First check: entries already posted for the selected date/dept/action filter. Date can be blank for all dates. Correct old entries directly here, even if that row already includes earlier correction/reversal entries." rows={dprDateActivityRows} empty="No entries posted yet for this filter." />
+    </div>
+    {entryStageIsAll || entryFieldIsAll ? <div className="mt-section"><SimpleTable title="Open to complete / issue" sub="Click an open row to open that style in Style view for a new DPR entry. Choose date before saving." rows={dprOpenRowsForSelection} empty="No open movement balances for this filter." onRowClick={openDprOpenRowForEntry} /></div> : null}
+    {entryStageIsAll || entryFieldIsAll ? null : <>
     <div className="mt-entry-summary">
       <span><b>{displayRows.length}</b> rows <span className="sep">·</span> {activeRows.length} open{todayExtraRows.length ? `, ${todayExtraRows.length} already done today` : ""}</span>
       <span className="sep">|</span>
@@ -5349,6 +5672,7 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
         </React.Fragment>;
       }) : <tr><td colSpan={allSizes.length+5} style={{padding:18}}>No open styles, and nothing entered today, for {stageLabel(stage)} · {fieldLabel(field)}.</td></tr>}
     </tbody></table></div>
+    </>}
     </> : <div className="mt-section">
       <div className="mt-toolbar no-print">
         <span className="mt-toolbar-label">Find style</span>
@@ -8338,7 +8662,7 @@ function simpleTableCellTone(key, value){
 function SimpleTable({ title, sub, rows, empty, onRowClick, exportName="" }){
   const rawRows = Array.isArray(rows) ? rows : [];
   const displayRows = simplifiedRowsForTable(title, rawRows);
-  const cols = displayRows.length ? Object.keys(displayRows[0]) : [];
+  const cols = displayRows.length ? Object.keys(displayRows[0]).filter(c=>!String(c).startsWith("_")) : [];
   const canExport = !!exportName && currentUserCan("production.export");
   const type = tableTypeFromTitle(title);
   const infoSub = sub || "Summary first. Expand/use export for detailed audit when needed.";
