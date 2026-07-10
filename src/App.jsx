@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V41 RELEASE-COLUMN-TOLERANCE";
+const APP_VERSION = "V43 DPR-STYLE-DRILL-ENTRY";
 const APP_COMMIT_MESSAGE = "Improves production file release visibility, blocks over-release unless approved, and adds fast-fill by order or existing cut qty.";
 
 
@@ -299,6 +299,18 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-dept-size-box .line { font-size:9.5px; color:var(--muted-2); margin-top:3px; display:flex; justify-content:space-between; gap:8px; }
 
 
+.mt-style-entry-panel { border:2px solid var(--accent); background:#fff7ea; border-radius:16px; padding:12px; margin:10px 0 12px; box-shadow:0 2px 0 rgba(31,31,29,.04); }
+.mt-style-entry-head { display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+.mt-style-entry-head b { font-family:'Archivo',sans-serif; font-size:15px; }
+.mt-style-entry-controls { display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin-bottom:10px; }
+.mt-style-entry-controls label { display:flex; flex-direction:column; gap:4px; font-size:9px; color:var(--muted-2); font-weight:900; text-transform:uppercase; letter-spacing:.35px; }
+.mt-style-entry-size-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(112px,1fr)); gap:8px; }
+.mt-style-entry-size { border:1px solid var(--line-2); background:white; border-radius:12px; padding:8px; }
+.mt-style-entry-size .sz { font-family:'Archivo',sans-serif; font-weight:800; font-size:14px; margin-bottom:3px; }
+.mt-style-entry-size .mt-cell-input { width:100%; margin-top:5px; }
+.mt-style-entry-total { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px; border-top:1px dashed var(--line-2); padding-top:8px; font-size:11px; }
+.mt-style-entry-total b { font-family:'Archivo',sans-serif; font-size:17px; }
+
 .mt-dept-cutting { --dept-tint:#fff3df; --dept-fg:#8a4a0a; }
 .mt-dept-printing { --dept-tint:#e9f2ff; --dept-fg:#174a7c; }
 .mt-dept-embroidery { --dept-tint:#f1e8ff; --dept-fg:#5b3f8d; }
@@ -383,22 +395,32 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 .mt-file-release-cell.info { background:#eaf2ff; border-color:#bdd4f4; }
 .mt-file-release-cell.warn { background:#fff7db; border-color:#e7c061; }
 .mt-file-release-cell.late { background:#fff0ed; border-color:#e6a098; }
-.mt-release-modal-v40 { width:min(860px,96vw) !important; max-height:92vh; overflow:auto; }
-.mt-release-modal-v40 .body { padding:18px; display:grid; gap:12px; }
-.mt-release-help { border:1px solid #bfd7f2; background:#eef6ff; color:#174a7c; border-radius:12px; padding:10px 12px; font-size:11px; line-height:1.45; }
-.mt-release-kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
-.mt-release-kpis div { border:1px solid var(--line-2); background:#fffaf1; border-radius:12px; padding:10px; }
-.mt-release-kpis span { display:block; font-size:8.8px; color:var(--muted-2); font-weight:900; text-transform:uppercase; letter-spacing:.3px; }
-.mt-release-kpis b { display:block; margin-top:5px; font-family:'Archivo',sans-serif; font-size:20px; }
-.mt-release-fastfill { display:flex; gap:8px; flex-wrap:wrap; align-items:center; border:1px dashed var(--line-2); background:#fffaf1; border-radius:12px; padding:10px; }
-.mt-release-big-input { width:100%; font-size:18px !important; font-weight:900; min-height:46px; }
-.mt-release-note-input { width:100%; min-height:40px; }
-.mt-release-actions { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; position:sticky; bottom:0; background:var(--surface); border-top:1px solid var(--line-3); padding-top:10px; }
-.mt-release-size-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(92px,1fr)); gap:8px; }
-.mt-release-size-cell { border:1px solid var(--line-2); background:#fffdf8; border-radius:12px; padding:9px; }
-.mt-release-size-cell b { display:block; font-family:'Archivo',sans-serif; font-size:16px; }
-.mt-release-size-cell span { display:block; margin-top:3px; font-size:9px; color:var(--muted-2); font-weight:900; text-transform:uppercase; }
-@media (max-width:760px){ .mt-release-kpis{grid-template-columns:repeat(2,minmax(0,1fr));} }
+.mt-update-backdrop:has(.mt-release-modal-v42) { z-index:9999; background:rgba(20,18,15,.62); align-items:center; justify-content:center; padding:18px; }
+.mt-release-modal-v42 { width:min(1180px,98vw) !important; height:min(820px,92vh); max-height:92vh; background:var(--surface); border:2px solid var(--ink); border-radius:18px; box-shadow:0 28px 90px rgba(0,0,0,.36); overflow:hidden; display:flex; flex-direction:column; }
+.mt-release-modal-v42 .head { flex:0 0 auto; background:var(--ink); color:var(--bg); padding:16px 20px; display:flex; align-items:flex-start; justify-content:space-between; gap:16px; border-bottom:4px solid var(--accent); }
+.mt-release-modal-v42 .head .mt-sub { color:var(--on-dark-2); font-size:11px; }
+.mt-release-modal-v42 .body { flex:1 1 auto; overflow:auto; padding:18px 22px 0; display:grid; grid-template-columns:1fr; gap:14px; background:#fffdf8; }
+.mt-release-help { border:1px solid #9fc2ec; background:#eef6ff; color:#174a7c; border-radius:12px; padding:11px 13px; font-size:12px; line-height:1.45; font-weight:800; }
+.mt-release-kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+.mt-release-kpis div { border:1px solid var(--line-2); background:#fffaf1; border-radius:14px; padding:13px 14px; min-height:82px; box-shadow:0 1px 0 rgba(31,31,29,.05); }
+.mt-release-kpis span { display:block; font-size:9.5px; color:var(--muted-2); font-weight:900; text-transform:uppercase; letter-spacing:.35px; line-height:1.2; }
+.mt-release-kpis b { display:block; margin-top:8px; font-family:'Archivo',sans-serif; font-size:28px; line-height:1; color:var(--ink); }
+.mt-release-fastfill { display:flex; gap:10px; flex-wrap:wrap; align-items:center; border:1px solid var(--line-2); background:#fff7ea; border-radius:14px; padding:12px; }
+.mt-release-fastfill .mt-btn { min-height:42px; padding:9px 14px; font-size:12px; }
+.mt-release-modal-v42 .mt-two { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.mt-release-big-input { width:100%; font-size:22px !important; font-weight:900; min-height:56px; border-width:3px !important; background:#fffaf1 !important; }
+.mt-release-note-input { width:100%; min-height:48px; font-size:12px; }
+.mt-release-modal-v42 .mt-context-strip { border:1px solid var(--line-2); background:#fffaf1; border-radius:12px; padding:8px; }
+.mt-release-actions { display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; position:sticky; bottom:0; z-index:5; background:linear-gradient(180deg,rgba(255,253,248,.92),var(--surface)); border-top:1px solid var(--line-2); margin:0 -22px; padding:14px 22px; box-shadow:0 -8px 22px rgba(31,31,29,.08); }
+.mt-release-actions .mt-btn { min-height:42px; padding:9px 16px; font-size:12px; }
+.mt-release-size-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr)); gap:10px; padding-bottom:6px; }
+.mt-release-size-cell { border:1px solid var(--line-2); background:#fffaf1; border-radius:14px; padding:12px; min-height:70px; }
+.mt-release-size-cell b { display:block; font-family:'Archivo',sans-serif; font-size:24px; line-height:1; color:var(--ink); }
+.mt-release-size-cell span { display:block; margin-top:7px; font-size:10px; color:var(--muted-2); font-weight:900; text-transform:uppercase; letter-spacing:.25px; }
+.mt-release-modal-v42 .mt-panel-title { font-size:17px; }
+.mt-release-modal-v42 .mt-panel-sub { font-size:11px; }
+@media (max-width:900px){ .mt-release-kpis{grid-template-columns:repeat(2,minmax(0,1fr));} .mt-release-modal-v42 .mt-two{grid-template-columns:1fr;} }
+@media (max-width:640px){ .mt-update-backdrop:has(.mt-release-modal-v42){padding:6px;} .mt-release-modal-v42{width:100vw !important;height:96vh;border-radius:10px;} .mt-release-kpis{grid-template-columns:1fr;} .mt-release-size-grid{grid-template-columns:repeat(2,minmax(0,1fr));} }
 
 @media (max-width:720px){ .mt-manager-decision-kpis{grid-template-columns:repeat(2,minmax(0,1fr));} }
 
@@ -4906,6 +4928,15 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onRelease, o
     setStage(focus.stage || "cutting");
     setField(focus.field || "output");
     setDraft({});
+    if (focus.rowKey) {
+      const match = rows.find(r=>styleCompositeKey(r)===focus.rowKey);
+      if (match) {
+        setViewMode("style");
+        setSelectedRowId(match.id);
+        setStyleDeptFilter(focus.stage || "all");
+        setStyleSearch("");
+      }
+    }
   }, [focus?.id]);
   useEffect(()=>{ setCorrectRowId(null); setCorrectDraft({}); }, [entryDate, stage, field]);
   useEffect(()=>{ setStyleEditKey(null); setStyleCorrectDraft({}); setStyleCorrectReason(""); }, [selectedRowId]);
@@ -4967,6 +4998,8 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onRelease, o
   const selectedStyleRow = rows.find(r=>r.id===selectedRowId) || null;
   const selectedStyleHistory = selectedStyleRow ? styleHistoryRows(selectedStyleRow, styleDeptFilter) : [];
   const selectedStyleDeptOptions = selectedStyleRow ? routeFor(selectedStyleRow) : [];
+  const selectedStyleSizes = selectedStyleRow ? sizesFor(selectedStyleRow) : [];
+  const selectedStyleValidation = selectedStyleRow ? validateDailyEntry(selectedStyleRow, stage, field, (r,size)=>getDailyEntryQty(()=>draft[`${selectedStyleRow.id}|${size}`], r, size), ledger, entryDate) : null;
   function styleCorrectVal(key, size){ const k = `${key}|${size}`; return styleCorrectDraft[k] !== undefined ? styleCorrectDraft[k] : ""; }
   function setStyleCorrectVal(key, size, val){ setStyleCorrectDraft(d=>({ ...d, [`${key}|${size}`]: String(val).replace(/[^0-9-]/g,"").replace(/(?!^)-/g,"") })); }
   function groupKeyOf(g){ return `${g.date}|${g.stage}|${g.type}`; }
@@ -5115,6 +5148,43 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
       setDraft({});
       setLastSaveMsg({ tone:"ok", text:`Saved: ${fmt(newLedger.reduce((a,e)=>a+n(e.qty),0))} pcs · ${stageLabel(stage)} · ${fieldLabel(field)} · ${entryDate}` });
       onSharedSave?.(sharedResult, "DPR day entry");
+    } finally {
+      saveLockRef.current = false;
+      setIsSaving(false);
+    }
+  }
+
+  async function saveSelectedStyleDayEntry(){
+    const row = selectedStyleRow;
+    if (!row) { alert("Choose a style first."); return; }
+    if (saveLockRef.current) { notify("Save already in progress. Please wait.", "Duplicate save blocked"); return; }
+    const changed = dailySizeRows(row, stage, field, getVal, ledger, entryDate);
+    const sizeGate = entrySizeGateMessages(changed, { allowNegativeLegacy:false });
+    if (sizeGate.length) { alert(`Blocked by size master gate:
+
+${sizeGate.slice(0,8).join("\n")}`); return; }
+    const validation = validate(row);
+    const hardMessages = hardBlockMessages(validation);
+    if (hardMessages.length) { alert(`Blocked: ${hardMessages.join("; ")}. Correct upstream/opening stock or create approved adjustment first.`); return; }
+    if (validation.p0DateViolation && !String(reason||"").trim()) { alert("P0 date-sequence override needs a reason. It will appear in Reconcile Review."); return; }
+    if (validation.p0DateViolation && !confirmP0DateViolation({ validation, entryDate, stage, field, reason })) return;
+    if (!changed.length) { alert("No new size-wise quantity entered for this style."); return; }
+    if (!confirmEntryChecks({ entryDate, changes:changed, stage, field, reason })) return;
+    saveLockRef.current = true;
+    setIsSaving(true);
+    try {
+      const override = validation.p0DateViolation ? validationOverrideForP0(validation) : null;
+      const newLedger = buildLedgerRows({ changes:changed, stage, field, entryDate, reason, source:"dpr_style_view_new_entry", line: stage === "stitching" ? entryLine : "", validationOverride:override });
+      const sharedResult = await saveLedgerToSupabase(newLedger, field);
+      if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
+        const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
+        if (!window.confirm(`Shared Supabase save did not confirm: ${msg}\n\nSave locally in this browser anyway? Other users will not see it until Supabase is fixed/synced.`)) return;
+      }
+      setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:[row], stage, field, getVal }));
+      setLedger(prev => mergeLedgerPrependUnique(prev, newLedger));
+      clearRow(row);
+      setLastSaveMsg({ tone:"ok", text:`Saved: ${fmt(newLedger.reduce((a,e)=>a+n(e.qty),0))} pcs · ${row.style_no} · ${stageLabel(stage)} · ${fieldLabel(field)} · ${entryDate}` });
+      onSharedSave?.(sharedResult, "DPR style-view new entry");
     } finally {
       saveLockRef.current = false;
       setIsSaving(false);
@@ -5292,6 +5362,26 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
         <div className="mt-entry-hero">
           <div className="mt-entry-hero-title"><span>{selectedStyleRow.style_no}</span><span className="mt-chip mt-muted">{selectedStyleRow.order_no}</span><button className="mt-btn ghost" style={{marginLeft:"auto"}} onClick={()=>setSelectedRowId("")}>Change style</button></div>
           <div className="mt-entry-hero-sub">{selectedStyleRow.buyer} · {selectedStyleRow.colour} · {selectedStyleRow.component}. Full history — every department, every action, every date this style has any entry. Edit any row; only the difference is recorded as an audit correction.</div>
+        </div>
+        <div className="mt-style-entry-panel no-print">
+          <div className="mt-style-entry-head"><b>New DPR entry for this style</b><span className="mt-small">Clicking Current Status opens here. Choose date/action and type sizes without going back to the top date toolbar.</span></div>
+          <div className="mt-style-entry-controls">
+            <label><span>Date</span><input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /></label>
+            <label><span>Dept</span><select className="mt-select" value={stage} onChange={e=>{setStage(e.target.value); setStyleDeptFilter(e.target.value); setDraft({});}}>{selectedStyleDeptOptions.map(k=><option key={k} value={k}>{stageLabel(k)}</option>)}</select></label>
+            <label><span>Action</span><select className="mt-select" value={field} onChange={e=>{setField(e.target.value); setDraft({});}}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select></label>
+            {stage === "stitching" && <label><span>Line</span><select className="mt-select" value={entryLine} onChange={e=>setEntryLine(e.target.value)}>{productionLineNames().map(l=><option key={l} value={l}>{l}</option>)}</select></label>}
+            <button className="mt-btn" onClick={()=>fillRowOpen(selectedStyleRow)}>Fill open</button>
+            <button className="mt-btn ghost" onClick={()=>clearRow(selectedStyleRow)}>Clear</button>
+            <button className="mt-btn primary" onClick={saveSelectedStyleDayEntry} disabled={isSaving}><CheckCircle2 size={14}/>{isSaving ? "Saving…" : "Save style entry"}</button>
+          </div>
+          <div className="mt-style-entry-size-grid">
+            {selectedStyleSizes.map(sz=>{ const szCtx=entryFieldSizeContext(selectedStyleRow,stage,field,sz); const today=n(todayEntryMap(selectedStyleRow).sizes[sz]); return <div className="mt-style-entry-size" key={sz}>
+              <div className="sz">{sz}</div>
+              <div className="mt-small">Open <b>{fmt(szCtx.open)}</b>{today ? ` · today ${fmt(today)}` : ""}</div>
+              <input className={`mt-cell-input ${n(szCtx.open)>0?"mandatory":""} ${draft[`${selectedStyleRow.id}|${sz}`]!==undefined?"dirty":""}`} value={getVal(selectedStyleRow,sz)} onChange={e=>setVal(selectedStyleRow,sz,e.target.value)} placeholder="0" max={Math.max(0,n(szCtx.open))} title={`Max allowed now: ${fmt(szCtx.open)}`} />
+            </div>; })}
+          </div>
+          {selectedStyleValidation?.entryTotal ? <div className="mt-style-entry-total"><span>New entry <b>{fmt(selectedStyleValidation.entryTotal)}</b></span>{selectedStyleValidation.blocked ? <span className="mt-chip mt-late">Blocked</span> : selectedStyleValidation.overCut ? <span className="mt-chip mt-purple">Extra cut</span> : <span className="mt-chip mt-ok">Ready</span>}{selectedStyleValidation.messages?.length ? <span className="mt-small">{selectedStyleValidation.messages.slice(0,2).join(" · ")}</span> : null}</div> : null}
         </div>
         <div className="mt-toggle-row no-print">
           <span className="mt-toolbar-label">Dept</span>
@@ -8299,7 +8389,7 @@ function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose
     const { error } = await upsertOneStyleToSupabase(updatedRow);
     if (error) alert(`Short close saved in browser, Supabase save failed: ${error.message}`);
   }
-  return <div className="mt-drawer"><div className="mt-drawer-head"><div><div style={{fontFamily:"'Archivo',sans-serif", fontSize:20, fontWeight:800}}>{stageLabel(stage)} · {row.style_no}</div><div className="mt-sub">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div></div><button className="mt-btn" onClick={onClose}><X size={16}/></button></div><div className="mt-drawer-body">
+  return <div className="mt-drawer"><div className="mt-drawer-head"><div><div style={{fontFamily:"'Archivo',sans-serif", fontSize:20, fontWeight:800}}>{stageLabel(stage)} · {row.style_no}</div><div className="mt-sub">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div></div><button className="mt-btn" onClick={onClose} title="Close"><X size={18}/></button></div><div className="mt-drawer-body">
     <div className="mt-entry-highlight"><strong>Focused WIP cell: {stageLabel(stage)}</strong><div className="mt-context-strip"><span className="mt-chip mt-info">Selected dept only</span><span className="mt-chip mt-muted">Order {row.order_no}</span><span className="mt-chip mt-muted">{row.colour} · {row.component}</span>{primaryBucket && <span className={`mt-chip ${statusClass(primaryBucket.tone)}`}>{primaryBucket.status}</span>}</div><div className="mt-panel-sub" style={{marginTop:6}}>Only the clicked department's breakup is shown first. Full style/route detail is collapsed below.</div></div>
     {stage === "cutting" && !isProductionFileReleased(row) ? <div className="mt-release-card no-print"><div className="title">Production file not released</div><div className="mt-small">Cutting feed is locked at 0 until the file is released. This prevents accidental cutting output before the production file handover.</div><button className="mt-btn primary" onClick={()=>onRelease?.(row, "wip_detail")}>Release Production File</button></div> : stage === "cutting" ? <div className="mt-release-card no-print"><div className="title">{fileReleaseStatusText(row)}</div><div className="mt-small">Released size feed is used as Cutting feed and DPR cap.</div><button className="mt-btn ghost" onClick={()=>onRelease?.(row, "wip_detail_edit")}>Edit Release</button></div> : null}
     <div className="mt-grid" style={{gridTemplateColumns:"repeat(4,minmax(0,1fr))", marginBottom:12}}>
@@ -8340,7 +8430,7 @@ function ProductionFileReleaseModal({ row, source="", onClose, onSave }){
   const fillOrder = () => { setQty(String(orderTotal || "")); setReason("Release qty autofilled from order qty"); };
   const fillCut = () => { setQty(String(existingCut || orderTotal || "")); setReason(existingCut ? "Release qty autofilled from existing cutting output" : "Release qty autofilled from order qty"); };
   const fillReleased = () => { setQty(String(existingRelease || orderTotal || "")); setReason("Release correction / update"); };
-  return <div className="mt-update-backdrop no-print"><div className="mt-release-modal mt-release-modal-v40"><div className="head"><div><div style={{fontFamily:"'Archivo',sans-serif", fontWeight:800, fontSize:20}}>Release Production File to Cutting</div><div className="mt-sub">{row?.style_no} · {row?.order_no} · {row?.buyer} · {row?.colour} · {row?.component}</div></div><button className="mt-btn" onClick={onClose}><X size={16}/></button></div>
+  return <div className="mt-update-backdrop no-print"><div className="mt-release-modal mt-release-modal-v42"><div className="head"><div><div style={{fontFamily:"'Archivo',sans-serif", fontWeight:800, fontSize:24}}>Release Production File to Cutting</div><div className="mt-sub">{row?.style_no} · {row?.order_no} · {row?.buyer} · {row?.colour} · {row?.component}</div></div><button className="mt-btn" onClick={onClose} title="Close"><X size={18}/></button></div>
     <div className="body">
       <div className="mt-release-help"><b>Meaning:</b> this is the Cutting feed/handover. For old styles, use <b>Use cut qty</b> if cutting is already entered, or <b>Use order qty</b> for normal release. It is not an issue-forward entry.</div>
       <div className="mt-release-kpis">
@@ -8350,9 +8440,11 @@ function ProductionFileReleaseModal({ row, source="", onClose, onSave }){
         <div><span>Max normal release incl. tolerance</span><b>{fmt(toleranceQty || orderTotal)}</b></div>
       </div>
       <div className="mt-release-fastfill">
+        <span className="mt-toolbar-label">Fast fill</span>
         <button className="mt-btn ghost" type="button" onClick={fillOrder}>Use order qty</button>
         <button className="mt-btn ghost" type="button" onClick={fillCut}>Use cut qty</button>
         {existingRelease ? <button className="mt-btn ghost" type="button" onClick={fillReleased}>Use current release</button> : null}
+        <span className="mt-small">For old styles with cutting already done, use cut qty and save.</span>
       </div>
       <div className="mt-two">
         <div><label className="mt-small">Release qty</label><input className="mt-input mandatory mt-release-big-input" type="number" value={qty} onChange={e=>setQty(e.target.value)} /></div>
@@ -9990,7 +10082,7 @@ Continue?`);
   }
   function openEntryFromWip(row, stage, field="output"){
     if (!row) return;
-    setEntryFocus({ id:uid("entryfocus"), rowKey:styleCompositeKey(row), stage:stage || "cutting", field:field || "output", order_no:row.order_no || "", style_no:row.style_no || "", colour:row.colour || "", component:row.component || "" });
+    setEntryFocus({ id:uid("entryfocus"), rowKey:styleCompositeKey(row), stage:stage || "cutting", field:field || "output", viewMode:"style", order_no:row.order_no || "", style_no:row.style_no || "", colour:row.colour || "", component:row.component || "" });
     setOrder(row.order_no || "All");
     setQuery([row.style_no, row.colour, row.component].filter(Boolean).join(" "));
     setDrawer(null);
