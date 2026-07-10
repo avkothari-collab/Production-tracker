@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V37 ACTION-CURRENT-STATUS";
+const APP_VERSION = "V38 BUILD-FIX-ACTION-STATUS";
 const APP_COMMIT_MESSAGE = "Shows every non-tail pending production action in Current Status with gap quantities only, not last activity or full feed totals.";
 
 
@@ -2119,40 +2119,6 @@ function routeProgressSnapshot(row){
   return parts;
 }
 
-function movementStatusMeta(row, part){
-  if (!part) return "";
-  const stage = part.stage;
-  const st = sdata(row, stage);
-  const route = routeFor(row);
-  const nextStage = part.toStage || route[route.indexOf(stage)+1];
-  const feed = stage === "cutting" ? cuttingBaseQty(row) : stageFeed(row, stage);
-  const output = n(st.output);
-  const ram = n(st.reject) + n(st.alter) + n(st.missing);
-  const issued = n(st.issued);
-  const openWork = stage === "cutting" ? cuttingAccountableOpen(row) : Math.max(0, feed - output - ram);
-  const pendingIssue = Math.max(0, output - issued);
-  if (part.type === "cutting_pending" && !isProductionFileReleased(row)) return `Order ${fmt(row.order_qty)} · release file first`;
-  if (part.type === "cutting_pending") return `Feed ${fmt(feed)} · open ${fmt(openWork)} · pending issue ${fmt(pendingIssue)}`;
-  if (part.type === "with_dept") return `Feed ${fmt(feed)} · output ${fmt(output)} · open ${fmt(openWork)}`;
-  if (part.type === "ready_next") return `Output ${fmt(output)} · issued ${fmt(issued)} · pending ${fmt(pendingIssue)}${nextStage ? ` to ${stageLabel(nextStage)}` : ""}`;
-  if (part.type === "issued_forward") {
-    const next = nextStage ? sdata(row, nextStage) : null;
-    const nextAccounted = next ? n(next.output) + n(next.reject) + n(next.alter) + n(next.missing) : 0;
-    return `${fmt(issued)} feed sent${nextStage ? ` to ${stageLabel(nextStage)}` : ""}${nextStage ? ` · next open ${fmt(Math.max(0, issued - nextAccounted))}` : ""}`;
-  }
-  if (part.type === "ram") return `Feed ${fmt(feed)} · R/A/M ${fmt(ram)} · open ${fmt(openWork)}`;
-  return feed ? `Feed ${fmt(feed)} · open ${fmt(openWork)} · pending issue ${fmt(pendingIssue)}` : "";
-}
-
-function CurrentStatusLinks({ row, onEntry, onOpen, onRelease, compact=false }){
-  const allParts = currentMovementStatusParts(row);
-  const parts = allParts.slice(0, compact ? 3 : 8);
-  if (!parts.length) return <div className="mt-current-crisp"><span className="mt-chip mt-ok">Closed / balanced</span><span className="mt-current-muted">Main status excludes tail; check Tail Status separately.</span></div>;
-  return <div className="mt-current-crisp">{parts.map((p,idx)=><button key={`${p.type}-${p.stage}-${idx}`} className={`mt-current-line ${deptClass(p.stage)}`} onClick={(e)=>{ e.stopPropagation(); if (p.type === "cutting_pending" && p.stage === "cutting" && !isProductionFileReleased(row) && onRelease) onRelease(row, "wip_current_status"); else onEntry ? onEntry(row, p.stage, p.field || currentStatusEntryField(p)) : onOpen?.(p.stage,p); }} title={p.type === "cutting_pending" && p.stage === "cutting" && !isProductionFileReleased(row) ? "Release production file to Cutting" : `${movementStatusMeta(row,p)}. Click to open ${stageLabel(p.stage)} ${fieldLabel(p.field || currentStatusEntryField(p))}`}>
-    <span><span className="txt">{currentStatusCrispText(row,p)}</span><br/><span className="mt-current-muted">{movementStatusMeta(row,p)}</span></span>
-    <span className="num">{fmt(p.qty)}</span>
-  </button>)}{allParts.length>parts.length ? <span className="mt-chip mt-muted">+{allParts.length-parts.length} more</span> : null}</div>;
-}
 function RouteProgressSnapshot({ row, onOpen, compact=false }){
   const parts = routeProgressSnapshot(row).slice(0, compact ? 8 : 12);
   const orderBase = statusOrderBaseQty(row);
