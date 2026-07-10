@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V48_DPR_INLINE_CORRECTION_VIEWS";
-const APP_COMMIT_MESSAGE = "Adds direct inline correction editing inside DPR Date and Dept views without forcing Style View.";
+const APP_VERSION = "V51_RECONCILE_EDITABLE_P0_CONSERVATION";
+const APP_COMMIT_MESSAGE = "Moves P0 stock/date and conservation issues into editable Reconcile review; clicking reconcile rows opens the exact Register correction context.";
 
 
 const PRODUCTION_APP_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -422,6 +422,16 @@ details.mt-fold[open] > summary { border-bottom:1px solid var(--line-3); }
 @media (max-width:900px){ .mt-release-kpis{grid-template-columns:repeat(2,minmax(0,1fr));} .mt-release-modal-v42 .mt-two{grid-template-columns:1fr;} }
 @media (max-width:640px){ .mt-update-backdrop:has(.mt-release-modal-v42){padding:6px;} .mt-release-modal-v42{width:100vw !important;height:96vh;border-radius:10px;} .mt-release-kpis{grid-template-columns:1fr;} .mt-release-size-grid{grid-template-columns:repeat(2,minmax(0,1fr));} }
 
+
+.mt-p0-audit-panel { border:1px solid #e2a59b; background:#fff4f1; border-radius:14px; margin-top:10px; overflow:hidden; }
+.mt-p0-audit-panel summary { cursor:pointer; padding:10px 12px; display:flex; align-items:center; justify-content:space-between; gap:10px; font-family:'Archivo',sans-serif; font-weight:800; }
+.mt-p0-audit-panel[open] summary { border-bottom:1px solid #f0c5bd; }
+.mt-p0-audit-body { padding:10px 12px 12px; }
+.mt-p0-audit-row { display:grid; grid-template-columns:120px 1.2fr 110px 1.6fr; gap:8px; padding:7px 0; border-bottom:1px dashed #efc7bf; font-size:10px; align-items:start; }
+.mt-p0-audit-row:last-child { border-bottom:0; }
+.mt-p0-audit-main { font-weight:900; color:#8c241a; }
+.mt-p0-audit-meta { color:var(--muted-3); line-height:1.35; }
+.mt-p0-inline-warning { border:1px dashed #e2a59b; background:#fff4f1; color:#8c241a; border-radius:10px; padding:8px 10px; font-size:10.5px; line-height:1.35; margin-top:8px; }
 @media (max-width:720px){ .mt-manager-decision-kpis{grid-template-columns:repeat(2,minmax(0,1fr));} }
 
 @media (max-width:1180px){ .mt-entry-metrics{grid-template-columns:repeat(2,minmax(0,1fr));} .mt-context-grid{grid-template-columns:1fr 1fr;} .mt-compact-hero{grid-template-columns:1fr 1fr;} }
@@ -4039,7 +4049,7 @@ function DashboardDrillDrawer({ drill, rows, ledger=[], onClose }){
   </div>;
 }
 
-function WipStatus({ rows, onOpen, onEntry, onRelease, clearTick=0 }){
+function WipStatus({ rows, ledger=[], onOpen, onEntry, onRelease, clearTick=0 }){
   const [localSearch,setLocalSearch] = useState(()=>safeJsonLoad(uiStorageKey("wip_search"), ""));
   const [dept,setDept] = useState(()=>safeJsonLoad(uiStorageKey("wip_dept"), "all"));
   const [issue,setIssue] = useState(()=>safeJsonLoad(uiStorageKey("wip_issue"), "all"));
@@ -4087,6 +4097,7 @@ function WipStatus({ rows, onOpen, onEntry, onRelease, clearTick=0 }){
     return sort.dir === "asc" ? res : -res;
   });
   const conservationAlerts = conservationViolationRows(rows);
+  const p0AuditIssues = p0StockAuditIssues(rows, ledger);
   const allBuckets = rows.flatMap(row=>issueBuckets(row).map(bucket=>({row,bucket}))).filter(x=>x.bucket.type!=="extra_cut");
   const summary = [
     { key:"all", label:"All", value:rows.length, note:"visible styles" },
@@ -4177,7 +4188,7 @@ function WipStatus({ rows, onOpen, onEntry, onRelease, clearTick=0 }){
   const matrixSticky = buildStickyMap([{key:"style",visible:true},{key:"release",visible:!!visibleCols.release},{key:"status",visible:!!visibleCols.status},{key:"tail",visible:!!visibleCols.tail},{key:"routeProgress",visible:!!showCutActivity},{key:"owner",visible:!!visibleCols.owner},{key:"route",visible:!!visibleCols.route}]);
   const controlSticky = buildStickyMap([{key:"style",visible:true},{key:"status",visible:true},{key:"next",visible:true},{key:"routeProgress",visible:!!showCutActivity}]);
   return <div className="mt-card">
-    <div className="mt-section"><h3 className="mt-panel-title">Live WIP Status — Grid / Open Control</h3><div className="mt-panel-sub">Pending Stage = one main action. Optional Route Progress / Balance shows cut, stage done, issued-forward and pack balance so the sheet stays precise but still traceable.</div>{conservationAlerts.length ? <><div className="mt-conservation-alert"><AlertTriangle size={14}/> Conservation violated in {conservationAlerts.length} stage row(s). {conservationAlerts.slice(0,3).map(x=>x.message).join(" | ")}{conservationAlerts.length>3 ? ` | +${conservationAlerts.length-3} more` : ""}</div><div className="mt-issue-list"><div className="mt-issue-list-head"><div><b>Correction issue list</b><div className="mt-small">These are the exact styles/stages behind the Live WIP warning. Click a row to open feed/output correction controls.</div></div><span className="mt-chip mt-late">{conservationAlerts.length} issue rows</span></div><SimpleTable title="WIP correction issue list" sub="Click row to open detail. Cutting extra inside tolerance is no longer listed as a violation; only true feed/output mismatches appear here." rows={conservationIssueTableRows(conservationAlerts)} empty="No conservation issues." onRowClick={(r)=>{ const alert = conservationAlerts.find(a=>String(a.row?.order_no||"")===String(r.Order||"") && String(a.row?.style_no||"")===String(r.Style||"") && String(a.row?.colour||"")===String(r.Colour||"") && String(a.row?.component||"")===String(r.Component||"") && stageLabel(a.stage)===String(r.Stage||"")); if (alert) openRowDrill(alert.row, alert.stage); }} /></div></> : <span className="mt-chip mt-ok">Conservation OK: Good + Open + R/A/M balances against feed</span>}</div>
+    <div className="mt-section"><h3 className="mt-panel-title">Live WIP Status — Grid / Open Control</h3><div className="mt-panel-sub">Pending Stage = one main action. P0 stock audit checks every dated ledger movement: previous feed, same-dept output, future clashes and saved reconcile overrides.</div>{p0AuditIssues.length ? <details className="mt-p0-audit-panel" open><summary><span><AlertTriangle size={14}/> P0 stock/date reconcile issues — {p0AuditIssues.length}</span><span className="mt-chip mt-late">Collapsible</span></summary><div className="mt-p0-audit-body"><div className="mt-small">These are not normal open balances. They can affect stock/WIP truth and are also listed under Review → Reconcile for editable correction. Cutting short is not listed here; it remains cutting pending.</div><SimpleTable title="P0 stock/date issue list" sub="Dated quantity audit across all departments. Click row to open that style/stage detail." rows={p0AuditTableRows(p0AuditIssues).slice(0,80)} empty="No P0 stock/date issues." onRowClick={(r)=>{ const issue = p0AuditIssues.find(x=>String(x.row?.order_no||"")===String(r.Order||"") && String(x.row?.style_no||"")===String(r.Style||"") && String(x.row?.colour||"")===String(r.Colour||"") && String(x.row?.component||"")===String(r.Component||"") && stageLabel(x.stage)===String(r.Dept||"")); if (issue) openRowDrill(issue.row, issue.stage); }} /></div></details> : <span className="mt-chip mt-ok">P0 stock/date audit OK</span>} {conservationAlerts.length ? <details className="mt-p0-audit-panel"><summary><span><AlertTriangle size={14}/> Conservation snapshot warning — {conservationAlerts.length}</span><span className="mt-chip mt-warn">Open details</span></summary><div className="mt-p0-audit-body"><SimpleTable title="WIP correction issue list" sub="Snapshot feed/output mismatches. These also flow to Review → Reconcile so they can be edited/corrected from one control room." rows={conservationIssueTableRows(conservationAlerts)} empty="No conservation issues." onRowClick={(r)=>{ const alert = conservationAlerts.find(a=>String(a.row?.order_no||"")===String(r.Order||"") && String(a.row?.style_no||"")===String(r.Style||"") && String(a.row?.colour||"")===String(r.Colour||"") && String(a.row?.component||"")===String(r.Component||"") && stageLabel(a.stage)===String(r.Stage||"")); if (alert) openRowDrill(alert.row, alert.stage); }} /></div></details> : <span className="mt-chip mt-ok">Conservation OK: Good + Open + R/A/M balances against feed</span>}</div>
     <div className="mt-section no-print">
       <div className="mt-summary-strip">{summary.map(s=><button key={s.key} className={`mt-summary-tile ${issue===s.key || (s.key==="all"&&issue==="all") ? "active" : ""}`} onClick={()=>setIssue(s.key)}><div className="label">{s.label}</div><div className="value">{typeof s.value === "number" && s.key!=="all" ? fmt(s.value) : s.value}</div><div className="mt-small">{s.note}</div></button>)}</div>
       <div className="mt-filter-row">
@@ -4443,36 +4454,125 @@ function feedAsOfDate(row, ledger, stage, asOfDate){
   if (idx <= 0) return { hasLedger:false, sizes:normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row)), qty:n(row.order_qty) };
   return fieldQtyAsOfDate(row, ledger, route[idx-1], "issued", asOfDate);
 }
-function dateLevelQuantityIssues(row, ledger, stage, field, entryDate, sizeEntries){
+function p0StrictFieldQtyAsOfDate(row, ledger, stage, field, asOfDate){
+  const types = ledgerTypesForFieldForDate(field);
+  const fromLedger = ledgerSizeQtyAsOfDate(row, ledger || [], stage, types, asOfDate || "9999-12-31");
+  const cleanSizes = Object.fromEntries(sizesFor(row).map(size=>[size, n(fromLedger.sizes?.[size])]));
+  return { hasLedger:!!fromLedger.hasLedger, sizes:cleanSizes, qty:Object.values(cleanSizes).reduce((a,v)=>a+n(v),0) };
+}
+function p0StrictFeedAsOfDate(row, ledger, stage, asOfDate){
+  if (stage === "cutting") {
+    const sizes = fileReleaseSizeQtyMap(row);
+    const total = qtyMapTotal(sizes) || cuttingBaseQty(row);
+    return { hasLedger:isProductionFileReleased(row), sizes, qty:total };
+  }
+  const route = routeFor(row);
+  const idx = route.indexOf(stage);
+  if (idx <= 0) return { hasLedger:false, sizes:Object.fromEntries(sizesFor(row).map(size=>[size,0])), qty:0 };
+  return p0StrictFieldQtyAsOfDate(row, ledger, route[idx-1], "issued", asOfDate || "9999-12-31");
+}
+function p0AsOfStageSnapshot(row, ledger, stage, asOfDate){
+  const feed = p0StrictFeedAsOfDate(row, ledger, stage, asOfDate);
+  const output = p0StrictFieldQtyAsOfDate(row, ledger, stage, "output", asOfDate);
+  const issued = p0StrictFieldQtyAsOfDate(row, ledger, stage, "issued", asOfDate);
+  const reject = p0StrictFieldQtyAsOfDate(row, ledger, stage, "reject", asOfDate);
+  const alter = p0StrictFieldQtyAsOfDate(row, ledger, stage, "alter", asOfDate);
+  const missing = p0StrictFieldQtyAsOfDate(row, ledger, stage, "missing", asOfDate);
+  const ram = n(reject.qty) + n(alter.qty) + n(missing.qty);
+  const accounted = n(output.qty) + ram;
+  return { feed, output, issued, reject, alter, missing, ram, accounted };
+}
+function p0EntryImpactIssues(row, ledger, stage, field, entryDate, sizeMap){
   if (!entryDate) return [];
   const messages = [];
   const sizes = sizesFor(row);
-  const entryBySize = Object.fromEntries(sizes.map(size=>[size, n(sizeEntries?.[size])]));
-  const entryTotal = Object.values(entryBySize).reduce((a,v)=>a+n(v),0);
-  if (!entryTotal) return [];
+  const entryBySize = Object.fromEntries(sizes.map(size=>[size, n(sizeMap?.[size])]));
   const baseField = field === "alter_clear" ? "output" : field;
-  const oldAsOf = fieldQtyAsOfDate(row, ledger, stage, baseField, entryDate);
-  const updatedAsOfBySize = Object.fromEntries(sizes.map(size=>[size, n(oldAsOf.sizes[size]) + n(entryBySize[size])]));
-  const updatedAsOfTotal = Object.values(updatedAsOfBySize).reduce((a,v)=>a+n(v),0);
+  const oldAsOf = p0StrictFieldQtyAsOfDate(row, ledger, stage, baseField, entryDate);
+  const updatedBySize = Object.fromEntries(sizes.map(size=>[size, n(oldAsOf.sizes[size]) + n(entryBySize[size])]));
+  const updatedTotal = qtyMapTotal(updatedBySize);
+  const route = routeFor(row);
+  if (stage === "cutting" && ["output","reject","alter","missing","alter_clear"].includes(field)) {
+    const maxCut = Math.ceil(n(cuttingBaseQty(row)) * (1 + cuttingToleranceFrac()));
+    if (updatedTotal > maxCut) messages.push(`Cutting ${fieldLabel(field)} dated ${entryDate} exceeds released/order qty plus tolerance. Max normal ${fmt(maxCut)}, after entry ${fmt(updatedTotal)}.`);
+  }
   if (stage !== "cutting" && ["received","output","reject","alter","missing","alter_clear"].includes(field)) {
-    const feed = feedAsOfDate(row, ledger, stage, entryDate);
-    const overSizes = sizes.map(size=>{
-      const over = n(updatedAsOfBySize[size]) - n(feed.sizes[size]);
-      return over > 0 ? `${size} +${fmt(over)} over date-feed` : null;
-    }).filter(Boolean);
-    const overTotal = updatedAsOfTotal - n(feed.qty);
-    if (feed.hasLedger && overTotal > 0) messages.push(`${stageLabel(stage)} ${fieldLabel(field)} dated ${entryDate} exceeds previous issue-forward available as of that date by ${fmt(overTotal)} total${overSizes.length ? ` (${overSizes.join(", ")})` : ""}.`);
+    const feed = p0StrictFeedAsOfDate(row, ledger, stage, entryDate);
+    const existingOutput = field === "output" || field === "alter_clear" ? updatedBySize : p0StrictFieldQtyAsOfDate(row, ledger, stage, "output", entryDate).sizes;
+    const existingReject = field === "reject" ? updatedBySize : p0StrictFieldQtyAsOfDate(row, ledger, stage, "reject", entryDate).sizes;
+    const existingAlter = field === "alter" ? updatedBySize : p0StrictFieldQtyAsOfDate(row, ledger, stage, "alter", entryDate).sizes;
+    const existingMissing = field === "missing" ? updatedBySize : p0StrictFieldQtyAsOfDate(row, ledger, stage, "missing", entryDate).sizes;
+    const accountedBySize = Object.fromEntries(sizes.map(size=>[size, n(existingOutput[size]) + n(existingReject[size]) + n(existingAlter[size]) + n(existingMissing[size])]));
+    const overSizes = sizes.map(size=>{ const over=n(accountedBySize[size])-n(feed.sizes[size]); return over>0 ? `${size} +${fmt(over)}` : null; }).filter(Boolean);
+    const overTotal = qtyMapTotal(accountedBySize) - n(feed.qty);
+    if (overTotal > 0) messages.push(`${stageLabel(stage)} accounted qty dated ${entryDate} exceeds previous department issue/feed as-of that date by ${fmt(overTotal)}${overSizes.length ? ` (${overSizes.join(", ")})` : ""}.`);
+    if (!feed.hasLedger && qtyMapTotal(accountedBySize) > 0) messages.push(`${stageLabel(stage)} has dated activity on ${entryDate} but no dated upstream issue/feed exists before/on that date. This must be reviewed/reconciled.`);
   }
   if (field === "issued") {
-    const outputAsOf = fieldQtyAsOfDate(row, ledger, stage, "output", entryDate);
-    const overSizes = sizes.map(size=>{
-      const over = n(updatedAsOfBySize[size]) - n(outputAsOf.sizes[size]);
-      return over > 0 ? `${size} +${fmt(over)} over dated output` : null;
-    }).filter(Boolean);
-    const overTotal = updatedAsOfTotal - n(outputAsOf.qty);
-    if (outputAsOf.hasLedger && overTotal > 0) messages.push(`${stageLabel(stage)} issue-forward dated ${entryDate} exceeds ${stageLabel(stage)} output available as of that date by ${fmt(overTotal)} total${overSizes.length ? ` (${overSizes.join(", ")})` : ""}.`);
+    const outputAsOf = p0StrictFieldQtyAsOfDate(row, ledger, stage, "output", entryDate);
+    const overSizes = sizes.map(size=>{ const over=n(updatedBySize[size])-n(outputAsOf.sizes[size]); return over>0 ? `${size} +${fmt(over)}` : null; }).filter(Boolean);
+    const overTotal = updatedTotal - n(outputAsOf.qty);
+    if (overTotal > 0) messages.push(`${stageLabel(stage)} issue-forward dated ${entryDate} exceeds ${stageLabel(stage)} output available as-of that date by ${fmt(overTotal)}${overSizes.length ? ` (${overSizes.join(", ")})` : ""}.`);
+    if (!outputAsOf.hasLedger && updatedTotal > 0) messages.push(`${stageLabel(stage)} issue-forward dated ${entryDate} has no dated ${stageLabel(stage)} output before/on that date. This must be reviewed/reconciled.`);
   }
-  return messages;
+  messages.push(...futureDependentEntryMessages(row, ledger, stage, field, entryDate));
+  return Array.from(new Set(messages));
+}
+function p0StockAuditIssues(rows=[], ledger=[]){
+  const issues=[];
+  const maxDate="9999-12-31";
+  (rows||[]).forEach(row=>{
+    const route = routeFor(row);
+    const relevant = (ledger||[]).filter(e=>ledgerMatchesRow(e,row) && ledgerDate(e));
+    const datesByStage = new Map();
+    relevant.forEach(e=>{
+      const st=ledgerStage(e); if(!route.includes(st)) return;
+      const key=st; const set=datesByStage.get(key)||new Set(); set.add(ledgerDate(e)); datesByStage.set(key,set);
+    });
+    // Current cutting over tolerance is the only cutting conservation error; short cutting is open work.
+    const cutOut = p0StrictFieldQtyAsOfDate(row, ledger, "cutting", "output", maxDate).qty || n(sdata(row,"cutting").output);
+    const maxCut = Math.ceil(n(cuttingBaseQty(row)) * (1 + cuttingToleranceFrac()));
+    if (cutOut > maxCut) issues.push({ row, stage:"cutting", date:"Current", severity:"block", qty:cutOut-maxCut, type:"cutting_over_tolerance", message:`Cutting output ${fmt(cutOut)} exceeds release/order tolerance max ${fmt(maxCut)}.` });
+    route.forEach(stage=>{
+      if(stage === "cutting") return;
+      const dates = Array.from(datesByStage.get(stage)||[]).sort();
+      dates.forEach(date=>{
+        const snap = p0AsOfStageSnapshot(row, ledger, stage, date);
+        const overAccounted = n(snap.accounted) - n(snap.feed.qty);
+        if (overAccounted > 0) issues.push({ row, stage, date, severity:"block", qty:overAccounted, type:"accounted_over_feed", message:`${stageLabel(stage)} accounted ${fmt(snap.accounted)} is above dated feed ${fmt(snap.feed.qty)} as of ${date}.` });
+        const issueOverOutput = n(snap.issued.qty) - n(snap.output.qty);
+        if (issueOverOutput > 0) issues.push({ row, stage, date, severity:"block", qty:issueOverOutput, type:"issue_over_output", message:`${stageLabel(stage)} issued ${fmt(snap.issued.qty)} but output as-of date is ${fmt(snap.output.qty)}.` });
+        if (!snap.feed.hasLedger && n(snap.accounted)>0) issues.push({ row, stage, date, severity:"review", qty:n(snap.accounted), type:"missing_dated_feed", message:`${stageLabel(stage)} has activity but no dated upstream issue/feed before/on ${date}.` });
+      });
+    });
+    // Entries already saved with P0 override remain visible until fixed.
+    relevant.filter(e=>String(e.validation_status || e.validation_snapshot?.validation_status || "").includes("p0_date_sequence") || e.requires_reconcile || e.validation_snapshot?.requires_reconcile).forEach(e=>{
+      issues.push({ row, stage:ledgerStage(e), date:ledgerDate(e)||"—", severity:"review", qty:n(e.qty ?? e.delta), type:"saved_p0_override", message:`Saved P0 override/reconcile entry remains open: ${stageLabel(ledgerStage(e))} ${registerActivityLabel(ledgerType(e))} ${fmt(e.qty ?? e.delta)}.` });
+    });
+  });
+  const seen=new Set();
+  return issues.filter(x=>{ const key=[styleCompositeKey(x.row),x.stage,x.date,x.type,Math.round(n(x.qty))].join("|"); if(seen.has(key)) return false; seen.add(key); return true; }).sort((a,b)=>(a.severity==="block"?-1:1)-(b.severity==="block"?-1:1) || n(b.qty)-n(a.qty));
+}
+function p0AuditTableRows(issues=[]){
+  return (issues||[]).map(x=>({
+    Severity:x.severity === "block" ? "P0 Block" : "Review",
+    Date:x.date,
+    Order:x.row?.order_no,
+    Style:x.row?.style_no,
+    Colour:x.row?.colour,
+    Component:x.row?.component,
+    Dept:stageLabel(x.stage),
+    Qty:n(x.qty),
+    Issue:x.message,
+    _row:x.row,
+    _stage:x.stage
+  }));
+}
+function dateLevelQuantityIssues(row, ledger, stage, field, entryDate, sizeEntries){
+  if (!entryDate) return [];
+  const entryTotal = Object.values(sizeEntries || {}).reduce((a,v)=>a+n(v),0);
+  if (!entryTotal) return [];
+  return p0EntryImpactIssues(row, ledger || [], stage, field, entryDate, sizeEntries || {});
 }
 function ledgerHasAnyStageTypes(row, ledger, stage, types){
   const typeSet = new Set((types || []).map(x=>String(x).toLowerCase()));
@@ -4893,8 +4993,8 @@ Save locally in this browser anyway? Other users will not see it until Supabase 
   return <div className="mt-edit-panel">
     <div className="mt-edit-panel-head"><h3 className="mt-panel-title">{stageLabel(stage)} — {fieldLabel(field)}</h3><div className="mt-panel-sub">Selected department only. Enter new quantity by size for the selected date. The updated total is shown as a cross-check, not as editable cumulative entry.</div>{lastSaveMsg && <div className={`mt-save-banner ${lastSaveMsg.tone === "warn" ? "warn" : ""}`}><CheckCircle2 size={16}/>{lastSaveMsg.text}</div>}</div>
     <div className="mt-section no-print"><div className="mt-backdate-box"><span className="mt-toolbar-label">Entry Date</span><input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /><span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span><span className="mt-toolbar-label">Dept</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-toolbar-label">Entry Field</span>{operatorSimpleMode ? <span className="mt-chip mt-info">{fieldLabel(field)}</span> : <select className="mt-select" value={field} onChange={e=>setField(e.target.value)}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>}{risk.days>1 && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate note optional/report flag" style={{minWidth:250}} />}</div>{!operatorSimpleMode && <div className="mt-ram-action-bar"><span className="mt-toolbar-label">R/A/M closure rows</span>{RAM_ENTRY_FIELDS.map(f=><button key={f.key} className={`mt-btn ghost ${field===f.key?"active":""}`} onClick={()=>{setField(f.key); setDraft({});}}>{f.label}</button>)}<span className="mt-small">Use these only to close/explain small balances; normal production entry stays Output / Issue-Feed. No separate Receive entry.</span></div>}{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated date: report flag only. Quantity/feed/P0 sequence clashes still require reconcile review.</div>}</div>
-    <div className="mt-section"><div className="mt-entry-hero"><div className="mt-entry-hero-title"><span>{row.style_no}</span><span className="mt-chip mt-muted">{row.order_no}</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-chip mt-warn">{fieldLabel(field)}</span></div><div className="mt-entry-hero-sub">{ctx.note} Reductions/corrections are not normal entry and must go through approval.</div>{orderVariance.diff !== 0 && <div className={`mt-chip ${statusClass(orderVariance.tone)}`} style={{marginTop:8}}>{orderVariance.text}</div>}<div className="mt-mandatory-note"><AlertTriangle size={14}/> Highlighted size boxes are open/mandatory when entering this row. Blank means no quantity entered for that size.</div></div><div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">{ctx.availableLabel}</div><div className="value">{fmt(ctx.available)}</div><div className="note">source / feed</div></div><div className="mt-entry-metric"><div className="label">{ctx.previousLabel}</div><div className="value">{fmt(ctx.previous)}</div><div className="note">already entered</div></div><div className="mt-entry-metric"><div className="label">{ctx.openLabel}</div><div className="value">{fmt(ctx.open)}</div><div className="note">balance before entry</div></div><div className="mt-entry-metric"><div className="label">New Entry</div><div className="value">{fmt(newQty)}</div><div className="note">selected date</div></div><div className="mt-entry-metric"><div className="label">Cumulative After</div><div className="value">{fmt(validation.updatedTotal)}</div><div className="note">{fmt(validation.updatedTotal)} / {fmt(ctx.available)} total</div></div><div className="mt-entry-metric"><div className="label">Remaining After</div><div className="value">{fmt(Math.max(0, n(ctx.open)-newQty))}</div><div className="note">after saving</div></div></div><div className="mt-entry-row-actions"><button className="mt-btn" onClick={fillOpen}>Auto-fill open qty</button><button className="mt-btn ghost" onClick={clear}>Clear entry</button><button className="mt-btn primary" onClick={save} disabled={isSaving || !changes.length || validation.blocked || reasonMissing}><CheckCircle2 size={14}/>{isSaving ? "Saving..." : "Save Day Entry"}</button></div></div>
-    <div className="mt-section"><div className="mt-dept-size-grid">{sizeContexts.map(x=>{ const remaining=Math.max(0,n(x.open)-n(x.entry)); const baseField=field==="alter_clear"?"output":field; const prev=n(sizeMatrix(row,stage,baseField).find(v=>v.size===x.size)?.qty); const updated=prev+n(x.entry); const blocked=field==="alter_clear" && n(x.entry)>n(x.open); return <div key={x.size} className="mt-dept-size-box"><div className="size">{x.size}</div><div className="line"><span>Open</span><b>{fmt(x.open)}</b></div><input className={`mt-cell-input ${n(x.open)>0?"mandatory":""} ${draft[`${row.id}|${x.size}`]!==undefined?"dirty":""} ${blocked||validation.blocked?"blocked":""}`} value={getVal(row,x.size)} onChange={e=>setVal(x.size,e.target.value)} placeholder="0" max={Math.max(0,n(x.open))} title={`Max allowed now: ${fmt(x.open)}`} style={{width:"100%", marginTop:6}}/><div className="line"><span>Remaining</span><b>{fmt(remaining)}</b></div><div className="line"><span>Updated total</span><b>{fmt(updated)}</b></div></div>;})}</div>{validation.blocked && <div className="mt-locked-note" style={{marginTop:10}}>Blocked: {validation.messages.join("; ")}</div>}</div>
+    <div className="mt-section"><div className="mt-entry-hero"><div className="mt-entry-hero-title"><span>{row.style_no}</span><span className="mt-chip mt-muted">{row.order_no}</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-chip mt-warn">{fieldLabel(field)}</span></div><div className="mt-entry-hero-sub">{ctx.note} Reductions/corrections are not normal entry and must go through approval.</div>{orderVariance.diff !== 0 && <div className={`mt-chip ${statusClass(orderVariance.tone)}`} style={{marginTop:8}}>{orderVariance.text}</div>}<div className="mt-mandatory-note"><AlertTriangle size={14}/> Highlighted size boxes are open/mandatory when entering this row. Blank means no quantity entered for that size.</div></div><div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">{ctx.availableLabel}</div><div className="value">{fmt(ctx.available)}</div><div className="note">source / feed</div></div><div className="mt-entry-metric"><div className="label">{ctx.previousLabel}</div><div className="value">{fmt(ctx.previous)}</div><div className="note">already entered</div></div><div className="mt-entry-metric"><div className="label">{ctx.openLabel}</div><div className="value">{fmt(ctx.open)}</div><div className="note">balance before entry</div></div><div className="mt-entry-metric"><div className="label">New Entry</div><div className="value">{fmt(newQty)}</div><div className="note">selected date</div></div><div className="mt-entry-metric"><div className="label">Cumulative After</div><div className="value">{fmt(validation.updatedTotal)}</div><div className="note">{fmt(validation.updatedTotal)} / {fmt(ctx.available)} total</div></div><div className="mt-entry-metric"><div className="label">Remaining After</div><div className="value">{fmt(Math.max(0, n(ctx.open)-newQty))}</div><div className="note">after saving</div></div></div><div className="mt-entry-row-actions"><button className="mt-btn" onClick={fillOpen}>Auto-fill open qty</button><button className="mt-btn ghost" onClick={clear}>Clear entry</button><button className="mt-btn primary" onClick={save} disabled={isSaving || !changes.length || hardBlockMessages(validation).length || reasonMissing}><CheckCircle2 size={14}/>{isSaving ? "Saving..." : "Save Day Entry"}</button></div></div>
+    <div className="mt-section"><div className="mt-dept-size-grid">{sizeContexts.map(x=>{ const remaining=Math.max(0,n(x.open)-n(x.entry)); const baseField=field==="alter_clear"?"output":field; const prev=n(sizeMatrix(row,stage,baseField).find(v=>v.size===x.size)?.qty); const updated=prev+n(x.entry); const blocked=field==="alter_clear" && n(x.entry)>n(x.open); return <div key={x.size} className="mt-dept-size-box"><div className="size">{x.size}</div><div className="line"><span>Open</span><b>{fmt(x.open)}</b></div><input className={`mt-cell-input ${n(x.open)>0?"mandatory":""} ${draft[`${row.id}|${x.size}`]!==undefined?"dirty":""} ${blocked||validation.blocked?"blocked":""}`} value={getVal(row,x.size)} onChange={e=>setVal(x.size,e.target.value)} placeholder="0" max={Math.max(0,n(x.open))} title={`Max allowed now: ${fmt(x.open)}`} style={{width:"100%", marginTop:6}}/><div className="line"><span>Remaining</span><b>{fmt(remaining)}</b></div><div className="line"><span>Updated total</span><b>{fmt(updated)}</b></div></div>;})}</div>{validation.p0DateViolation && <div className="mt-p0-inline-warning"><b>P0 review required:</b> {p0DateViolationText(validation,4)}. Save needs reason + confirmation and will appear in Reconcile.</div>}{hardBlockMessages(validation).length ? <div className="mt-locked-note" style={{marginTop:10}}>Blocked: {hardBlockMessages(validation).join("; ")}</div> : null}</div>
   </div>;
 }
 
@@ -4986,7 +5086,44 @@ function dprEntryActivityRows(rows=[], ledger=[], { date="", dept="all", field="
     _sizes:g.Sizes || {}
   }));
 }
-function dprOpenActionRows(rows=[], { dept="all", field="all_movement", limit=800 }={}){
+function futureDependentLedgerEntries(row, ledger=[], stage, field, entryDate){
+  if (!entryDate || !Array.isArray(ledger) || !ledger.length) return [];
+  const route = routeFor(row);
+  const idx = route.indexOf(stage);
+  const nextStage = idx >= 0 ? route[idx + 1] : null;
+  const downstream = new Set(idx >= 0 ? route.slice(idx + 1) : []);
+  const sameStageTypes = field === "output" ? new Set(["issue","issued"]) : new Set();
+  const nextStageTypes = field === "issued" ? new Set(["good_output","output","completed","complete","done","reject","missing","alter","alter_issue","alter_clear","issue","issued"]) : new Set();
+  return (ledger || []).filter(e=>{
+    if (!ledgerMatchesRow(e, row)) return false;
+    const d = ledgerDate(e);
+    if (!d || d <= entryDate) return false;
+    const st = ledgerStage(e);
+    const typ = ledgerType(e);
+    if (field === "output" && st === stage && sameStageTypes.has(typ)) return true;
+    if (field === "output" && downstream.has(st)) return true;
+    if (field === "issued" && nextStage && st === nextStage && nextStageTypes.has(typ)) return true;
+    if (["reject","missing","alter","alter_clear"].includes(field) && (st === stage || downstream.has(st))) return true;
+    return false;
+  });
+}
+function futureDependentEntryMessages(row, ledger=[], stage, field, entryDate){
+  const future = futureDependentLedgerEntries(row, ledger, stage, field, entryDate);
+  if (!future.length) return [];
+  const qty = future.reduce((a,e)=>a+n(e.qty ?? e.delta),0);
+  const first = future.map(e=>`${ledgerDate(e)} ${stageLabel(ledgerStage(e))} ${registerActivityLabel(ledgerType(e))} ${fmt(e.qty ?? e.delta)}`).slice(0,3).join("; ");
+  return [`Backdated ${stageLabel(stage)} ${fieldLabel(field)} dated ${entryDate} affects ${future.length} later ledger row(s) already entered (${fmt(qty)} qty): ${first}. Save only with reason; Review → Reconcile must confirm forward sequence.`];
+}
+function entryOpenQtyAsOf(row, stage, field, ledger=null, asOfDate=null){
+  if (!asOfDate || !Array.isArray(ledger)) return entryOpenQty(row, stage, field);
+  const snap = p0AsOfStageSnapshot(row, ledger, stage, asOfDate);
+  if (field === "issued") return Math.max(0, n(snap.output.qty) - n(snap.issued.qty));
+  if (field === "output") return stage === "cutting" ? Math.max(0, cuttingBaseQty(row) - n(snap.output.qty) - n(snap.ram)) : Math.max(0, n(snap.feed.qty) - n(snap.output.qty) - n(snap.ram));
+  if (["reject","missing","alter"].includes(field)) return Math.max(0, n(snap.feed.qty) - n(snap.output.qty) - n(snap.ram));
+  if (field === "alter_clear") return Math.max(0, n(snap.alter.qty));
+  return entryOpenQty(row, stage, field);
+}
+function dprOpenActionRows(rows=[], { dept="all", field="all_movement", ledger=null, asOfDate=null, limit=800 }={}){
   const stages = dept === "all" ? STAGES.map(s=>s.key) : [dept];
   const fields = dprMovementFieldKeys(field);
   const out=[];
@@ -4995,9 +5132,16 @@ function dprOpenActionRows(rows=[], { dept="all", field="all_movement", limit=80
       if (!routeFor(row).includes(stg)) return;
       fields.forEach(f=>{
         if (!ENTRY_FIELDS.some(x=>x.key===f)) return;
-        const open = entryOpenQty(row, stg, f);
+        const open = entryOpenQtyAsOf(row, stg, f, ledger, asOfDate);
         if (open <= 0) return;
+        const ctx = asOfDate ? null : entryFieldContext(row, stg, f);
+        const feedInfo = asOfDate ? (f === "issued" ? p0StrictFieldQtyAsOfDate(row, ledger, stg, "output", asOfDate) : p0StrictFeedAsOfDate(row, ledger, stg, asOfDate)) : { qty:ctx.available, hasLedger:true };
+        const doneInfo = asOfDate ? (f === "issued" ? p0StrictFieldQtyAsOfDate(row, ledger, stg, "issued", asOfDate) : p0StrictFieldQtyAsOfDate(row, ledger, stg, f, asOfDate)) : { qty:ctx.previous, hasLedger:true };
+        const feed = feedInfo.qty;
+        const done = doneInfo.qty;
+        const future = futureDependentLedgerEntries(row, ledger || [], stg, f, asOfDate);
         out.push({
+          As_Of:asOfDate || "Current",
           Department:stageLabel(stg),
           Action:fieldLabel(f),
           Order:row.order_no,
@@ -5006,8 +5150,11 @@ function dprOpenActionRows(rows=[], { dept="all", field="all_movement", limit=80
           Colour:row.colour,
           Component:row.component,
           Open_Qty:open,
-          Feed_or_Source:entryFieldContext(row, stg, f).available,
-          Already_Done:entryFieldContext(row, stg, f).previous,
+          Feed_or_Source:feed,
+          Already_Done:done,
+          Future_Entries:future.length || "—",
+          P0_Status:future.length ? "Review if backdated" : (asOfDate && !feedInfo.hasLedger && stg !== "cutting" ? "Review missing dated feed" : "OK"),
+          P0_Reading:future.length ? `Later activity already exists after ${asOfDate}. Backdated save/correction must go to Reconcile.` : (asOfDate && !feedInfo.hasLedger && stg !== "cutting" ? "No dated upstream issue/feed exists as-of selected date; treat as P0 review before posting." : (asOfDate ? "Date + quantity checked as-of selected date." : "Current open balance.")),
           Next_Action:f === "issued" ? `Issue/feed to ${stageLabel(routeFor(row)[routeFor(row).indexOf(stg)+1] || "next dept")}` : `${stageLabel(stg)} output entry pending`,
           _rowId:row.id,
           _rowKey:styleCompositeKey(row),
@@ -5017,7 +5164,7 @@ function dprOpenActionRows(rows=[], { dept="all", field="all_movement", limit=80
       });
     });
   });
-  return out.sort((a,b)=>n(b.Open_Qty)-n(a.Open_Qty) || String(a.Department).localeCompare(String(b.Department))).slice(0, limit);
+  return out.sort((a,b)=>String(b.P0_Status).localeCompare(String(a.P0_Status)) || n(b.Open_Qty)-n(a.Open_Qty) || String(a.Department).localeCompare(String(b.Department))).slice(0, limit);
 }
 function rowReadyForTargetDept(row, targetDept){
   if (!targetDept || targetDept === "all") return true;
@@ -5078,10 +5225,10 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onRelease, o
   const entryStageIsAll = stage === "all";
   const entryFieldIsAll = field === "all_movement" || field === "all";
   const allStageRows = entryStageIsAll ? [] : rows.filter(r => routeFor(r).includes(stage));
-  const activeRows = entryStageIsAll || entryFieldIsAll ? [] : allStageRows.filter(r => entryOpenQty(r, stage, field) > 0 || (stage === "cutting" && field === "output" && !isProductionFileReleased(r)));
+  const activeRows = entryStageIsAll || entryFieldIsAll ? [] : allStageRows.filter(r => entryOpenQtyAsOf(r, stage, field, ledger, entryDate) > 0 || (stage === "cutting" && field === "output" && !isProductionFileReleased(r)));
   const dprDateActivityRows = dprEntryActivityRows(rows, ledger, { date:entryDate, dept:stage, field });
   const dprDeptActivityRows = dprEntryActivityRows(rows, ledger, { dept:stage, field, limit:800 });
-  const dprOpenRowsForSelection = dprOpenActionRows(rows, { dept:stage, field });
+  const dprOpenRowsForSelection = dprOpenActionRows(rows, { dept:stage, field, ledger, asOfDate:entryDate });
 
   function entryMapForRowDate(row, date){
     const matchType = String(entryTypeForField(field)).toLowerCase();
@@ -5546,7 +5693,7 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
     </div>;
   }
 
-  const totalOpenForField = activeRows.reduce((a,row)=>a+entryOpenQty(row,stage,field),0);
+  const totalOpenForField = activeRows.reduce((a,row)=>a+entryOpenQtyAsOf(row, stage, field, ledger, entryDate),0);
   const totalNewEntry = activeRows.reduce((a,row)=>a+validate(row).entryTotal,0);
   const totals = entryContextTotals(activeRows, stage, field);
   const remainingAfter = Math.max(0, totalOpenForField - totalNewEntry);
@@ -5595,12 +5742,12 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
       </details> : <div className="mt-speed-note" style={{marginTop:8}}>All dates review mode. Pick a date only when saving a new DPR entry or reviewing day close.</div>}
     </div>
     {viewMode === "dept" ? <div className="mt-section">
-      <DprActivityEditableTable title={`${stage === "all" ? "All departments" : stageLabel(stage)} DPR history`} sub="Dept view: shows entries across dates for the selected department/action filter. Correct old entries directly here; original and correction rows remain in audit history." rows={dprDeptActivityRows} empty="No entries match this department/action filter." />
+      <DprActivityEditableTable title={`${stage === "all" ? "All departments" : stageLabel(stage)} DPR history`} sub="Dept view: posted entries across dates. Open balances below are date/quantity checked as-of selected date when a date is chosen; future ledger impact is flagged for Review." rows={dprDeptActivityRows} empty="No entries match this department/action filter." />
     </div> : viewMode === "date" ? <>
     <div className="mt-section">
       <DprActivityEditableTable title={entryDate ? `Entered on ${entryDate}` : "Entered across all dates"} sub="First check: entries already posted for the selected date/dept/action filter. Date can be blank for all dates. Correct old entries directly here, even if that row already includes earlier correction/reversal entries." rows={dprDateActivityRows} empty="No entries posted yet for this filter." />
     </div>
-    {entryStageIsAll || entryFieldIsAll ? <div className="mt-section"><SimpleTable title="Open to complete / issue" sub="Click an open row to open that style in Style view for a new DPR entry. Choose date before saving." rows={dprOpenRowsForSelection} empty="No open movement balances for this filter." onRowClick={openDprOpenRowForEntry} /></div> : null}
+    {entryStageIsAll || entryFieldIsAll ? <div className="mt-section"><SimpleTable title="Open to complete / issue" sub="Open balances follow P0 date + quantity rules. With a selected date, feed/output/issue are calculated as-of that date, and later entries are flagged for Reconcile review." rows={dprOpenRowsForSelection} empty="No open movement balances for this filter." onRowClick={openDprOpenRowForEntry} /></div> : null}
     {entryStageIsAll || entryFieldIsAll ? null : <>
     <div className="mt-entry-summary">
       <span><b>{displayRows.length}</b> rows <span className="sep">·</span> {activeRows.length} open{todayExtraRows.length ? `, ${todayExtraRows.length} already done today` : ""}</span>
@@ -6255,7 +6402,11 @@ You entered the corrected final quantity below the original row. The app will sa
       const oldQty = sizeMatrix(targetRow, stage, baseField).find(x=>String(x.size).toUpperCase()===String(size).toUpperCase())?.qty || 0;
       return { row:targetRow, size:String(size).toUpperCase(), oldQty:n(oldQty), newQty:n(oldQty)+n(delta), delta:n(delta), entryQty:n(delta) };
     });
-    const newLedger = buildLedgerRows({ changes, stage, field, entryDate:correction.entryDate || r.Entry_Date, reason, source:"register_inline_corrected_qty" });
+    const p0Messages = p0EntryImpactIssues(targetRow, ledger || [], stage, field, correction.entryDate || r.Entry_Date, sizeMap);
+    const validationOverride = p0Messages.length ? { validation_status:"p0_date_sequence_override", validation_scope:"p0_correction_confirmed_reconcile", validation_messages:p0Messages, requires_reconcile:true } : null;
+    if (p0Messages.length && !String(reason||"").trim()) { alert("P0 correction needs a reason. It will appear in Reconcile Review."); return; }
+    if (p0Messages.length && !window.confirm(`P0 CORRECTION REVIEW\n\nThis correction affects dated stock/sequence truth and will appear in Reconcile until reviewed.\n\n${p0Messages.slice(0,8).join("\n")}\n\nConfirm correction?`)) return;
+    const newLedger = buildLedgerRows({ changes, stage, field, entryDate:correction.entryDate || r.Entry_Date, reason, source:"register_inline_corrected_qty", validationOverride });
     const sharedResult = await saveLedgerToSupabase(newLedger, field);
     if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
       const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
@@ -6433,7 +6584,7 @@ function reviewBuckets(rows, ledger=[], planRows=[]){
   rows.forEach(row=>{
     routeFor(row).forEach(stage=>{
       const st = sdata(row,stage), c=cellBreakup(row,stage);
-      const base = { Dept:stageLabel(stage), Order:row.order_no, Style:row.style_no, Buyer:row.buyer, Colour:row.colour, Component:row.component, Owner:"Production Coordinator", HOD:stageOwner(stage), Feed:(stage === "cutting" ? n(row.order_qty) : stageFeed(row, stage)), Output:n(st.output), Issued:n(st.issued), Open:n(c.open), RAM:n(c.ram), Idle:`${n(st.idle)}d` };
+      const base = { Dept:stageLabel(stage), Order:row.order_no, Style:row.style_no, Buyer:row.buyer, Colour:row.colour, Component:row.component, Owner:"Production Coordinator", HOD:stageOwner(stage), Feed:(stage === "cutting" ? n(row.order_qty) : stageFeed(row, stage)), Output:n(st.output), Issued:n(st.issued), Open:n(c.open), RAM:n(c.ram), Idle:`${n(st.idle)}d`, _row:row, _stage:stage, _activity:"all" };
       const buckets = issueBuckets(row).filter(b=>b.stage===stage);
       const hasRecon = buckets.some(b=>b.type==="reconcile");
       if (hasRecon) reconcile.push({ ...base, Problem:buckets.filter(b=>b.type==="reconcile").map(b=>b.status).join(" | "), Difference:buckets.filter(b=>b.type==="reconcile").reduce((a,b)=>a+n(b.qty),0), Action:"Correct entry or approved adjustment" });
@@ -6442,14 +6593,42 @@ function reviewBuckets(rows, ledger=[], planRows=[]){
       if (n(c.ram)>0) ram.push({ ...base, Issue_Type:"R/A/M", Total_RAM:n(c.ram), Action:"Close rejection / alter / missing reason and recovery" });
     });
   });
+  // Reconcile is the single control room for every stock-truth blocker:
+  // 1) live P0 stock/date audit, 2) conservation snapshot mismatches, and
+  // 3) already-saved P0/reconcile override ledger rows. Every row carries
+  // _row/_stage so Review can open the exact editable Register correction context.
+  p0StockAuditIssues(rows, ledger).forEach(issue=>{
+    reconcile.push({
+      Reconcile_Source:"P0 stock/date audit",
+      Severity:issue.severity === "block" ? "P0 Block" : "Review",
+      Dept:stageLabel(issue.stage), Order:issue.row?.order_no || "", Style:issue.row?.style_no || "", Buyer:issue.row?.buyer || "", Colour:issue.row?.colour || "", Component:issue.row?.component || "",
+      Entry_Date:issue.date || "Current", Problem:issue.type, Difference:n(issue.qty), Message:issue.message,
+      Action:"Click row → open Register correction for this style/dept. Correct source entry or post approved adjustment.",
+      _row:issue.row, _stage:issue.stage, _activity:"all"
+    });
+  });
+  conservationViolationRows(rows).forEach(v=>{
+    reconcile.push({
+      Reconcile_Source:"Conservation snapshot",
+      Severity:v.stage === "cutting" ? "Tolerance check" : "Stock mismatch",
+      Dept:stageLabel(v.stage), Order:v.row?.order_no || "", Style:v.row?.style_no || "", Buyer:v.row?.buyer || "", Colour:v.row?.colour || "", Component:v.row?.component || "",
+      Entry_Date:"Current", Problem:v.kind || "conservation_mismatch", Feed:n(v.feed), Output:n(v.good), RAM:n(v.ram), Open:n(v.open), Difference:n(v.diff), Message:v.message,
+      Action:v.stage === "cutting" ? "Click row → edit cutting output/RAM or style release/order feed." : "Click row → edit feed source/output/RAM in Register.",
+      _row:v.row, _stage:v.stage, _activity:"all"
+    });
+  });
   const riskyLedger = ledger || [];
   const p0Ledger = riskyLedger.filter(e=>String(e.validation_status || e.validation_snapshot?.validation_status || "").includes("p0_date_sequence") || String(e.validation_scope || "").includes("p0_date_sequence"));
   p0Ledger.forEach(e=>{
+    const linkedRow = findRowForLedger(rows, e);
     reconcile.push({
+      Reconcile_Source:"Saved P0 override",
+      Severity:"Review",
       Dept:stageLabel(e.stage), Order:e.order_no || e.order || "", Style:e.style_no || e.style || "", Buyer:e.buyer || "", Colour:e.colour || "", Component:e.component || "",
       Problem:"P0 date-sequence override", Difference:n(e.qty !== undefined ? e.qty : e.delta), Entry_Date:e.entry_date, Size:e.size || "Total", User:e.changed_by || e.created_by || e.validation_snapshot?.changed_by || "—",
-      Action:"Open Register from WIP/Register and correct date/quantity sequence. This was allowed only by confirmation.",
-      Message:(e.validation_messages || e.validation_snapshot?.validation_messages || []).slice(0,2).join(" | ")
+      Action:"Click row → open Register correction. This was allowed only by confirmation and remains open until corrected/approved.",
+      Message:(e.validation_messages || e.validation_snapshot?.validation_messages || []).slice(0,2).join(" | "),
+      _row:linkedRow, _stage:e.stage, _activity:ledgerType(e) || "all"
     });
   });
   const risky = riskyLedger.filter(e=>e.is_backdated || e.backdate_reason || e.approval_status || e.validation_snapshot?.backdate_reason || String(e.validation_status || e.validation_snapshot?.validation_status || "").includes("p0_date_sequence")).map(e=>{
@@ -8298,7 +8477,7 @@ function PlanningView({ rows, planRows, setPlanRows, ledger, setRows, onPlanUpse
     </div>
   </div>;
 }
-function ReviewView({ rows, ledger, planRows }){
+function ReviewView({ rows, ledger, planRows, onEditReconcile }){
   const [section,setSection] = useState("cannotClose");
   const [historyMode,setHistoryMode] = useState(()=>safeJsonLoad(uiStorageKey("review_history_mode"), "summary"));
   const [historyTab,setHistoryTab] = useState(()=>safeJsonLoad(uiStorageKey("review_history_tab"), "entry_log"));
@@ -8312,7 +8491,7 @@ function ReviewView({ rows, ledger, planRows }){
   const sectionMap = {
     ready:{ title:"Ready to Close", sub:"Numbers are clean; Production Coordinator should close these department/style balances.", rows:rb.ready },
     cannotClose:{ title:"Cannot Close — Open Balance", sub:"Main daily closure pain list. Department has unexplained/open balance; coordinator follows until explained/closed.", rows:rb.cannotClose },
-    reconcile:{ title:"Reconcile Review", sub:"Impossible sequences or total jumps. These are data-integrity blockers, not normal WIP.", rows:rb.reconcile },
+    reconcile:{ title:"Reconcile Review", sub:"Single editable list for P0 stock/date, conservation mismatch, saved overrides and impossible movement. Click any row to open exact Register correction context.", rows:rb.reconcile },
     ram:{ title:"Reject / Alter / Missing Review", sub:"Quality/loss/recovery control. Main list is horizontal/summary; reason breakup comes next.", rows:rb.ram },
     risky:{ title:"Backdate / Same-Day Entry Report", sub:"Date-only backdate/same-day entries are monitor flags, not approval blockers. P0 feed/sequence clashes stay in Reconcile Review.", rows:rb.risky },
     planDev:{ title:"Plan Deviation Review", sub:"Catches shortfalls and planned difficult styles being replaced by easier/unplanned output.", rows:rb.planDev },
@@ -8331,7 +8510,7 @@ function ReviewView({ rows, ledger, planRows }){
   function exportHistory(){ exportXlsx(`production_review_${historyTab}_${historyMode}_${today()}.xlsx`, [{ name:historyTitle, rows:historyRows }]); }
   function clearHistoryFilters(){ setHistorySearch(""); setHistoryDept("all"); }
   return <div className="mt-review-split">
-    <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Review — Coordinator Control Room</h3><div className="mt-panel-sub">Review now combines closure review, reconcile, plan deviation, entry log, cell history and change log. This mirrors the Merch Tracker direction: operational review first, audit trace beside it.</div></div><div className="mt-section no-print"><div className="mt-summary-strip">{Object.entries(sectionMap).map(([k,v])=><button key={k} className={`mt-summary-tile ${section===k?"active":""}`} onClick={()=>setSection(k)}><div className="label">{v.title}</div><div className="value">{v.rows.length}</div><div className="mt-small">review</div></button>)}</div><div className="mt-toolbar"><button className="mt-btn primary" onClick={exportReviewSection}><Download size={14}/>Export Selected Review</button><span className="mt-chip mt-info">Closure rows: {active.rows.length}</span><span className="mt-chip mt-muted">Today ledger groups: {todayRows.length}</span></div></div><div className="mt-section"><SimpleTable title={active.title} sub={active.sub} rows={active.rows} empty="Nothing pending in this review section." exportName={`review_${section}`} /></div><div className="mt-section"><span className="mt-chip mt-info">Closing owner: Production Coordinator</span> <span className="mt-chip mt-muted">Department HOD owns work completion</span> <span className="mt-chip mt-muted">Production Manager only WIP escalation / approvals</span></div></div>
+    <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Review — Coordinator Control Room</h3><div className="mt-panel-sub">Review now combines closure review, reconcile, plan deviation, entry log, cell history and change log. This mirrors the Merch Tracker direction: operational review first, audit trace beside it.</div></div><div className="mt-section no-print"><div className="mt-summary-strip">{Object.entries(sectionMap).map(([k,v])=><button key={k} className={`mt-summary-tile ${section===k?"active":""}`} onClick={()=>setSection(k)}><div className="label">{v.title}</div><div className="value">{v.rows.length}</div><div className="mt-small">review</div></button>)}</div><div className="mt-toolbar"><button className="mt-btn primary" onClick={exportReviewSection}><Download size={14}/>Export Selected Review</button><span className="mt-chip mt-info">Closure rows: {active.rows.length}</span><span className="mt-chip mt-muted">Today ledger groups: {todayRows.length}</span></div></div><div className="mt-section"><SimpleTable title={active.title} sub={active.sub} rows={active.rows} empty="Nothing pending in this review section." exportName={`review_${section}`} onRowClick={section === "reconcile" ? (r)=>onEditReconcile?.(r) : undefined} /></div><div className="mt-section"><span className="mt-chip mt-info">Closing owner: Production Coordinator</span> <span className="mt-chip mt-muted">Department HOD owns work completion</span> <span className="mt-chip mt-muted">Production Manager only WIP escalation / approvals</span></div></div>
     <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">History / Entry Log / Change Log</h3><div className="mt-panel-sub">Use this for cell history, overall production entry log, feed day summary, and change/audit review. All production quantities are grouped by actual/activity date.</div></div><div className="mt-section no-print"><div className="mt-history-kpis"><div className="mt-history-kpi"><div className="label">Ledger rows</div><div className="value">{fmt((ledger||[]).length)}</div></div><div className="mt-history-kpi"><div className="label">Entry groups</div><div className="value">{fmt(entryRows.length)}</div></div><div className="mt-history-kpi"><div className="label">Feed days</div><div className="value">{fmt(receivingRows.length)}</div></div><div className="mt-history-kpi"><div className="label">Change flags</div><div className="value">{fmt(changeRows.length)}</div></div></div><div className="mt-review-mode-bar"><span className="mt-toolbar-label">View</span>{[["entry_log","Entry Log"],["cell","Cell History"],["receiving","Feed Summary"],["changes","Change Log"]].map(([k,l])=><button key={k} className={`mt-btn ${historyTab===k?"active":"ghost"}`} onClick={()=>setHistoryTab(k)}>{l}</button>)}<span className="mt-toolbar-label">Mode</span>{[["summary","Summary"],["detail","Detailed"]].map(([k,l])=><button key={k} className={`mt-btn ${historyMode===k?"active":"ghost"}`} onClick={()=>setHistoryMode(k)} disabled={historyTab==="receiving" || historyTab==="changes"}>{l}</button>)}<span className="mt-toolbar-label">Dept</span><select className="mt-select" value={historyDept} onChange={e=>setHistoryDept(e.target.value)}><option value="all">All departments</option>{STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select><Search size={14}/><input className="mt-input" value={historySearch} onChange={e=>setHistorySearch(e.target.value)} placeholder="style / order / user / source / date" style={{minWidth:240}}/><button className="mt-btn ghost" onClick={clearHistoryFilters}>Clear</button><button className="mt-btn primary" onClick={exportHistory}><Download size={14}/>Export History</button></div></div><div className="mt-section"><SimpleTable title={historyTitle} sub={historySub} rows={historyRows} empty="No history rows match current filters." exportName={`history_${historyTab}_${historyMode}`} /></div></div>
   </div>;
 }
@@ -10483,7 +10662,7 @@ Continue?`);
   return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
     <style>{FONT + CSS}</style>
     <LoginDialog open={showLogin} force={!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
-    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">Production File Release is active in Live WIP, DPR Entry and Styles. Cutting feed now comes from released file qty.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
+    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">P0 stock/date guard is active across WIP and DPR entry/correction views. Problematic dated quantity clashes go to Reconcile.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
     <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Review · Reports. Supabase-first autosave · email login · audit/cell history · Excel-like exports.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className="mt-chip mt-info">{presenceSummaryText(presenceRows)}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${navCollapsed?"active":"ghost"}`} onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand left navigation"><Layers size={14}/>{navCollapsed?"Expand tabs":"Collapse tabs"}</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={recalculateStageQtyFromLedger} title="Admin recovery: rebuilds production_orders.stage_qty from production_entries ledger. Rows without ledger are left unchanged."><RefreshCw size={14}/>Recalc Totals</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div></div><PresenceStrip peers={presenceRows}/></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
@@ -10495,10 +10674,10 @@ Continue?`);
       <div className="mt-tab-panel" style={{display:tab==="dashboard"?"block":"none"}} aria-hidden={tab!=="dashboard"}><Dashboard rows={visibleRows} ledger={ledger} planRows={planRows} onDrill={setDashboardDrill} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="manager"?"block":"none"}} aria-hidden={tab!=="manager"}><ManagerActionCenter rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} ledger={ledger} onPlanUpsert={savePlanRowShared}/></div>
       <div className="mt-tab-panel" style={{display:tab==="planning"?"block":"none"}} aria-hidden={tab!=="planning"}><PlanningView rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} setRows={setRows} ledger={ledger} onPlanUpsert={savePlanRowShared} onPlanDelete={deletePlanCellShared} planSaveState={planSaveState}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="wip"?"block":"none"}} aria-hidden={tab!=="wip"}><WipStatus rows={visibleRows} onOpen={(row,stage)=>setDrawer({row,stage})} onEntry={openEntryFromWip} onRelease={openReleaseFromAnyScreen} clearTick={clearFiltersTick}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="wip"?"block":"none"}} aria-hidden={tab!=="wip"}><WipStatus rows={visibleRows} ledger={ledger} onOpen={(row,stage)=>setDrawer({row,stage})} onEntry={openEntryFromWip} onRelease={openReleaseFromAnyScreen} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="entry"?"block":"none"}} aria-hidden={tab!=="entry"}><QuickEntry rows={rows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={entryFocus} onRelease={openReleaseFromAnyScreen} onSharedSave={handleSharedSave}/></div>
       <div className="mt-tab-panel" style={{display:tab==="register"?"block":"none"}} aria-hidden={tab!=="register"}><OutputRegisterView rows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={registerFocus} clearTick={clearFiltersTick} onSharedSave={handleSharedSave}/></div>
-      <div className="mt-tab-panel" style={{display:tab==="review"?"block":"none"}} aria-hidden={tab!=="review"}><ReviewView rows={visibleRows} ledger={ledger} planRows={planRows}/></div>
+      <div className="mt-tab-panel" style={{display:tab==="review"?"block":"none"}} aria-hidden={tab!=="review"}><ReviewView rows={visibleRows} ledger={ledger} planRows={planRows} onEditReconcile={(r)=>{ const target = r?._row || calcRows.find(row=>String(row.order_no||"")===String(r?.Order||"") && String(row.style_no||"")===String(r?.Style||"") && String(row.colour||"")===String(r?.Colour||"") && String(row.component||"")===String(r?.Component||"")); if (target) openRegisterFromWip(target, r?._stage || STAGES.find(s=>s.label===r?.Dept)?.key || "all", r?._activity || "all"); }}/></div>
       <div className="mt-tab-panel" style={{display:tab==="owners"?"block":"none"}} aria-hidden={tab!=="owners"}><WhoToChase rows={visibleRows}/></div>
       <div className="mt-tab-panel" style={{display:tab==="monthly"?"block":"none"}} aria-hidden={tab!=="monthly"}><MonthlyComparison rows={visibleRows} ledger={ledger} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="styles"?"block":"none"}} aria-hidden={tab!=="styles"}><StyleManager rows={visibleRows} allRows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} focus={styleFocus} clearTick={clearFiltersTick} onRelease={openReleaseFromAnyScreen} onSharedSave={handleSharedSave}/></div>
