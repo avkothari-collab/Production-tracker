@@ -9002,6 +9002,9 @@ function ProductionFileReleaseModal({ row, source="", onClose, onSave }){
   const [date,setDate] = useState(()=>fileReleaseDate(row) || today());
   const [reason,setReason] = useState(()=>isProductionFileReleased(row) ? "Release correction / update" : "Production file released to Cutting");
   const [managerOverride,setManagerOverride] = useState(false);
+  const [pctFill,setPctFill] = useState("");
+  const [shortCloseOn,setShortCloseOn] = useState(false);
+  const [shortCloseReason,setShortCloseReason] = useState(row?.cutting_short_close_reason || "Management approved: remaining balance will not be released/cut");
   const cleanQty = n(qty);
   const toleranceQty = orderTotal ? Math.floor(orderTotal * (1 + cuttingToleranceFrac())) : 0;
   const previewRow = { ...(row || {}), file_released_qty:cleanQty, file_released_date:date };
@@ -9010,10 +9013,15 @@ function ProductionFileReleaseModal({ row, source="", onClose, onSave }){
   const overOrder = orderTotal > 0 && cleanQty > orderTotal;
   const overAllowed = orderTotal > 0 && cleanQty > orderTotal * (1 + cuttingToleranceFrac());
   const belowExisting = cleanQty > 0 && existingCut > cleanQty;
-  const saveBlocked = !cleanQty || belowExisting || (overAllowed && !managerOverride);
+  const pendingQty = Math.max(0, orderTotal - cleanQty);
+  const releasePct = orderTotal > 0 ? Math.round((cleanQty / orderTotal) * 1000) / 10 : 0;
+  const existingShortClose = cuttingShortCloseQty(row);
+  const saveBlocked = !cleanQty || belowExisting || (overAllowed && !managerOverride) || (shortCloseOn && !shortCloseReason.trim());
   const fillOrder = () => { setQty(String(orderTotal || "")); setReason("Release qty autofilled from order qty"); };
   const fillCut = () => { setQty(String(existingCut || orderTotal || "")); setReason(existingCut ? "Release qty autofilled from existing cutting output" : "Release qty autofilled from order qty"); };
   const fillReleased = () => { setQty(String(existingRelease || orderTotal || "")); setReason("Release correction / update"); };
+  const fillPct = (pct) => { const v = Math.round(orderTotal * (pct/100)); setQty(String(v)); setPctFill(String(pct)); setReason(`Release qty autofilled at ${pct}% of order qty`); };
+  const applyCustomPct = () => { const pct = n(pctFill); if (!pct || pct <= 0) return; fillPct(pct); };
   return <div className="mt-update-backdrop no-print"><div className="mt-release-modal mt-release-modal-v42"><div className="head"><div><div style={{fontFamily:"'Archivo',sans-serif", fontWeight:800, fontSize:24}}>Release Production File to Cutting</div><div className="mt-sub">{row?.style_no} · {row?.order_no} · {row?.buyer} · {row?.colour} · {row?.component}</div></div><button className="mt-btn" onClick={onClose} title="Close"><X size={18}/></button></div>
     <div className="body">
       <div className="mt-release-help"><b>Meaning:</b> this is the Cutting feed/handover. For old styles, use <b>Use cut qty</b> if cutting is already entered, or <b>Use order qty</b> for normal release. It is not an issue-forward entry.</div>
@@ -9022,6 +9030,8 @@ function ProductionFileReleaseModal({ row, source="", onClose, onSave }){
         <div><span>Existing cut accounted</span><b>{fmt(existingCut)}</b></div>
         <div><span>Current release</span><b>{fmt(existingRelease)}</b></div>
         <div><span>Max normal release incl. tolerance</span><b>{fmt(toleranceQty || orderTotal)}</b></div>
+        <div><span>Pending (not yet released)</span><b>{fmt(pendingQty)}</b></div>
+        <div><span>Release %</span><b>{releasePct}%</b></div>
       </div>
       <div className="mt-release-fastfill">
         <span className="mt-toolbar-label">Fast fill</span>
@@ -9030,17 +9040,32 @@ function ProductionFileReleaseModal({ row, source="", onClose, onSave }){
         {existingRelease ? <button className="mt-btn ghost" type="button" onClick={fillReleased}>Use current release</button> : null}
         <span className="mt-small">For old styles with cutting already done, use cut qty and save.</span>
       </div>
+      <div className="mt-release-fastfill">
+        <span className="mt-toolbar-label">% of order qty</span>
+        <button className="mt-btn ghost" type="button" onClick={()=>fillPct(25)}>25%</button>
+        <button className="mt-btn ghost" type="button" onClick={()=>fillPct(50)}>50%</button>
+        <button className="mt-btn ghost" type="button" onClick={()=>fillPct(75)}>75%</button>
+        <button className="mt-btn ghost" type="button" onClick={()=>fillPct(100)}>100%</button>
+        <input className="mt-input" style={{width:80}} type="number" value={pctFill} onChange={e=>setPctFill(e.target.value)} placeholder="Custom %"/>
+        <button className="mt-btn ghost" type="button" onClick={applyCustomPct}>Apply %</button>
+      </div>
       <div className="mt-two">
         <div><label className="mt-small">Release qty</label><input className="mt-input mandatory mt-release-big-input" type="number" value={qty} onChange={e=>setQty(e.target.value)} /></div>
         <div><label className="mt-small">Release date</label><input className="mt-input mandatory mt-release-big-input" type="date" value={date} onChange={e=>setDate(e.target.value)} /></div>
       </div>
       <div><label className="mt-small">Reason / handover note</label><input className="mt-input mt-release-note-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Production file released to Cutting" /></div>
-      <div className="mt-context-strip"><span className="mt-chip mt-muted">Order {fmt(orderTotal)}</span><span className={`mt-chip ${isProductionFileReleased(previewRow)?"mt-ok":"mt-warn"}`}>{fileReleaseStatusText(previewRow)}</span><span className="mt-chip mt-info">Generated size feed {fmt(releaseTotal)}</span>{overOrder && !overAllowed ? <span className="mt-chip mt-info">Over order, within tolerance</span> : null}{overAllowed ? <span className="mt-chip mt-late">Above tolerance</span> : null}{belowExisting ? <span className="mt-chip mt-late">Below existing cut output</span> : null}</div>
+      <div className="mt-context-strip"><span className="mt-chip mt-muted">Order {fmt(orderTotal)}</span><span className={`mt-chip ${isProductionFileReleased(previewRow)?"mt-ok":"mt-warn"}`}>{fileReleaseStatusText(previewRow)}</span><span className="mt-chip mt-info">Generated size feed {fmt(releaseTotal)}</span><span className="mt-chip mt-warn">Pending {fmt(pendingQty)} ({releasePct}% released)</span>{overOrder && !overAllowed ? <span className="mt-chip mt-info">Over order, within tolerance</span> : null}{overAllowed ? <span className="mt-chip mt-late">Above tolerance</span> : null}{belowExisting ? <span className="mt-chip mt-late">Below existing cut output</span> : null}</div>
       {belowExisting ? <div className="mt-locked-note">Existing cutting accounted qty is {fmt(existingCut)}, which is above this release qty. Use cut qty or correct old cutting output/R/A/M first.</div> : null}
       {overAllowed ? <div className="mt-locked-note">Release qty is above order + configured cutting tolerance. This is normally blocked. Tick manager override only when this old style genuinely needs it.</div> : null}
       {overAllowed ? <label className="mt-check-row"><input type="checkbox" checked={managerOverride} onChange={e=>setManagerOverride(e.target.checked)} />Manager override for old style / approved over-release</label> : null}
+      {pendingQty > 0 ? <div className="mt-section mt-card" style={{marginTop:12}}>
+        <h3 className="mt-panel-title">Short close remaining balance</h3>
+        <div className="mt-panel-sub">If the {fmt(pendingQty)} pcs not being released will never be cut (order reduced, fabric shortage, buyer cancellation of a partial qty, etc.), mark it short-closed here instead of leaving it as an open pending release forever.{existingShortClose ? ` Already short-closed so far: ${fmt(existingShortClose)}.` : ""}</div>
+        <label className="mt-check-row" style={{marginTop:6}}><input type="checkbox" checked={shortCloseOn} onChange={e=>setShortCloseOn(e.target.checked)} />Short close the {fmt(pendingQty)} pcs not being released now</label>
+        {shortCloseOn ? <div style={{marginTop:6}}><label className="mt-small">Reason / approval note</label><input className="mt-input" value={shortCloseReason} onChange={e=>setShortCloseReason(e.target.value)} placeholder="Management approved: remaining balance will not be released/cut" /></div> : null}
+      </div> : null}
       <div><h3 className="mt-panel-title">Released size feed preview</h3><div className="mt-panel-sub">Size split is derived from the style order size breakup and scaled to the release qty. For exact size changes, edit Style size breakup first, then release.</div><div className="mt-release-size-grid" style={{marginTop:8}}>{sizesFor(row).map(size=><div className="mt-release-size-cell" key={size}><b>{fmt(releaseMap[size])}</b><span>{size}</span></div>)}</div></div>
-      <div className="mt-release-actions"><button className="mt-btn ghost" onClick={onClose}>Cancel</button><button className="mt-btn primary" disabled={saveBlocked} onClick={()=>onSave?.({ qty:cleanQty, date, reason, source, managerOverride })}><CheckCircle2 size={14}/>Save Release</button></div>
+      <div className="mt-release-actions"><button className="mt-btn ghost" onClick={onClose}>Cancel</button><button className="mt-btn primary" disabled={saveBlocked} onClick={()=>onSave?.({ qty:cleanQty, date, reason, source, managerOverride, shortCloseQty:shortCloseOn ? pendingQty : 0, shortCloseReason:shortCloseOn ? shortCloseReason.trim() : "" })}><CheckCircle2 size={14}/>Save Release</button></div>
     </div></div></div>;
 }
 
@@ -9587,10 +9612,19 @@ function styleFromExcelRow(raw, existing){
   const oqNum = oq === "" ? n(existing?.order_qty) : n(oq);
   const sizeSet = excelValue(raw,["Size Set","SizeSet","Sizes"]);
   const sizeSetNorm = sizeSet === "" ? inferSizeSetFromExcel(raw, existing?.size_set || "alpha", oqNum) : normalizeSizeSetName(sizeSet);
-  const ratioVal = String(excelValue(raw,["Size Ratio","Ratio","Size Ratio Pattern","Order Ratio"]) || existing?.size_ratio || "").trim().toUpperCase();
+  const ratioValRaw = excelValue(raw,["Size Ratio","Ratio","Size Ratio Pattern","Order Ratio"]);
+  let ratioVal = "";
+  let ratioIssue = "";
+  if (ratioValRaw !== "" && typeof ratioValRaw === "number") {
+    ratioIssue = `Size Ratio cell looks like it was auto-converted by Excel into a number/time value (read as ${ratioValRaw}) instead of text like 1:2:2:1. Format that column as Text in Excel and re-type the ratio, e.g. 1:2:2:1.`;
+  } else {
+    ratioVal = String(ratioValRaw !== "" ? ratioValRaw : (existing?.size_ratio || "")).trim().toUpperCase();
+  }
   let orderSizeQty = extractOrderSizeQtyFromExcel(raw, sizeSetNorm, existing);
-  const ratioApply = ratioVal ? distributeByRatio(oqNum, getSizeSets()[sizeSetNorm] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha, ratioVal) : null;
-  if (ratioApply && !ratioApply.error) orderSizeQty = normalizeSizeQtyMap(ratioApply.qty, getSizeSets()[sizeSetNorm] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha);
+  const ratioSizes = getSizeSets()[sizeSetNorm] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha;
+  const ratioApply = ratioVal ? distributeByRatio(oqNum, ratioSizes, ratioVal) : null;
+  if (ratioApply && !ratioApply.error) orderSizeQty = normalizeSizeQtyMap(ratioApply.qty, ratioSizes);
+  if (ratioApply && ratioApply.error) ratioIssue = ratioIssue || `Size Ratio '${ratioVal}' could not be applied: ${ratioApply.error}`;
   const orderSizeTotal = qtyMapTotal(orderSizeQty);
   const line = excelValue(raw,["Planning Line Override","Default Line","Line","Stitching Line"]);
   const printVal = excelValue(raw,["Print Required","Print","Printing"]);
@@ -9604,7 +9638,8 @@ function styleFromExcelRow(raw, existing){
     order_qty: oqNum,
     order_size_qty: orderSizeQty,
     size_set: sizeSetNorm,
-    size_ratio: ratioVal,
+    size_ratio: ratioVal || (existing?.size_ratio || ""),
+    _ratio_issue: ratioIssue,
     set_id: String(excelValue(raw,["Set ID","Set","SetId"]) || existing?.set_id || "").trim().toUpperCase(),
     line: String(line || existing?.line || "").trim(),
     print_required: printVal === "" ? !!existing?.print_required : parseExcelBool(printVal),
@@ -10027,6 +10062,7 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
         }
         const clean = styleFromExcelRow(raw, existing);
         rec.clean = clean;
+        if (clean._ratio_issue) rec.warnings.push(clean._ratio_issue);
         const rawSizeSet = excelValue(raw,["Size Set","SizeSet","Sizes"]);
         if (!rawSizeSet) rec.warnings.push(`Size Set blank: app selected ${sizeSetInferenceLabel(raw, clean.size_set, clean.order_qty)}. This uses filled size values, not template headers.`);
         if (!rawSizeSet && existing && existing.size_set && clean.size_set !== existing.size_set) rec.errors.push(`Size-set would silently change from '${existing.size_set}' to '${clean.size_set}' for an existing style — the file left Size Set blank and the app inferred a different set than this style already uses. This is exactly the kind of silent mismatch that has caused wrong-size-key entries before. Put '${existing.size_set}' explicitly in the Size Set column (or fix the size columns) before applying.`);
@@ -10624,16 +10660,21 @@ Continue?`);
     const key = styleCompositeKey(row);
     const baseRow = rows.find(r=>styleCompositeKey(r)===key) || row;
     const calcRow = calcRows.find(r=>styleCompositeKey(r)===key) || row;
-    const updatedBase = { ...baseRow, file_released_qty:qty, file_released_date:date };
-    const updatedForSave = { ...calcRow, file_released_qty:qty, file_released_date:date };
-    setRows(prev=>prev.map(r=>styleCompositeKey(r)===key ? { ...r, file_released_qty:qty, file_released_date:date } : r));
+    const shortCloseAddQty = Math.max(0, n(payload.shortCloseQty));
+    const shortCloseExtra = shortCloseAddQty > 0 ? {
+      cutting_short_close_qty: cuttingShortCloseQty(baseRow) + shortCloseAddQty,
+      cutting_short_close_reason: String(payload.shortCloseReason || "Management approved: remaining balance will not be released/cut").trim(),
+    } : {};
+    const updatedBase = { ...baseRow, file_released_qty:qty, file_released_date:date, ...shortCloseExtra };
+    const updatedForSave = { ...calcRow, file_released_qty:qty, file_released_date:date, ...shortCloseExtra, stages: shortCloseAddQty > 0 ? { ...(calcRow.stages||{}), cutting:{ ...blankStage(), ...(calcRow.stages?.cutting||{}), short_close:shortCloseExtra.cutting_short_close_qty } } : calcRow.stages };
+    setRows(prev=>prev.map(r=>styleCompositeKey(r)===key ? { ...r, file_released_qty:qty, file_released_date:date, ...shortCloseExtra, stages: updatedForSave.stages } : r));
     setReleaseFocus(null);
     setNotice({ tone:"warn", text:`Saving production file release for ${row.style_no} · ${fmt(qty)} pcs…` });
     const result = await robustUpsertOrdersToSupabase([updatedForSave]);
     if (result?.error) { setNotice({ tone:"late", text:`Release saved locally, Supabase failed: ${result.error.message}` }); return; }
     if (result?.warning || result?.skipped) { setNotice({ tone:"warn", text:`Release saved locally only: ${result.warning || "Supabase skipped"}` }); return; }
-    recordProductionAudit("production_file_release", { table_name:"production_orders", order_no:row.order_no, style_no:row.style_no, colour:row.colour, component:row.component, entry_type:"production_file_release", entry_date:date, qty, source:payload.source || releaseFocus?.source || "Release modal", metadata:{ reason, manager_override:!!payload.managerOverride, previous_qty:fileReleaseQty(baseRow), previous_date:fileReleaseDate(baseRow), released_size_qty:fileReleaseSizeQtyMap(updatedBase) } });
-    setNotice({ tone:"ok", text:`Production file released: ${row.style_no} · ${fmt(qty)} pcs · ${date}. Cutting feed is now active.` });
+    recordProductionAudit("production_file_release", { table_name:"production_orders", order_no:row.order_no, style_no:row.style_no, colour:row.colour, component:row.component, entry_type:"production_file_release", entry_date:date, qty, source:payload.source || releaseFocus?.source || "Release modal", metadata:{ reason, manager_override:!!payload.managerOverride, previous_qty:fileReleaseQty(baseRow), previous_date:fileReleaseDate(baseRow), released_size_qty:fileReleaseSizeQtyMap(updatedBase), short_close_qty:shortCloseAddQty, short_close_reason:shortCloseExtra.cutting_short_close_reason || "" } });
+    setNotice({ tone:"ok", text:`Production file released: ${row.style_no} · ${fmt(qty)} pcs · ${date}. Cutting feed is now active.${shortCloseAddQty ? ` Remaining ${fmt(shortCloseAddQty)} pcs short-closed.` : ""}` });
     handleSharedSave(result, "Production file release");
   }
   async function seedSupabase(){
