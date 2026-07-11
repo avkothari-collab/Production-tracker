@@ -5040,6 +5040,17 @@ function dprMovementFieldKeys(field){
   if (field === "all_movement" || field === "all") return ["output", "issued"];
   return [field || "output"];
 }
+function ledgerTypeToField(type){
+  const t = String(type || "").toLowerCase();
+  if (["good_output","output","completed","complete","done"].includes(t)) return "output";
+  if (["issue","issued"].includes(t)) return "issued";
+  if (["receive","received"].includes(t)) return "received";
+  if (["reject","rejection"].includes(t)) return "reject";
+  if (t === "missing") return "missing";
+  if (t === "alter" || t === "alter_issue") return "alter";
+  if (t === "alter_clear") return "alter_clear";
+  return t || "output";
+}
 function dprEntryActivityRows(rows=[], ledger=[], { date="", dept="all", field="all_movement", limit=600 }={}){
   const rowByKey = new Map((rows||[]).map(r=>[styleCompositeKey(r), r]));
   const types = new Set(dprMovementFieldKeys(field).map(entryTypeForField).map(x=>String(x).toLowerCase()));
@@ -5077,7 +5088,8 @@ function dprEntryActivityRows(rows=[], ledger=[], { date="", dept="all", field="
       _rowId:row.id,
       _rowKey:styleCompositeKey(row),
       _stageKey:stg,
-      _entryType:typ
+      _entryType:typ,
+      _row:row
     });
     const g = groups.get(key);
     const qty = n(e.qty ?? e.delta);
@@ -5107,6 +5119,7 @@ function dprEntryActivityRows(rows=[], ledger=[], { date="", dept="all", field="
     Component:g.Component,
     Net_Total:g.Net_Total,
     Total:g.Total,
+    Open_Qty_After:g._row ? entryOpenQtyAsOf(g._row, g._stageKey, ledgerTypeToField(g._entryType), ledger, g._sortDate || null) : "—",
     Size_Breakup:Object.entries(g.Sizes||{}).filter(([,v])=>n(v)).map(([k,v])=>`${k} ${fmt(v)}`).join(" · ") || "—",
     Posting:g.Correction_Rows ? `Final after ${g.Correction_Rows} correction/reversal row(s)` : "Original entry",
     Entry_Rows:g.Entry_Rows,
@@ -5690,7 +5703,7 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
 
   function DprActivityEditableTable({ title, sub, rows:activityRows, empty }){
     const raw = Array.isArray(activityRows) ? activityRows : [];
-    const cols = ["Date","Department","Action","Style","Colour","Component","Net_Total","Size_Breakup","Posting"];
+    const cols = ["Date","Department","Action","Style","Colour","Component","Net_Total","Open_Qty_After","Size_Breakup","Posting"];
     return <div className="mt-card mt-readable-table mt-readable-feed">
       <div className="mt-section"><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{sub}</div></div>
       <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{friendlyTableHeader(c)}</th>)}<th className="no-print">Edit here</th></tr></thead><tbody>
