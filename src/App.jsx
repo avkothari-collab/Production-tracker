@@ -1395,9 +1395,43 @@ function entrySizeGateMessages(changes=[], opts={}){
   return Array.from(new Set(messages));
 }
 function cleanPositiveEntryInput(value){ return Math.max(0, n(String(value || "").replace(/[^0-9]/g,""))); }
-function cappedEntryInputValue(row, stage, field, size, value){
+function entryFieldContextAsOf(row, stage, field, ledger=null, asOfDate=null){
+  const base = entryFieldContext(row, stage, field);
+  if (!asOfDate || !Array.isArray(ledger) || !ledger.length) return base;
+  const snap = p0AsOfStageSnapshot(row, ledger, stage, asOfDate);
+  const output = n(snap.output.qty), issued = n(snap.issued.qty), feed = n(snap.feed.qty), ram = n(snap.ram), alter = n(snap.alter.qty);
+  if (field === "issued") return { ...base, available:output, previous:issued, open:Math.max(0, output-issued) };
+  if (field === "output") { const avail = stage === "cutting" ? cuttingBaseQty(row) : feed; return { ...base, available:avail, previous:output, open:Math.max(0, avail-output-ram) }; }
+  if (["reject","missing","alter"].includes(field)) return { ...base, available:feed, previous:n(snap[field]?.qty), open:Math.max(0, feed-output-ram) };
+  if (field === "alter_clear") return { ...base, available:alter, previous:output, open:alter };
+  return base;
+}
+function entryFieldSizeContextAsOf(row, stage, field, size, ledger=null, asOfDate=null){
+  if (!asOfDate || !Array.isArray(ledger) || !ledger.length) return entryFieldSizeContext(row, stage, field, size);
+  const snap = p0AsOfStageSnapshot(row, ledger, stage, asOfDate);
+  const output = n(snap.output.sizes?.[size]);
+  const issued = n(snap.issued.sizes?.[size]);
+  const reject = n(snap.reject.sizes?.[size]);
+  const alter = n(snap.alter.sizes?.[size]);
+  const missing = n(snap.missing.sizes?.[size]);
+  const ram = reject + alter + missing;
+  const feed = n(snap.feed.sizes?.[size]);
+  if (field === "issued") return { available:output, previous:issued, open:Math.max(0, output-issued) };
+  if (field === "output") { const cutSizeQty = n(fileReleaseSizeQtyMap(row)[size]); const avail = stage === "cutting" ? cutSizeQty : feed; return { available:avail, previous:output, open:Math.max(0, avail-output-ram) }; }
+  if (["reject","missing","alter"].includes(field)) return { available:feed, previous:n({reject,missing,alter}[field]), open:Math.max(0, feed-output-ram) };
+  if (field === "alter_clear") return { available:alter, previous:output, open:alter };
+  return entryFieldSizeContext(row, stage, field, size);
+}
+function futureEntryNote(row, ledger, stage, field, asOfDate){
+  if (!asOfDate) return null;
+  const future = futureDependentLedgerEntries(row, ledger || [], stage, field, asOfDate);
+  if (!future.length) return null;
+  const qty = future.reduce((a,e)=>a+n(e.qty ?? e.delta),0);
+  return `${future.length} later entr${future.length>1?"ies":"y"} already posted after ${asOfDate} (${fmt(qty)} qty). Check before saving to avoid double entry.`;
+}
+function cappedEntryInputValue(row, stage, field, size, value, ledger=null, asOfDate=null){
   const requested = cleanPositiveEntryInput(value);
-  const open = Math.max(0, n(entryFieldSizeContext(row, stage, field, size).open));
+  const open = Math.max(0, n(entryFieldSizeContextAsOf(row, stage, field, size, ledger, asOfDate).open));
   return String(Math.min(requested, open));
 }
 function dayCloseSummaryRows(ledger=[], entryDate=today()){
@@ -4947,13 +4981,14 @@ function SizeCumulativeEditor({ row, rows, setRows, ledger, setLedger, stage, in
   const entryStageIsAll = stage === "all";
   const entryFieldIsAll = field === "all_movement" || field === "all";
   function getVal(_, size){ const key = `${row.id}|${size}`; return draft[key] !== undefined ? draft[key] : ""; }
-  function setVal(size, value){ setDraft(d=>({ ...d, [`${row.id}|${size}`]:cappedEntryInputValue(row, stage, field, size, value) })); }
+  function setVal(size, value){ setDraft(d=>({ ...d, [`${row.id}|${size}`]:cappedEntryInputValue(row, stage, field, size, value, ledger, entryDate) })); }
   const validation = validateDailyEntry(row, stage, field, getVal, ledger, entryDate);
-  const ctx = entryFieldContext(row, stage, field);
+  const ctx = entryFieldContextAsOf(row, stage, field, ledger, entryDate);
   const orderVariance = sizeVarianceInfo(row.order_qty, normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row)));
   const changes = dailySizeRows(row, stage, field, getVal, ledger, entryDate);
   const newQty = changes.reduce((a,c)=>a+n(c.delta),0);
-  const sizeContexts = sizes.map(size=>({ size, ...entryFieldSizeContext(row,stage,field,size), entry:n(getVal(row,size)) }));
+  const sizeContexts = sizes.map(size=>({ size, ...entryFieldSizeContextAsOf(row,stage,field,size,ledger,entryDate), entry:n(getVal(row,size)) }));
+  const futureNote = futureEntryNote(row, ledger, stage, field, entryDate);
   const fillOpen = () => setDraft(d=>{ const nd={...d}; sizeContexts.forEach(x=>{ nd[`${row.id}|${x.size}`]=String(Math.max(0,n(x.open))); }); return nd; });
   const clear = () => setDraft({});
   async function save(){
@@ -4994,7 +5029,7 @@ Save locally in this browser anyway? Other users will not see it until Supabase 
   }
   return <div className="mt-edit-panel">
     <div className="mt-edit-panel-head"><h3 className="mt-panel-title">{stageLabel(stage)} — {fieldLabel(field)}</h3><div className="mt-panel-sub">Selected department only. Enter new quantity by size for the selected date. The updated total is shown as a cross-check, not as editable cumulative entry.</div>{lastSaveMsg && <div className={`mt-save-banner ${lastSaveMsg.tone === "warn" ? "warn" : ""}`}><CheckCircle2 size={16}/>{lastSaveMsg.text}</div>}</div>
-    <div className="mt-section no-print"><div className="mt-backdate-box"><span className="mt-toolbar-label">Entry Date</span><input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /><span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span><span className="mt-toolbar-label">Dept</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-toolbar-label">Entry Field</span>{operatorSimpleMode ? <span className="mt-chip mt-info">{fieldLabel(field)}</span> : <select className="mt-select" value={field} onChange={e=>setField(e.target.value)}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>}{risk.days>1 && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate note optional/report flag" style={{minWidth:250}} />}</div>{!operatorSimpleMode && <div className="mt-ram-action-bar"><span className="mt-toolbar-label">R/A/M closure rows</span>{RAM_ENTRY_FIELDS.map(f=><button key={f.key} className={`mt-btn ghost ${field===f.key?"active":""}`} onClick={()=>{setField(f.key); setDraft({});}}>{f.label}</button>)}<span className="mt-small">Use these only to close/explain small balances; normal production entry stays Output / Issue-Feed. No separate Receive entry.</span></div>}{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated date: report flag only. Quantity/feed/P0 sequence clashes still require reconcile review.</div>}</div>
+    <div className="mt-section no-print"><div className="mt-backdate-box"><span className="mt-toolbar-label">Entry Date</span><input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /><span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span><span className="mt-toolbar-label">Dept</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-toolbar-label">Entry Field</span>{operatorSimpleMode ? <span className="mt-chip mt-info">{fieldLabel(field)}</span> : <select className="mt-select" value={field} onChange={e=>setField(e.target.value)}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>}{risk.days>1 && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate note optional/report flag" style={{minWidth:250}} />}</div>{!operatorSimpleMode && <div className="mt-ram-action-bar"><span className="mt-toolbar-label">R/A/M closure rows</span>{RAM_ENTRY_FIELDS.map(f=><button key={f.key} className={`mt-btn ghost ${field===f.key?"active":""}`} onClick={()=>{setField(f.key); setDraft({});}}>{f.label}</button>)}<span className="mt-small">Use these only to close/explain small balances; normal production entry stays Output / Issue-Feed. No separate Receive entry.</span></div>}{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated date: report flag only. Quantity/feed/P0 sequence clashes still require reconcile review.</div>}{futureNote && <div className="mt-locked-note" style={{marginTop:8}}><AlertTriangle size={14}/> {futureNote}</div>}</div>
     <div className="mt-section"><div className="mt-entry-hero"><div className="mt-entry-hero-title"><span>{row.style_no}</span><span className="mt-chip mt-muted">{row.order_no}</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-chip mt-warn">{fieldLabel(field)}</span></div><div className="mt-entry-hero-sub">{ctx.note} Reductions/corrections are not normal entry and must go through approval.</div>{orderVariance.diff !== 0 && <div className={`mt-chip ${statusClass(orderVariance.tone)}`} style={{marginTop:8}}>{orderVariance.text}</div>}<div className="mt-mandatory-note"><AlertTriangle size={14}/> Highlighted size boxes are open/mandatory when entering this row. Blank means no quantity entered for that size.</div></div><div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">{ctx.availableLabel}</div><div className="value">{fmt(ctx.available)}</div><div className="note">source / feed</div></div><div className="mt-entry-metric"><div className="label">{ctx.previousLabel}</div><div className="value">{fmt(ctx.previous)}</div><div className="note">already entered</div></div><div className="mt-entry-metric"><div className="label">{ctx.openLabel}</div><div className="value">{fmt(ctx.open)}</div><div className="note">balance before entry</div></div><div className="mt-entry-metric"><div className="label">New Entry</div><div className="value">{fmt(newQty)}</div><div className="note">selected date</div></div><div className="mt-entry-metric"><div className="label">Cumulative After</div><div className="value">{fmt(validation.updatedTotal)}</div><div className="note">{fmt(validation.updatedTotal)} / {fmt(ctx.available)} total</div></div><div className="mt-entry-metric"><div className="label">Remaining After</div><div className="value">{fmt(Math.max(0, n(ctx.open)-newQty))}</div><div className="note">after saving</div></div></div><div className="mt-entry-row-actions"><button className="mt-btn" onClick={fillOpen}>Auto-fill open qty</button><button className="mt-btn ghost" onClick={clear}>Clear entry</button><button className="mt-btn primary" onClick={save} disabled={isSaving || !changes.length || hardBlockMessages(validation).length || reasonMissing}><CheckCircle2 size={14}/>{isSaving ? "Saving..." : "Save Day Entry"}</button></div></div>
     <div className="mt-section"><div className="mt-dept-size-grid">{sizeContexts.map(x=>{ const remaining=Math.max(0,n(x.open)-n(x.entry)); const baseField=field==="alter_clear"?"output":field; const prev=n(sizeMatrix(row,stage,baseField).find(v=>v.size===x.size)?.qty); const updated=prev+n(x.entry); const blocked=field==="alter_clear" && n(x.entry)>n(x.open); return <div key={x.size} className="mt-dept-size-box"><div className="size">{x.size}</div><div className="line"><span>Open</span><b>{fmt(x.open)}</b></div><input className={`mt-cell-input ${n(x.open)>0?"mandatory":""} ${draft[`${row.id}|${x.size}`]!==undefined?"dirty":""} ${blocked||validation.blocked?"blocked":""}`} value={getVal(row,x.size)} onChange={e=>setVal(x.size,e.target.value)} placeholder="0" max={Math.max(0,n(x.open))} title={`Max allowed now: ${fmt(x.open)}`} style={{width:"100%", marginTop:6}}/><div className="line"><span>Remaining</span><b>{fmt(remaining)}</b></div><div className="line"><span>Updated total</span><b>{fmt(updated)}</b></div></div>;})}</div>{validation.p0DateViolation && <div className="mt-p0-inline-warning"><b>P0 review required:</b> {p0DateViolationText(validation,4)}. Save needs reason + confirmation and will appear in Reconcile.</div>}{hardBlockMessages(validation).length ? <div className="mt-locked-note" style={{marginTop:10}}>Blocked: {hardBlockMessages(validation).join("; ")}</div> : null}</div>
   </div>;
@@ -5527,11 +5562,11 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
   const risk = backdateRisk(entryDate);
   const allSizes = Array.from(new Set(displayRows.flatMap(sizesFor)));
   function getVal(row, size){ const key = `${row.id}|${size}`; return draft[key] !== undefined ? draft[key] : ""; }
-  function setVal(row, size, val){ setDraft(d => ({ ...d, [`${row.id}|${size}`]: cappedEntryInputValue(row, stage, field, size, val) })); }
+  function setVal(row, size, val){ setDraft(d => ({ ...d, [`${row.id}|${size}`]: cappedEntryInputValue(row, stage, field, size, val, ledger, entryDate) })); }
   function validate(row){ return validateDailyEntry(row, stage, field, getVal, ledger, entryDate); }
-  function fillRowOpen(row){ setDraft(d=>{ const nd={...d}; sizesFor(row).forEach(sz=>{ nd[`${row.id}|${sz}`]=String(Math.max(0,n(entryFieldSizeContext(row,stage,field,sz).open))); }); return nd; }); }
+  function fillRowOpen(row){ setDraft(d=>{ const nd={...d}; sizesFor(row).forEach(sz=>{ nd[`${row.id}|${sz}`]=String(Math.max(0,n(entryFieldSizeContextAsOf(row,stage,field,sz,ledger,entryDate).open))); }); return nd; }); }
   function clearRow(row){ setDraft(d=>{ const nd={...d}; sizesFor(row).forEach(sz=>delete nd[`${row.id}|${sz}`]); return nd; }); }
-  function fillAllOpen(){ setDraft(d=>{ const nd={...d}; activeRows.forEach(row=>sizesFor(row).forEach(sz=>{ nd[`${row.id}|${sz}`]=String(Math.max(0,n(entryFieldSizeContext(row,stage,field,sz).open))); })); return nd; }); }
+  function fillAllOpen(){ setDraft(d=>{ const nd={...d}; activeRows.forEach(row=>sizesFor(row).forEach(sz=>{ nd[`${row.id}|${sz}`]=String(Math.max(0,n(entryFieldSizeContextAsOf(row,stage,field,sz,ledger,entryDate).open))); })); return nd; }); }
   async function save(){
     if (saveLockRef.current) { notify("Save already in progress. Please wait.", "Duplicate save blocked"); return; }
     const changed = activeRows.flatMap(row => dailySizeRows(row, stage, field, getVal, ledger, entryDate));
@@ -5743,13 +5778,16 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
         <div className="mt-plan-collapse-body"><SimpleTable title={`Day Close — ${entryDate}`} sub="Human reconciliation point: review what was entered today before closing the day." rows={dayCloseSummaryRows(ledger, entryDate)} empty="No DPR rows saved for this date yet." /></div>
       </details> : <div className="mt-speed-note" style={{marginTop:8}}>All dates review mode. Pick a date only when saving a new DPR entry or reviewing day close.</div>}
     </div>
-    {viewMode === "dept" ? <div className="mt-section">
+    {viewMode === "dept" ? <>
+    <div className="mt-section">
       <DprActivityEditableTable title={`${stage === "all" ? "All departments" : stageLabel(stage)} DPR history`} sub="Dept view: posted entries across dates. Open balances below are date/quantity checked as-of selected date when a date is chosen; future ledger impact is flagged for Review." rows={dprDeptActivityRows} empty="No entries match this department/action filter." />
-    </div> : viewMode === "date" ? <>
+    </div>
+    <div className="mt-section"><SimpleTable title="Open to complete / issue" sub="All styles' open balance for the selected department/action, as of the selected date. Follows P0 date + quantity rules; later entries are flagged for Reconcile review." rows={dprOpenRowsForSelection} empty="No open movement balances for this filter." onRowClick={openDprOpenRowForEntry} /></div>
+    </> : viewMode === "date" ? <>
     <div className="mt-section">
       <DprActivityEditableTable title={entryDate ? `Entered on ${entryDate}` : "Entered across all dates"} sub="First check: entries already posted for the selected date/dept/action filter. Date can be blank for all dates. Correct old entries directly here, even if that row already includes earlier correction/reversal entries." rows={dprDateActivityRows} empty="No entries posted yet for this filter." />
     </div>
-    {entryStageIsAll || entryFieldIsAll ? <div className="mt-section"><SimpleTable title="Open to complete / issue" sub="Open balances follow P0 date + quantity rules. With a selected date, feed/output/issue are calculated as-of that date, and later entries are flagged for Reconcile review." rows={dprOpenRowsForSelection} empty="No open movement balances for this filter." onRowClick={openDprOpenRowForEntry} /></div> : null}
+    <div className="mt-section"><SimpleTable title="Open to complete / issue" sub="All styles' open balance for the selected department/action, as of the selected date. Follows P0 date + quantity rules; later entries are flagged for Reconcile review." rows={dprOpenRowsForSelection} empty="No open movement balances for this filter." onRowClick={openDprOpenRowForEntry} /></div>
     {entryStageIsAll || entryFieldIsAll ? null : <>
     <div className="mt-entry-summary">
       <span><b>{displayRows.length}</b> rows <span className="sep">·</span> {activeRows.length} open{todayExtraRows.length ? `, ${todayExtraRows.length} already done today` : ""}</span>
@@ -5766,7 +5804,7 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
       {displayRows.length ? displayRows.map(row=>{
         const sizes = sizesFor(row);
         const v = validate(row);
-        const ctx = entryFieldContext(row, stage, field);
+        const ctx = entryFieldContextAsOf(row, stage, field, ledger, entryDate);
         const rowNew = v.entryTotal;
         const rowRemaining = Math.max(0, n(ctx.open) - rowNew);
         const todayMap = todayEntryMap(row);
@@ -5775,6 +5813,7 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
         <tr className={todayMap.total ? "mt-subrow" : ""}>
           <td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.order_no} · {row.buyer} · {row.colour} · {row.component}</div>
             {todayMap.total ? <div className="mt-today-badge">Entered today: {fmt(todayMap.total)}</div> : null}
+            {(()=>{ const fn = futureEntryNote(row, ledger, stage, field, entryDate); return fn ? <div className="mt-today-badge" style={{background:"#fff3cd",borderColor:"#e6c667",color:"#7a5b00"}}>⚠ {fn}</div> : null; })()}
             <div className="mt-entry-row-actions">
               {stage === "cutting" && !isProductionFileReleased(row) ? <button className="mt-btn primary" onClick={()=>onRelease?.(row, "dpr_entry")}>Release File</button> : <button className="mt-btn" onClick={()=>fillRowOpen(row)}>Fill open</button>}
               <button className="mt-btn ghost" onClick={()=>clearRow(row)}>Clear</button>
@@ -5783,7 +5822,7 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
           </div></div></td>
           <td><div className="mt-open-big">{fmt(ctx.open)}</div></td>
           {allSizes.map(sz=> sizes.includes(sz) ? <td key={sz} className="mt-entry-size-cell">
-            {(()=>{ const szCtx=entryFieldSizeContext(row,stage,field,sz); const today=n(todayMap.sizes[sz]);
+            {(()=>{ const szCtx=entryFieldSizeContextAsOf(row,stage,field,sz,ledger,entryDate); const today=n(todayMap.sizes[sz]);
               return <>
                 <div className="mt-entry-size-open">Open <b>{fmt(szCtx.open)}</b>{today ? <span className="mt-today-badge" style={{marginLeft:4}}>Today {fmt(today)}</span> : null}</div>
                 <input className={`mt-cell-input ${n(szCtx.open)>0?"mandatory":""} ${draft[`${row.id}|${sz}`]!==undefined?"dirty":""} ${v.blocked?"blocked":""} ${today?"today-entered":""}`} value={getVal(row,sz)} onChange={e=>setVal(row,sz,e.target.value)} placeholder="0" max={Math.max(0,n(szCtx.open))} title={`Max allowed now: ${fmt(szCtx.open)}`} />
@@ -5835,6 +5874,7 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
         <div className="mt-entry-hero">
           <div className="mt-entry-hero-title"><span>{selectedStyleRow.style_no}</span><span className="mt-chip mt-muted">{selectedStyleRow.order_no}</span><button className="mt-btn ghost" style={{marginLeft:"auto"}} onClick={()=>setSelectedRowId("")}>Change style</button></div>
           <div className="mt-entry-hero-sub">{selectedStyleRow.buyer} · {selectedStyleRow.colour} · {selectedStyleRow.component}. Full history — every department, every action, every date this style has any entry. Edit any row; only the difference is recorded as an audit correction.</div>
+          {(()=>{ const fn = futureEntryNote(selectedStyleRow, ledger, stage, field, entryDate); return fn ? <div className="mt-locked-note" style={{marginTop:6}}><AlertTriangle size={14}/> {fn}</div> : null; })()}
         </div>
         <div className="mt-style-entry-panel no-print">
           <div className="mt-style-entry-head"><b>New DPR entry for this style</b><span className="mt-small">Clicking Current Status opens here. Choose date/action and type sizes without going back to the top date toolbar.</span></div>
@@ -5848,7 +5888,7 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
             <button className="mt-btn primary" onClick={saveSelectedStyleDayEntry} disabled={isSaving}><CheckCircle2 size={14}/>{isSaving ? "Saving…" : "Save style entry"}</button>
           </div>
           <div className="mt-style-entry-size-grid">
-            {selectedStyleSizes.map(sz=>{ const szCtx=entryFieldSizeContext(selectedStyleRow,stage,field,sz); const today=n(todayEntryMap(selectedStyleRow).sizes[sz]); return <div className="mt-style-entry-size" key={sz}>
+            {selectedStyleSizes.map(sz=>{ const szCtx=entryFieldSizeContextAsOf(selectedStyleRow,stage,field,sz,ledger,entryDate); const today=n(todayEntryMap(selectedStyleRow).sizes[sz]); return <div className="mt-style-entry-size" key={sz}>
               <div className="sz">{sz}</div>
               <div className="mt-small">Open <b>{fmt(szCtx.open)}</b>{today ? ` · today ${fmt(today)}` : ""}</div>
               <input className={`mt-cell-input ${n(szCtx.open)>0?"mandatory":""} ${draft[`${selectedStyleRow.id}|${sz}`]!==undefined?"dirty":""}`} value={getVal(selectedStyleRow,sz)} onChange={e=>setVal(selectedStyleRow,sz,e.target.value)} placeholder="0" max={Math.max(0,n(szCtx.open))} title={`Max allowed now: ${fmt(szCtx.open)}`} />
