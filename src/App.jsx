@@ -1513,6 +1513,20 @@ function conservationIssueTableRows(alerts=[]){
     Action:a.stage === "cutting" ? "Open detail → edit cutting output/RAM or open Style Entry for order/feed qty" : "Open detail → correct feed source or output/RAM in Register"
   }));
 }
+function ambiguousSizeSetWarning(raw, chosenSet){
+  const sets = getSizeSets();
+  const chosenSizes = new Set((sets[chosenSet] || []).map(cleanSizeToken));
+  const candidates = [];
+  Object.entries(sets).forEach(([key,sizes])=>{
+    if (key === chosenSet) return;
+    const sig = sizeSetSignalFromExcel(raw, sizes);
+    if (!sig.count) return;
+    const overlapTokens = (sizes || []).map(cleanSizeToken).filter(s=>chosenSizes.has(s));
+    if (overlapTokens.length) candidates.push(`${key} (shares ${overlapTokens.join("/")})`);
+  });
+  if (!candidates.length) return null;
+  return `Size columns filled here also belong to ${candidates.join(", ")} — these share identical size labels with '${chosenSet}', so a wrong size-set choice on this row will NOT be caught by the size-mismatch check (the labels match either way). Double-check '${chosenSet}' is really correct for this style before applying.`;
+}
 function mismatchedExcelSizeValues(raw, sizeSet){
   const allowed = new Set((getSizeSets()[sizeSet] || []).map(cleanSizeToken));
   const allSizes = Array.from(new Set(Object.values(getSizeSets()).flat())).map(cleanSizeToken);
@@ -10015,9 +10029,16 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
         rec.clean = clean;
         const rawSizeSet = excelValue(raw,["Size Set","SizeSet","Sizes"]);
         if (!rawSizeSet) rec.warnings.push(`Size Set blank: app selected ${sizeSetInferenceLabel(raw, clean.size_set, clean.order_qty)}. This uses filled size values, not template headers.`);
+        if (!rawSizeSet && existing && existing.size_set && clean.size_set !== existing.size_set) rec.errors.push(`Size-set would silently change from '${existing.size_set}' to '${clean.size_set}' for an existing style — the file left Size Set blank and the app inferred a different set than this style already uses. This is exactly the kind of silent mismatch that has caused wrong-size-key entries before. Put '${existing.size_set}' explicitly in the Size Set column (or fix the size columns) before applying.`);
         if (!clean.buyer || !clean.order_qty) rec.errors.push("Buyer and Order Qty are mandatory for add/update.");
         const mismatchedSizes = mismatchedExcelSizeValues(raw, clean.size_set);
         if (mismatchedSizes.length) rec.errors.push(`Size-set mismatch: file has quantities in ${mismatchedSizes.join(", ")} but selected/inferred size set '${clean.size_set}' allows ${(getSizeSets()[clean.size_set] || []).join(" / ")}. Change Size Set or fix/map the file before applying.`);
+        const ambiguousWarning = ambiguousSizeSetWarning(raw, clean.size_set);
+        if (ambiguousWarning) rec.warnings.push(ambiguousWarning);
+        const freeTextSizes = parseSizeQtyText(excelValue(raw, ["Order Size Breakup","Size Breakup","Size Qty","Size Qty Breakup","Order Sizes"]));
+        const allowedSizeTokens = (getSizeSets()[clean.size_set] || []).map(cleanSizeToken);
+        const droppedFreeTextSizes = Object.keys(freeTextSizes).filter(sz=>!allowedSizeTokens.includes(sz) && n(freeTextSizes[sz]) > 0);
+        if (droppedFreeTextSizes.length) rec.warnings.push(`Order Size Breakup text has size(s) not in '${clean.size_set}': ${droppedFreeTextSizes.map(sz=>`${sz} ${fmt(freeTextSizes[sz])}`).join(", ")} — these were silently ignored, not applied to any size. Fix the size set or the breakup text.`);
         const variance = sizeVarianceInfo(clean.order_qty, normalizeSizeQtyMap(clean.order_size_qty || {}, getSizeSets()[clean.size_set] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha));
         if (variance.diff !== 0) rec.warnings.push(variance.text);
         const merged = {
