@@ -5151,12 +5151,14 @@ function futureDependentLedgerEntries(row, ledger=[], stage, field, entryDate){
   const downstream = new Set(idx >= 0 ? route.slice(idx + 1) : []);
   const sameStageTypes = field === "output" ? new Set(["issue","issued"]) : new Set();
   const nextStageTypes = field === "issued" ? new Set(["good_output","output","completed","complete","done","reject","missing","alter","alter_issue","alter_clear","issue","issued"]) : new Set();
+  const sameFieldTypes = new Set(ledgerTypesForFieldForDate(field === "alter_clear" ? "output" : field).map(x=>String(x).toLowerCase()));
   return (ledger || []).filter(e=>{
     if (!ledgerMatchesRow(e, row)) return false;
     const d = ledgerDate(e);
     if (!d || d <= entryDate) return false;
     const st = ledgerStage(e);
     const typ = ledgerType(e);
+    if (st === stage && sameFieldTypes.has(typ)) return true;
     if (field === "output" && st === stage && sameStageTypes.has(typ)) return true;
     if (field === "output" && downstream.has(st)) return true;
     if (field === "issued" && nextStage && st === nextStage && nextStageTypes.has(typ)) return true;
