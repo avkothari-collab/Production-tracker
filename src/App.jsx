@@ -4944,6 +4944,8 @@ function SizeCumulativeEditor({ row, rows, setRows, ledger, setLedger, stage, in
   const risk = backdateRisk(entryDate);
   const needsReason = false;
   const reasonMissing = false;
+  const entryStageIsAll = stage === "all";
+  const entryFieldIsAll = field === "all_movement" || field === "all";
   function getVal(_, size){ const key = `${row.id}|${size}`; return draft[key] !== undefined ? draft[key] : ""; }
   function setVal(size, value){ setDraft(d=>({ ...d, [`${row.id}|${size}`]:cappedEntryInputValue(row, stage, field, size, value) })); }
   const validation = validateDailyEntry(row, stage, field, getVal, ledger, entryDate);
@@ -4957,7 +4959,7 @@ function SizeCumulativeEditor({ row, rows, setRows, ledger, setLedger, stage, in
   async function save(){
     if (!entryDate) { alert("Choose entry date before saving. Date is optional only for review tables, not for posting DPR quantity."); return; }
     if (entryStageIsAll || entryFieldIsAll) { alert("Choose one department and one action before saving. All departments/action mode is for review only."); return; }
-    if (saveLockRef.current) { notify("Save already in progress. Please wait.", "Duplicate save blocked"); return; }
+    if (saveLockRef.current) { alert("Save already in progress. Please wait."); return; }
     if (!changes.length) { alert("No new size-wise quantity entered."); return; }
     const sizeGate = entrySizeGateMessages(changes, { allowNegativeLegacy:false });
     if (sizeGate.length) { alert(`Blocked by size master gate:
