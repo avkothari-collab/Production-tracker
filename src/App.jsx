@@ -101,6 +101,13 @@ button { min-height:34px; min-width:34px; touch-action:manipulation; }
 .mt-section { padding:14px; }
 .mt-section + .mt-section { border-top:1px solid var(--line-3); }
 .mt-panel-title { font-family:'Archivo',sans-serif; font-weight:800; font-size:15px; margin:0; }
+.mt-collapsible { display:block; }
+.mt-collapsible-summary { list-style:none; cursor:pointer; padding:14px; display:flex; align-items:center; gap:10px; user-select:none; }
+.mt-collapsible-summary::-webkit-details-marker { display:none; }
+.mt-collapsible-summary::before { content:"▾"; font-size:11px; color:var(--muted-2); transition:transform .12s ease; flex-shrink:0; }
+.mt-collapsible:not([open]) .mt-collapsible-summary::before { transform:rotate(-90deg); }
+.mt-collapsible-summary .mt-panel-title { flex:1; }
+.mt-collapsible:not([open]) > *:not(.mt-collapsible-summary) { display:none; }
 .mt-panel-sub { font-size:10.5px; color:var(--muted-2); margin-top:3px; line-height:1.45; }
 .mt-toolbar { display:flex; align-items:center; gap:7px; flex-wrap:wrap; background:var(--toolbar-bg); border:1px solid var(--toolbar-line); border-radius:8px; padding:7px 9px; }
 .mt-toolbar-label { font-size:9px; font-weight:800; color:var(--muted-2); text-transform:uppercase; letter-spacing:.4px; }
@@ -5704,8 +5711,9 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
   function DprActivityEditableTable({ title, sub, rows:activityRows, empty }){
     const raw = Array.isArray(activityRows) ? activityRows : [];
     const cols = ["Date","Department","Action","Style","Colour","Component","Net_Total","Open_Qty_After","Size_Breakup","Posting"];
-    return <div className="mt-card mt-readable-table mt-readable-feed">
-      <div className="mt-section"><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{sub}</div></div>
+    return <details className="mt-card mt-readable-table mt-readable-feed mt-collapsible" open>
+      <summary className="mt-collapsible-summary"><h3 className="mt-panel-title">{title}</h3><span className="mt-chip mt-muted">{raw.length} row{raw.length===1?"":"s"}</span></summary>
+      <div className="mt-section"><div className="mt-panel-sub">{sub}</div></div>
       <div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{friendlyTableHeader(c)}</th>)}<th className="no-print">Edit here</th></tr></thead><tbody>
         {raw.length ? raw.map((r,i)=>{
           const key = dprActivityKey(r);
@@ -5740,7 +5748,7 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
           </React.Fragment>;
         }) : <tr><td colSpan={cols.length+1} style={{padding:18}}>{empty}</td></tr>}
       </tbody></table></div>
-    </div>;
+    </details>;
   }
 
   const totalOpenForField = activeRows.reduce((a,row)=>a+entryOpenQtyAsOf(row, stage, field, ledger, entryDate),0);
@@ -8900,7 +8908,9 @@ function SimpleTable({ title, sub, rows, empty, onRowClick, exportName="" }){
   const canExport = !!exportName && currentUserCan("production.export");
   const type = tableTypeFromTitle(title);
   const infoSub = sub || "Summary first. Expand/use export for detailed audit when needed.";
-  return <div className={`mt-card mt-readable-table mt-readable-${type}`}><div className="mt-section"><h3 className="mt-panel-title">{title}</h3><div className="mt-panel-sub">{infoSub}</div>{canExport ? <button className="mt-btn primary no-print" style={{marginTop:8}} onClick={()=>exportXlsx(`${exportName}_${today()}.xlsx`, [{ name:title, rows:rawRows }])}><Download size={14}/>Export detailed table</button> : null}</div><div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{friendlyTableHeader(c)}</th>)}</tr></thead><tbody>{displayRows.length ? displayRows.map((r,i)=><tr key={i} className={onRowClick ? "drillable" : ""} onClick={()=>onRowClick?.(rawRows[i] || r)}>{cols.map(c=>{ const val = r[c]; return <td key={c} className={simpleTableCellTone(c,val)}>{typeof val === "number" ? fmt(val) : String(val === undefined || val === null ? "" : val)}</td>; })}</tr>) : <tr><td colSpan={Math.max(1,cols.length)} style={{padding:18}}>{empty}</td></tr>}</tbody></table></div>{rawRows.length && displayRows !== rawRows ? <div className="mt-table-note no-print">Showing simplified manager-readable columns. Export keeps the full audit/detail data.</div> : null}</div>;
+  return <details className={`mt-card mt-readable-table mt-readable-${type} mt-collapsible`} open>
+    <summary className="mt-collapsible-summary"><h3 className="mt-panel-title">{title}</h3><span className="mt-chip mt-muted">{rawRows.length} row{rawRows.length===1?"":"s"}</span></summary>
+    <div className="mt-section"><div className="mt-panel-sub">{infoSub}</div>{canExport ? <button className="mt-btn primary no-print" style={{marginTop:8}} onClick={()=>exportXlsx(`${exportName}_${today()}.xlsx`, [{ name:title, rows:rawRows }])}><Download size={14}/>Export detailed table</button> : null}</div><div className="mt-table-wrap"><table className="mt-table"><thead><tr>{cols.map(c=><th key={c}>{friendlyTableHeader(c)}</th>)}</tr></thead><tbody>{displayRows.length ? displayRows.map((r,i)=><tr key={i} className={onRowClick ? "drillable" : ""} onClick={()=>onRowClick?.(rawRows[i] || r)}>{cols.map(c=>{ const val = r[c]; return <td key={c} className={simpleTableCellTone(c,val)}>{typeof val === "number" ? fmt(val) : String(val === undefined || val === null ? "" : val)}</td>; })}</tr>) : <tr><td colSpan={Math.max(1,cols.length)} style={{padding:18}}>{empty}</td></tr>}</tbody></table></div>{rawRows.length && displayRows !== rawRows ? <div className="mt-table-note no-print">Showing simplified manager-readable columns. Export keeps the full audit/detail data.</div> : null}</details>;
 }
 
 function DetailDrawer({ row, rows, setRows, ledger, setLedger, stageKey, onClose, onOpenRegister, onOpenStyle, onRelease, onSharedSave }){
