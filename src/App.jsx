@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V51_RECONCILE_EDITABLE_P0_CONSERVATION";
-const APP_COMMIT_MESSAGE = "Moves P0 stock/date and conservation issues into editable Reconcile review; clicking reconcile rows opens the exact Register correction context.";
+const APP_VERSION = "V53_PRODUCTION_ENTRY_COMMENTS";
+const APP_COMMIT_MESSAGE = "Completes the production-team comments: live style lookups, a clear New Style action, usable/persistent cutting excess control, live WIP drawer refresh, and working Receive Alter / Alter Clear saves with visible validation feedback.";
 
 
 const PRODUCTION_APP_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -1280,12 +1280,12 @@ function entryTypeForField(field){
 const ENTRY_FIELDS = [
   { key:"output", label:"Completed / Output", help:"Good quantity completed by the selected department." },
   { key:"issued", label:"Issue / Feed Next Dept", help:"Good quantity handed to the next active department. This is the next department feed in your factory flow." },
+  { key:"alter_clear", label:"Receive Alter / Alter Clear", help:"Repaired alter quantity received back and returned to good output." },
 ];
 const RAM_ENTRY_FIELDS = [
   { key:"reject", label:"Rejection", help:"Rejected/lost quantity by size." },
   { key:"missing", label:"Missing", help:"Missing/untraceable quantity by size." },
   { key:"alter", label:"Alter Defect", help:"Alter/repair quantity raised by size." },
-  { key:"alter_clear", label:"Alter Clear", help:"Alter quantity repaired and returned to good output." },
 ];
 const HIDDEN_ENTRY_FIELDS = [];
 const ALL_ENTRY_FIELDS = [...ENTRY_FIELDS, ...RAM_ENTRY_FIELDS];
@@ -1338,13 +1338,13 @@ function entryFieldContext(row, stage, field){
     };
   }
   if (field === "output") {
-    const available = stage === "cutting" ? cuttingBaseQty(row) : feed;
+    const available = stage === "cutting" ? cuttingEntryAllowedQty(row) : feed;
     const dispatchRejectNote = stage === "dispatch" && dispatchRejectAllowed(row) ? " Includes approved rejection qty because Settings allows rejection dispatch." : "";
     return {
-      mode:"output", available, previous:n(st.output), open: stage === "cutting" ? cuttingAccountableOpen(row) : Math.max(0, available - n(st.output) - ram), updatedLabel:"Updated output",
-      availableLabel: stage === "cutting" ? "Production file released to cut" : (stage === "dispatch" && dispatchRejectAllowed(row) ? "Good issued + approved rejection" : `With ${stageLabel(stage)} / feed`),
+      mode:"output", available, previous:n(st.output), open: stage === "cutting" ? cuttingEntryOpenQty(row) : Math.max(0, available - n(st.output) - ram), updatedLabel:"Updated output",
+      availableLabel: stage === "cutting" ? `Released qty + ${PROD_SETTINGS.cuttingTolerancePct}% cutting excess` : (stage === "dispatch" && dispatchRejectAllowed(row) ? "Good issued + approved rejection" : `With ${stageLabel(stage)} / feed`),
       previousLabel:`Already completed in ${stageLabel(stage)}`, openLabel:`Open work in ${stageLabel(stage)}`,
-      note: stage === "cutting" ? (isProductionFileReleased(row) ? "Enter new cut quantity by size against released file qty." : "Production file is not released yet — release it first.") : `Complete the open work currently with ${stageLabel(stage)}.${dispatchRejectNote}`
+      note: stage === "cutting" ? (isProductionFileReleased(row) ? `Enter new cut quantity by size. Cutting alone may exceed released/order qty up to the configured ${PROD_SETTINGS.cuttingTolerancePct}%; every other department remains capped by actual feed.` : "Production file is not released yet — release it first.") : `Complete the open work currently with ${stageLabel(stage)}.${dispatchRejectNote}`
     };
   }
   if (["reject","missing","alter"].includes(field)) {
@@ -1379,7 +1379,7 @@ function entryFieldSizeContext(row, stage, field, size){
   const ram = reject + alter + missing;
   if (field === "received") return { available:feed, previous:received, open:Math.max(0, feed-received) };
   if (field === "issued") return { available:output, previous:issued, open:Math.max(0, output-issued) };
-  if (field === "output") { const cutSizeQty = n(fileReleaseSizeQtyMap(row)[size]); return { available: stage === "cutting" ? cutSizeQty : feed, previous:output, open:Math.max(0, (stage === "cutting" ? cutSizeQty : feed)-output-ram) }; }
+  if (field === "output") { const cutSizeQty = n(fileReleaseSizeQtyMap(row)[size]); const cutAllowedSizeQty=Math.ceil(cutSizeQty*(1+cuttingToleranceFrac())); return { available: stage === "cutting" ? cutAllowedSizeQty : feed, previous:output, open:Math.max(0, (stage === "cutting" ? cutAllowedSizeQty : feed)-output-ram) }; }
   if (["reject","missing","alter"].includes(field)) return { available:feed, previous: n({reject,missing,alter}[field]), open:Math.max(0, feed-output-ram) };
   if (field === "alter_clear") return { available:alter, previous:output, open:alter };
   return { available:0, previous:0, open:0 };
@@ -1408,7 +1408,7 @@ function entryFieldContextAsOf(row, stage, field, ledger=null, asOfDate=null){
   const snap = p0AsOfStageSnapshot(row, ledger, stage, asOfDate);
   const output = n(snap.output.qty), issued = n(snap.issued.qty), feed = n(snap.feed.qty), ram = n(snap.ram), alter = n(snap.alter.qty);
   if (field === "issued") return { ...base, available:output, previous:issued, open:Math.max(0, output-issued) };
-  if (field === "output") { const avail = stage === "cutting" ? cuttingBaseQty(row) : feed; return { ...base, available:avail, previous:output, open:Math.max(0, avail-output-ram) }; }
+  if (field === "output") { const avail = stage === "cutting" ? cuttingEntryAllowedQty(row) : feed; return { ...base, available:avail, previous:output, open:Math.max(0, avail-output-ram-(stage === "cutting" ? cuttingShortCloseQty(row) : 0)) }; }
   if (["reject","missing","alter"].includes(field)) return { ...base, available:feed, previous:n(snap[field]?.qty), open:Math.max(0, feed-output-ram) };
   if (field === "alter_clear") return { ...base, available:alter, previous:output, open:alter };
   return base;
@@ -1424,7 +1424,7 @@ function entryFieldSizeContextAsOf(row, stage, field, size, ledger=null, asOfDat
   const ram = reject + alter + missing;
   const feed = n(snap.feed.sizes?.[size]);
   if (field === "issued") return { available:output, previous:issued, open:Math.max(0, output-issued) };
-  if (field === "output") { const cutSizeQty = n(fileReleaseSizeQtyMap(row)[size]); const avail = stage === "cutting" ? cutSizeQty : feed; return { available:avail, previous:output, open:Math.max(0, avail-output-ram) }; }
+  if (field === "output") { const cutSizeQty = n(fileReleaseSizeQtyMap(row)[size]); const avail = stage === "cutting" ? Math.ceil(cutSizeQty*(1+cuttingToleranceFrac())) : feed; return { available:avail, previous:output, open:Math.max(0, avail-output-ram) }; }
   if (["reject","missing","alter"].includes(field)) return { available:feed, previous:n({reject,missing,alter}[field]), open:Math.max(0, feed-output-ram) };
   if (field === "alter_clear") return { available:alter, previous:output, open:alter };
   return entryFieldSizeContext(row, stage, field, size);
@@ -1687,8 +1687,31 @@ function loadDispatchRejectAllowed(){
   try { return localStorage.getItem("production_dispatch_reject_allowed") === "true"; } catch {}
   return false;
 }
-const PROD_SETTINGS = { cuttingTolerancePct: 5, dispatchRamHoldPct: 2, dispatchRejectAllowed: loadDispatchRejectAllowed(), lineNames: loadLineNames() };
+function loadProductionNumberSetting(key, fallback){
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null || raw === "") return fallback;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? value : fallback;
+  } catch {}
+  return fallback;
+}
+const PROD_SETTINGS = { cuttingTolerancePct: loadProductionNumberSetting("production_cutting_tolerance_pct", 5), dispatchRamHoldPct:loadProductionNumberSetting("production_dispatch_ram_hold_pct", 2), dispatchRejectAllowed: loadDispatchRejectAllowed(), lineNames: loadLineNames() };
 function cuttingToleranceFrac(){ return Math.max(0, n(PROD_SETTINGS.cuttingTolerancePct)) / 100; }
+function cuttingEntryAllowedQty(row){
+  const released = cuttingBaseQty(row);
+  const salesOrder = n(row?.order_qty);
+  if (!released) return 0;
+  // Cutting excess is controlled against the sales-order quantity. For a
+  // partial file release, apply the same percentage only to that released part;
+  // if release already includes extra, never apply the percentage twice.
+  const allowanceBase = salesOrder ? Math.min(released, salesOrder) : released;
+  return Math.ceil(allowanceBase * (1 + cuttingToleranceFrac()));
+}
+function cuttingEntryOpenQty(row){
+  const st = sdata(row, "cutting");
+  return Math.max(0, cuttingEntryAllowedQty(row) - n(st.output) - loss(st) - cuttingShortCloseQty(row));
+}
 function dispatchRamHoldFrac(){ return Math.max(0, n(PROD_SETTINGS.dispatchRamHoldPct)) / 100; }
 function dispatchRejectAllowed(row=null){
   if (row && typeof row.dispatch_reject_allowed === "boolean") return !!row.dispatch_reject_allowed;
@@ -4420,7 +4443,7 @@ function confirmEntryChecks({ entryDate, changes, stage, field, reason }){
   return window.confirm(`Confirm production entry before saving\n\n${notes.map((x,i)=>`${i+1}. ${x}`).join("\n")}\n\nStage: ${stageLabel(stage)}\nField: ${fieldLabel(field)}\nEntry date: ${entryDate}${reason ? `\nReason: ${reason}` : ""}`);
 }
 function cumulativeAllowedTotal(row, stage, field, ledger=null, asOfDate=null){
-  if (stage === "cutting") return cuttingBaseQty(row) * (1 + cuttingToleranceFrac());
+  if (stage === "cutting") return cuttingEntryAllowedQty(row);
   const hasDate = !!(ledger && asOfDate);
   const feed = hasDate ? feedAsOfDate(row, ledger, stage, asOfDate).qty : stageFeed(row, stage);
   if (["received","reject","alter","missing"].includes(field)) return feed;
@@ -4494,6 +4517,14 @@ function ledgerSizeQtyAsOfDate(row, ledger, stage, types, asOfDate){
   return { hasLedger, sizes:out, qty:Object.values(out).reduce((a,v)=>a+n(v),0) };
 }
 function fieldQtyAsOfDate(row, ledger, stage, field, asOfDate){
+  if (field === "alter") {
+    const raised = ledgerSizeQtyAsOfDate(row, ledger, stage, ["alter","alter_issue"], asOfDate);
+    const cleared = ledgerSizeQtyAsOfDate(row, ledger, stage, ["alter_clear"], asOfDate);
+    if (raised.hasLedger || cleared.hasLedger) {
+      const sizes = Object.fromEntries(sizesFor(row).map(size=>[size, Math.max(0, n(raised.sizes?.[size])-n(cleared.sizes?.[size]))]));
+      return { hasLedger:true, sizes, qty:Object.values(sizes).reduce((a,v)=>a+n(v),0) };
+    }
+  }
   const types = ledgerTypesForFieldForDate(field);
   const fromLedger = ledgerSizeQtyAsOfDate(row, ledger, stage, types, asOfDate);
   if (fromLedger.hasLedger) return fromLedger;
@@ -4512,6 +4543,12 @@ function feedAsOfDate(row, ledger, stage, asOfDate){
   return fieldQtyAsOfDate(row, ledger, route[idx-1], "issued", asOfDate);
 }
 function p0StrictFieldQtyAsOfDate(row, ledger, stage, field, asOfDate){
+  if (field === "alter") {
+    const raised = ledgerSizeQtyAsOfDate(row, ledger || [], stage, ["alter","alter_issue"], asOfDate || "9999-12-31");
+    const cleared = ledgerSizeQtyAsOfDate(row, ledger || [], stage, ["alter_clear"], asOfDate || "9999-12-31");
+    const sizes = Object.fromEntries(sizesFor(row).map(size=>[size, Math.max(0, n(raised.sizes?.[size])-n(cleared.sizes?.[size]))]));
+    return { hasLedger:!!(raised.hasLedger || cleared.hasLedger), sizes, qty:Object.values(sizes).reduce((a,v)=>a+n(v),0) };
+  }
   const types = ledgerTypesForFieldForDate(field);
   const fromLedger = ledgerSizeQtyAsOfDate(row, ledger || [], stage, types, asOfDate || "9999-12-31");
   const cleanSizes = Object.fromEntries(sizesFor(row).map(size=>[size, n(fromLedger.sizes?.[size])]));
@@ -4550,14 +4587,18 @@ function p0EntryImpactIssues(row, ledger, stage, field, entryDate, sizeMap){
   const updatedTotal = qtyMapTotal(updatedBySize);
   const route = routeFor(row);
   if (stage === "cutting" && ["output","reject","alter","missing","alter_clear"].includes(field)) {
-    const maxCut = Math.ceil(n(cuttingBaseQty(row)) * (1 + cuttingToleranceFrac()));
+    const maxCut = cuttingEntryAllowedQty(row);
     if (updatedTotal > maxCut) messages.push(`Cutting ${fieldLabel(field)} dated ${entryDate} exceeds released/order qty plus tolerance. Max normal ${fmt(maxCut)}, after entry ${fmt(updatedTotal)}.`);
   }
   if (stage !== "cutting" && ["received","output","reject","alter","missing","alter_clear"].includes(field)) {
     const feed = p0StrictFeedAsOfDate(row, ledger, stage, entryDate);
     const existingOutput = field === "output" || field === "alter_clear" ? updatedBySize : p0StrictFieldQtyAsOfDate(row, ledger, stage, "output", entryDate).sizes;
     const existingReject = field === "reject" ? updatedBySize : p0StrictFieldQtyAsOfDate(row, ledger, stage, "reject", entryDate).sizes;
-    const existingAlter = field === "alter" ? updatedBySize : p0StrictFieldQtyAsOfDate(row, ledger, stage, "alter", entryDate).sizes;
+    const oldAlter = p0StrictFieldQtyAsOfDate(row, ledger, stage, "alter", entryDate).sizes;
+    // Alter Clear is a transfer from pending alter back to good output. Reduce
+    // pending alter by the same size-wise qty so the conservation check does not
+    // double-count the repaired pieces and falsely block Save Day Entry.
+    const existingAlter = field === "alter" ? updatedBySize : field === "alter_clear" ? Object.fromEntries(sizes.map(size=>[size, Math.max(0, n(oldAlter[size])-n(entryBySize[size]))])) : oldAlter;
     const existingMissing = field === "missing" ? updatedBySize : p0StrictFieldQtyAsOfDate(row, ledger, stage, "missing", entryDate).sizes;
     const accountedBySize = Object.fromEntries(sizes.map(size=>[size, n(existingOutput[size]) + n(existingReject[size]) + n(existingAlter[size]) + n(existingMissing[size])]));
     const overSizes = sizes.map(size=>{ const over=n(accountedBySize[size])-n(feed.sizes[size]); return over>0 ? `${size} +${fmt(over)}` : null; }).filter(Boolean);
@@ -4588,7 +4629,7 @@ function p0StockAuditIssues(rows=[], ledger=[]){
     });
     // Current cutting over tolerance is the only cutting conservation error; short cutting is open work.
     const cutOut = p0StrictFieldQtyAsOfDate(row, ledger, "cutting", "output", maxDate).qty || n(sdata(row,"cutting").output);
-    const maxCut = Math.ceil(n(cuttingBaseQty(row)) * (1 + cuttingToleranceFrac()));
+    const maxCut = cuttingEntryAllowedQty(row);
     if (cutOut > maxCut) issues.push({ row, stage:"cutting", date:"Current", severity:"block", qty:cutOut-maxCut, type:"cutting_over_tolerance", message:`Cutting output ${fmt(cutOut)} exceeds release/order tolerance max ${fmt(maxCut)}.` });
     route.forEach(stage=>{
       if(stage === "cutting") return;
@@ -4994,7 +5035,7 @@ function SizeCumulativeEditor({ row, rows, setRows, ledger, setLedger, stage, in
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaveMsg, setLastSaveMsg] = useState(null);
   const operatorSimpleMode = isOperatorEntryMode();
-  useEffect(()=>{ if (operatorSimpleMode && ["reject","missing","alter","alter_clear","received"].includes(field)) { setField("output"); setDraft({}); } }, [operatorSimpleMode, field]);
+  useEffect(()=>{ if (operatorSimpleMode && ["reject","missing","alter","received"].includes(field)) { setField("output"); setDraft({}); } }, [operatorSimpleMode, field]);
   useEffect(()=>setDraft({}), [row?.id, stage, field]);
   if (!row) return null;
   const sizes = sizesFor(row);
@@ -5052,8 +5093,8 @@ Save locally in this browser anyway? Other users will not see it until Supabase 
   }
   return <div className="mt-edit-panel">
     <div className="mt-edit-panel-head"><h3 className="mt-panel-title">{stageLabel(stage)} — {fieldLabel(field)}</h3><div className="mt-panel-sub">Selected department only. Enter new quantity by size for the selected date. The updated total is shown as a cross-check, not as editable cumulative entry.</div>{lastSaveMsg && <div className={`mt-save-banner ${lastSaveMsg.tone === "warn" ? "warn" : ""}`}><CheckCircle2 size={16}/>{lastSaveMsg.text}</div>}</div>
-    <div className="mt-section no-print"><div className="mt-backdate-box"><span className="mt-toolbar-label">Entry Date</span><input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /><span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span><span className="mt-toolbar-label">Dept</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-toolbar-label">Entry Field</span>{operatorSimpleMode ? <span className="mt-chip mt-info">{fieldLabel(field)}</span> : <select className="mt-select" value={field} onChange={e=>setField(e.target.value)}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>}{risk.days>1 && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate note optional/report flag" style={{minWidth:250}} />}</div>{!operatorSimpleMode && <div className="mt-ram-action-bar"><span className="mt-toolbar-label">R/A/M closure rows</span>{RAM_ENTRY_FIELDS.map(f=><button key={f.key} className={`mt-btn ghost ${field===f.key?"active":""}`} onClick={()=>{setField(f.key); setDraft({});}}>{f.label}</button>)}<span className="mt-small">Use these only to close/explain small balances; normal production entry stays Output / Issue-Feed. No separate Receive entry.</span></div>}{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated date: report flag only. Quantity/feed/P0 sequence clashes still require reconcile review.</div>}{futureNote && <div className="mt-locked-note" style={{marginTop:8}}><AlertTriangle size={14}/> {futureNote}</div>}</div>
-    <div className="mt-section"><div className="mt-entry-hero"><div className="mt-entry-hero-title"><span>{row.style_no}</span><span className="mt-chip mt-muted">{row.order_no}</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-chip mt-warn">{fieldLabel(field)}</span></div><div className="mt-entry-hero-sub">{ctx.note} Reductions/corrections are not normal entry and must go through approval.</div>{orderVariance.diff !== 0 && <div className={`mt-chip ${statusClass(orderVariance.tone)}`} style={{marginTop:8}}>{orderVariance.text}</div>}<div className="mt-mandatory-note"><AlertTriangle size={14}/> Highlighted size boxes are open/mandatory when entering this row. Blank means no quantity entered for that size.</div></div><div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">{ctx.availableLabel}</div><div className="value">{fmt(ctx.available)}</div><div className="note">source / feed</div></div><div className="mt-entry-metric"><div className="label">{ctx.previousLabel}</div><div className="value">{fmt(ctx.previous)}</div><div className="note">already entered</div></div><div className="mt-entry-metric"><div className="label">{ctx.openLabel}</div><div className="value">{fmt(ctx.open)}</div><div className="note">balance before entry</div></div><div className="mt-entry-metric"><div className="label">New Entry</div><div className="value">{fmt(newQty)}</div><div className="note">selected date</div></div><div className="mt-entry-metric"><div className="label">Cumulative After</div><div className="value">{fmt(validation.updatedTotal)}</div><div className="note">{fmt(validation.updatedTotal)} / {fmt(ctx.available)} total</div></div><div className="mt-entry-metric"><div className="label">Remaining After</div><div className="value">{fmt(Math.max(0, n(ctx.open)-newQty))}</div><div className="note">after saving</div></div></div><div className="mt-entry-row-actions"><button className="mt-btn" onClick={fillOpen}>Auto-fill open qty</button><button className="mt-btn ghost" onClick={clear}>Clear entry</button><button className="mt-btn primary" onClick={save} disabled={isSaving || !changes.length || hardBlockMessages(validation).length || reasonMissing}><CheckCircle2 size={14}/>{isSaving ? "Saving..." : "Save Day Entry"}</button></div></div>
+    <div className="mt-section no-print"><div className="mt-backdate-box"><span className="mt-toolbar-label">Entry Date</span><input className="mt-input mt-entry-date mandatory" type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} /><span className={`mt-chip ${statusClass(risk.tone)}`}>{risk.label}</span><span className="mt-toolbar-label">Dept</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-toolbar-label">Entry Field</span><select className="mt-select" value={field} onChange={e=>{setField(e.target.value);setDraft({});}}>{(ENTRY_FIELDS.some(f=>f.key===field) ? ENTRY_FIELDS : [{key:field,label:fieldLabel(field)}, ...ENTRY_FIELDS]).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>{risk.days>1 && <input className="mt-input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Backdate note optional/report flag" style={{minWidth:250}} />}</div>{!operatorSimpleMode && <div className="mt-ram-action-bar"><span className="mt-toolbar-label">R/A/M closure rows</span>{RAM_ENTRY_FIELDS.map(f=><button key={f.key} className={`mt-btn ghost ${field===f.key?"active":""}`} onClick={()=>{setField(f.key); setDraft({});}}>{f.label}</button>)}<span className="mt-small">Use these only to close/explain small balances; normal production entry stays Output / Issue-Feed. No separate Receive entry.</span></div>}{risk.locked && <div className="mt-locked-note" style={{marginTop:8}}>Older backdated date: report flag only. Quantity/feed/P0 sequence clashes still require reconcile review.</div>}{futureNote && <div className="mt-locked-note" style={{marginTop:8}}><AlertTriangle size={14}/> {futureNote}</div>}</div>
+    <div className="mt-section"><div className="mt-entry-hero"><div className="mt-entry-hero-title"><span>{row.style_no}</span><span className="mt-chip mt-muted">{row.order_no}</span><span className="mt-chip mt-info">{stageLabel(stage)}</span><span className="mt-chip mt-warn">{fieldLabel(field)}</span></div><div className="mt-entry-hero-sub">{ctx.note} Reductions/corrections are not normal entry and must go through approval.</div>{orderVariance.diff !== 0 && <div className={`mt-chip ${statusClass(orderVariance.tone)}`} style={{marginTop:8}}>{orderVariance.text}</div>}<div className="mt-mandatory-note"><AlertTriangle size={14}/> Highlighted size boxes are open/mandatory when entering this row. Blank means no quantity entered for that size.</div></div><div className="mt-entry-metrics"><div className="mt-entry-metric"><div className="label">{ctx.availableLabel}</div><div className="value">{fmt(ctx.available)}</div><div className="note">source / feed</div></div><div className="mt-entry-metric"><div className="label">{ctx.previousLabel}</div><div className="value">{fmt(ctx.previous)}</div><div className="note">already entered</div></div><div className="mt-entry-metric"><div className="label">{ctx.openLabel}</div><div className="value">{fmt(ctx.open)}</div><div className="note">balance before entry</div></div><div className="mt-entry-metric"><div className="label">New Entry</div><div className="value">{fmt(newQty)}</div><div className="note">selected date</div></div><div className="mt-entry-metric"><div className="label">Cumulative After</div><div className="value">{fmt(validation.updatedTotal)}</div><div className="note">{fmt(validation.updatedTotal)} / {fmt(ctx.available)} total</div></div><div className="mt-entry-metric"><div className="label">Remaining After</div><div className="value">{fmt(Math.max(0, n(ctx.open)-newQty))}</div><div className="note">after saving</div></div></div><div className="mt-entry-row-actions"><button className="mt-btn" onClick={fillOpen}>Auto-fill open qty</button><button className="mt-btn ghost" onClick={clear}>Clear entry</button><button className="mt-btn primary" onClick={save} disabled={isSaving || !changes.length}><CheckCircle2 size={14}/>{isSaving ? "Saving..." : "Save Day Entry"}</button></div></div>
     <div className="mt-section"><div className="mt-dept-size-grid">{sizeContexts.map(x=>{ const remaining=Math.max(0,n(x.open)-n(x.entry)); const baseField=field==="alter_clear"?"output":field; const prev=n(sizeMatrix(row,stage,baseField).find(v=>v.size===x.size)?.qty); const updated=prev+n(x.entry); const blocked=field==="alter_clear" && n(x.entry)>n(x.open); return <div key={x.size} className="mt-dept-size-box"><div className="size">{x.size}</div><div className="line"><span>Open</span><b>{fmt(x.open)}</b></div><input className={`mt-cell-input ${n(x.open)>0?"mandatory":""} ${draft[`${row.id}|${x.size}`]!==undefined?"dirty":""} ${blocked||validation.blocked?"blocked":""}`} value={getVal(row,x.size)} onChange={e=>setVal(x.size,e.target.value)} placeholder="0" max={Math.max(0,n(x.open))} title={`Max allowed now: ${fmt(x.open)}`} style={{width:"100%", marginTop:6}}/><div className="line"><span>Remaining</span><b>{fmt(remaining)}</b></div><div className="line"><span>Updated total</span><b>{fmt(updated)}</b></div></div>;})}</div>{validation.p0DateViolation && <div className="mt-p0-inline-warning"><b>P0 review required:</b> {p0DateViolationText(validation,4)}. Save needs reason + confirmation and will appear in Reconcile.</div>}{hardBlockMessages(validation).length ? <div className="mt-locked-note" style={{marginTop:10}}>Blocked: {hardBlockMessages(validation).join("; ")}</div> : null}</div>
   </div>;
 }
@@ -5270,7 +5311,7 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onRelease, o
   const [lastSaveMsg, setLastSaveMsg] = useState(null);
   const operatorSimpleMode = isOperatorEntryMode();
   useEffect(()=>{ if (operatorSimpleMode && viewMode !== "date") setViewMode("date"); }, [operatorSimpleMode, viewMode]);
-  useEffect(()=>{ if (operatorSimpleMode && ["reject","missing","alter","alter_clear","received"].includes(field)) { setField("output"); setDraft({}); } }, [operatorSimpleMode, field]);
+  useEffect(()=>{ if (operatorSimpleMode && ["reject","missing","alter","received"].includes(field)) { setField("output"); setDraft({}); } }, [operatorSimpleMode, field]);
   useEffect(()=>safeJsonSave(uiStorageKey("entry_stage"), stage), [stage]);
   useEffect(()=>safeJsonSave(uiStorageKey("entry_field"), field), [field]);
   useEffect(()=>safeJsonSave(uiStorageKey("entry_date"), entryDate), [entryDate]);
@@ -9744,6 +9785,10 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, focus, clearT
   const formSizeTotal = qtyMapTotal(formOrderSizeQty);
   const formSizeVariance = sizeVarianceInfo(form.order_qty, formOrderSizeQty);
   const duplicateSetId = form.set_id ? (allRows||[]).find(r=>String(r.set_id||"").toUpperCase()===String(form.set_id||"").toUpperCase() && String(r.id)!==String(form.id) && (String(r.order_no||"").toUpperCase()!==String(form.order_no||"").toUpperCase() || String(r.style_no||"").toUpperCase()!==String(form.style_no||"").toUpperCase())) : null;
+  const lookupRows = allRows || rows || [];
+  const buyerLookup = Array.from(new Set(lookupRows.map(r=>String(r.buyer||"").trim().toUpperCase()).filter(Boolean))).sort();
+  const colourLookup = Array.from(new Set(lookupRows.map(r=>String(r.colour||"").trim().toUpperCase()).filter(Boolean))).sort();
+  const componentLookup = Array.from(new Set(lookupRows.map(r=>String(r.component||"").trim().toUpperCase()).filter(Boolean))).sort();
   function setField(k,v){
     setForm(f=>{
       if (k === "size_set") {
@@ -9797,6 +9842,11 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, focus, clearT
     if (target) edit(target);
   }, [focus?.ts]);
   function reset(){ setForm(emptyForm); setMsg(null); }
+  function beginNewStyle(){
+    setForm(emptyForm);
+    setMsg({ tone:"info", text:"New style entry ready. All fields have been cleared." });
+    window.scrollTo({ top:0, behavior:"smooth" });
+  }
   async function save(){
     const permission = requireCurrentPermission("production.edit_styles", "add/edit production styles");
     if (permission) { setMsg({ tone:"late", text:permission.error.message }); return; }
@@ -10154,12 +10204,15 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
   }
   const formRoute = routeFor(form);
   return <div className="mt-two">
-    <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Add / Edit Style</h3><div className="mt-panel-sub">Create or update a production style/order row. For demo cleanup, hard delete is allowed with confirmation; for live use this should become archive/approval.</div></div>
+    <div className="mt-card"><div className="mt-section"><div style={{display:"flex", justifyContent:"space-between", gap:10, alignItems:"flex-start", flexWrap:"wrap"}}><div><h3 className="mt-panel-title">Add / Edit Style</h3><div className="mt-panel-sub">Create or update a production style/order row. Buyer, colour and component provide suggestions from existing style data while still allowing a new value.</div></div><button className="mt-btn primary" type="button" disabled={busy} onClick={beginNewStyle}><CheckCircle2 size={14}/>Create / Add New Style</button></div></div>
       <div className="mt-section" style={{display:"grid", gap:9}}>
         {msg && <span className={`mt-chip ${statusClass(msg.tone)}`}>{msg.text}</span>}
+        <datalist id="style-buyer-lookup">{buyerLookup.map(value=><option key={value} value={value}/>)}</datalist>
+        <datalist id="style-colour-lookup">{colourLookup.map(value=><option key={value} value={value}/>)}</datalist>
+        <datalist id="style-component-lookup">{componentLookup.map(value=><option key={value} value={value}/>)}</datalist>
         <div className="mt-two"><div><label className="mt-small">Order No *</label><input className="mt-input" value={form.order_no} onChange={e=>setField("order_no",e.target.value.toUpperCase())}/></div><div><label className="mt-small">Style No *</label><input className="mt-input" value={form.style_no} onChange={e=>setField("style_no",e.target.value.toUpperCase())}/></div></div>
-        <div className="mt-two"><div><label className="mt-small">Buyer / Brand *</label><input className="mt-input" value={form.buyer} onChange={e=>setField("buyer",e.target.value.toUpperCase())}/></div><div><label className="mt-small">Order Qty *</label><input className="mt-input" value={form.order_qty} onChange={e=>setField("order_qty",e.target.value.replace(/[^0-9]/g,""))}/></div></div>
-        <div className="mt-two"><div><label className="mt-small">Colour *</label><input className="mt-input" value={form.colour} onChange={e=>setField("colour",e.target.value.toUpperCase())}/></div><div><label className="mt-small">Component *</label><input className="mt-input" value={form.component} onChange={e=>setField("component",e.target.value.toUpperCase())}/></div></div>
+        <div className="mt-two"><div><label className="mt-small">Buyer / Brand * · lookup</label><input className="mt-input" list="style-buyer-lookup" value={form.buyer} onChange={e=>setField("buyer",e.target.value.toUpperCase())} placeholder="Choose existing or type new"/></div><div><label className="mt-small">Order Qty *</label><input className="mt-input" value={form.order_qty} onChange={e=>setField("order_qty",e.target.value.replace(/[^0-9]/g,""))}/></div></div>
+        <div className="mt-two"><div><label className="mt-small">Colour * · lookup</label><input className="mt-input" list="style-colour-lookup" value={form.colour} onChange={e=>setField("colour",e.target.value.toUpperCase())} placeholder="Choose existing or type new"/></div><div><label className="mt-small">Component * · lookup</label><input className="mt-input" list="style-component-lookup" value={form.component} onChange={e=>setField("component",e.target.value.toUpperCase())} placeholder="Choose existing or type new"/></div></div>
         <div className="mt-two"><div><label className="mt-small">Size Set</label><select className="mt-select" value={form.size_set} onChange={e=>setField("size_set",e.target.value)}>{Object.entries(getSizeSets()).map(([k,arr])=><option key={k} value={k}>{k} · {arr.join(" / ")}</option>)}</select></div><div><label className="mt-small">Set ID</label><div style={{display:"flex", gap:6}}><input className="mt-input" style={{flex:1}} value={form.set_id} onChange={e=>setField("set_id",e.target.value.toUpperCase())} placeholder="Optional, TOP/BOTTOM set matching"/><button className="mt-btn ghost" type="button" onClick={()=>setField("set_id", suggestSetIdFor(form, allRows))}>Suggest</button></div>{duplicateSetId ? <div className="mt-small" style={{color:"var(--fg-warn)", fontWeight:800}}>Same Set ID exists on {naturalKeyLabel(duplicateSetId)}. Use same ID only for real set components.</div> : <div className="mt-small">System can suggest a clean Set ID so unrelated duplicates are avoided.</div>}</div></div>
         {!editing && String(form.set_id||"").trim() ? <div className="mt-order-size-card"><b>Set components — create together</b><div className="mt-small">Because this is a set, enter all components in one go so TOP/BOTTOM pieces do not get missed. Example: TOP, BOTTOM, JACKET, ACCESSORY.</div><input className="mt-input" style={{width:"100%", marginTop:6}} value={form.set_components || ""} onChange={e=>setField("set_components", e.target.value.toUpperCase())} placeholder="TOP, BOTTOM, JACKET, ACCESSORY"/><div className="mt-small">Add Style will create/update one row per component using same Order Qty/size breakup/Set ID. After creation, set Print/Embroidery per component in Routes.</div></div> : null}
         <div className="mt-order-size-card"><div style={{display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center"}}><div><b>Order Size Breakup</b><div className="mt-small">Order Qty is master. Size entries subtract from it; missing balance is shown instead of changing Order Qty.</div></div><div style={{display:"flex", gap:6, flexWrap:"wrap"}}><span className={`mt-chip ${statusClass(formSizeVariance.tone)}`}>{formSizeVariance.text}</span><span className="mt-chip mt-muted">Size total {fmt(formSizeTotal)} / Order {fmt(form.order_qty)}</span><button className="mt-btn ghost" type="button" onClick={distributeFormOrderQty}>Distribute Order Qty</button><button className="mt-btn ghost" type="button" onClick={clearFormOrderSizes}>Clear Sizes</button></div></div><div className="mt-backdate-box" style={{alignItems:"flex-end"}}><div style={{minWidth:220, flex:"1 1 260px"}}><label className="mt-small">Size ratio</label><input className="mt-input" style={{width:"100%"}} value={form.size_ratio || ""} onChange={e=>setField("size_ratio", e.target.value.toUpperCase())} placeholder={`Example: ${(formSizes||[]).map((_,i)=>i===0||i===formSizes.length-1?1:2).join(":")}`} /></div><button className="mt-btn" type="button" onClick={applyFormSizeRatio}>Apply Ratio</button><button className="mt-btn ghost" type="button" onClick={useCurrentSizesAsRatio}>Use current sizes as ratio</button><span className="mt-chip mt-info">{form.size_ratio ? ratioSummaryText(form.size_ratio, formSizes) : "Ratio optional"}</span><div className="mt-small" style={{width:"100%"}}>Use simple ratio by size order, e.g. 1:2:3:3:2:1, or named ratio like XS=1,S=2,M=3. Apply ratio fills size quantities from Order Qty; manual size edits still win after that.</div></div><div className="mt-order-size-row">{formSizes.map(size=><div className="mt-order-size-cell" key={size}><label>{size}</label><input className="mt-cell-input" style={{width:"100%"}} value={formOrderSizeQty[size] || ""} onChange={e=>setOrderSizeQty(size,e.target.value)} placeholder="0" /></div>)}</div><div className="mt-small">Bulk Excel also accepts a Size Ratio column. Order Qty is mandatory; upload summary warns if size breakup is short/excess.</div></div>
@@ -10195,8 +10248,8 @@ function SettingsView({ onChanged }){
   const [dispatchReject,setDispatchReject]=useState(dispatchRejectAllowed());
   const [linesText,setLinesText]=useState(productionLineNames().join("\n"));
   const [sizeSetsText,setSizeSetsText]=useState(sizeSetsToText(getSizeSets()));
-  function applyTol(v){ const num=Math.max(0, Number(String(v).replace(/[^0-9.]/g,"")) || 0); setTol(num); PROD_SETTINGS.cuttingTolerancePct=num; onChanged?.(); }
-  function applyDispatchHold(v){ const num=Math.max(0, Number(String(v).replace(/[^0-9.]/g,"")) || 0); setDispatchHold(num); PROD_SETTINGS.dispatchRamHoldPct=num; onChanged?.(); }
+  function applyTol(v){ const num=Math.max(0, Number(String(v).replace(/[^0-9.]/g,"")) || 0); setTol(num); PROD_SETTINGS.cuttingTolerancePct=num; try { localStorage.setItem("production_cutting_tolerance_pct", String(num)); } catch {} onChanged?.(); }
+  function applyDispatchHold(v){ const num=Math.max(0, Number(String(v).replace(/[^0-9.]/g,"")) || 0); setDispatchHold(num); PROD_SETTINGS.dispatchRamHoldPct=num; try { localStorage.setItem("production_dispatch_ram_hold_pct", String(num)); } catch {} onChanged?.(); }
   function applyDispatchReject(checked){ PROD_SETTINGS.dispatchRejectAllowed=!!checked; setDispatchReject(!!checked); try { localStorage.setItem("production_dispatch_reject_allowed", checked ? "true" : "false"); } catch {} onChanged?.(); }
   function saveLines(){
     const lines = linesText.split(/\r?\n|,/).map(x=>x.trim()).filter(Boolean);
@@ -10220,7 +10273,7 @@ function SettingsView({ onChanged }){
   }
   return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Rules</h3><div className="mt-panel-sub">Editable business rules — single source of truth used by entry validation, status flags and dashboards. Applies on the next screen render.</div></div>
     <div className="mt-section" style={{display:"grid", gap:10}}>
-      <div className="mt-toolbar"><span className="mt-toolbar-label">Cutting tolerance %</span><input className="mt-input" style={{maxWidth:120}} value={tol} onChange={e=>applyTol(e.target.value)} /><span className="mt-small">Cutting may exceed order qty up to this %. One value drives entry allowed-limit, extra-cut status flag and cell marker.</span></div>
+      <div className="mt-toolbar"><span className="mt-toolbar-label">Cutting-only excess allowance %</span><input className="mt-input" style={{maxWidth:120}} value={tol} onChange={e=>applyTol(e.target.value)} /><span className="mt-small">Applies only to Cutting output. It increases the allowed total and size-entry caps and is remembered after refresh. Stitching and every downstream department remain capped by actual issued feed.</span></div>
       <div className="mt-toolbar"><span className="mt-toolbar-label">Dispatch hold if R/A/M % above</span><input className="mt-input" style={{maxWidth:120}} value={dispatchHold} onChange={e=>applyDispatchHold(e.target.value)} /><span className="mt-small">Default 2%. Dispatch output/issue is blocked if any reconcile exists or dispatch-blocking R/A/M is above this % of order qty.</span></div>
       <div className="mt-toolbar"><span className="mt-toolbar-label">Allow rejection dispatch default</span><label className="mt-chip mt-info" style={{cursor:"pointer"}}><input type="checkbox" checked={dispatchReject} onChange={e=>applyDispatchReject(e.target.checked)} style={{marginRight:6}}/> Default for new/unspecified orders</label><span className="mt-small">Actual approval is order/style-wise in Add/Edit Style. Missing, Alter and Reconcile still block.</span></div>
       <div className="mt-toolbar" style={{alignItems:"flex-start"}}><span className="mt-toolbar-label">Stitching line names</span><textarea className="mt-input" style={{minWidth:260, minHeight:110}} value={linesText} onChange={e=>setLinesText(e.target.value)} placeholder={'STF-1\nSTF-2\nSTF-3'} /><button className="mt-btn primary" onClick={saveLines}>Save Lines</button><span className="mt-small">One line per row, or comma separated. Planning uses this list for line-wise stitching plans.</span></div>
@@ -10490,6 +10543,16 @@ export default function App(){
   const sharedLedgerRows = useMemo(()=>applySharedLedgerTotalsToRows(rows, ledger), [rows, ledger]);
   const conservationCount = useMemo(()=>conservationViolationRows(sharedLedgerRows).length, [sharedLedgerRows]);
   const calcRows = useMemo(()=>withLiveIdle(sharedLedgerRows, ledger, today()), [sharedLedgerRows, ledger]);
+  // The drawer stores the row that was clicked only as its selection identity.
+  // Always render the matching row from the latest calculated state; otherwise
+  // the open drawer keeps showing its old snapshot until it is closed/reopened.
+  const liveDrawerRow = useMemo(()=>{
+    if (!drawer?.row) return null;
+    const selectedKey = styleCompositeKey(drawer.row);
+    return calcRows.find(r=>String(r.id || "") === String(drawer.row.id || ""))
+      || calcRows.find(r=>styleCompositeKey(r) === selectedKey)
+      || drawer.row;
+  }, [drawer?.row, calcRows]);
   const buyers = ["All", ...Array.from(new Set(calcRows.map(r=>r.buyer).filter(Boolean))).sort()];
   const orders = Array.from(new Set(calcRows.map(r=>r.order_no).filter(Boolean))).sort();
   const visibleRows = useMemo(()=>calcRows.filter(r=>{
@@ -10797,7 +10860,7 @@ Continue?`);
   return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
     <style>{FONT + CSS}</style>
     <LoginDialog open={showLogin} force={!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
-    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>New production app version is loaded.</b></div><div className="mt-small">P0 stock/date guard is active across WIP and DPR entry/correction views. Problematic dated quantity clashes go to Reconcile.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
+    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>Production-team comments completed.</b></div><div className="mt-small">Style creation has lookup suggestions and a clear New Style action; cutting-only excess is usable and remembered; Live WIP updates without closing; Receive Alter / Alter Clear can be saved with visible validation feedback.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
     <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Review · Reports. Supabase-first autosave · email login · audit/cell history · Excel-like exports.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className="mt-chip mt-info">{presenceSummaryText(presenceRows)}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${navCollapsed?"active":"ghost"}`} onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand left navigation"><Layers size={14}/>{navCollapsed?"Expand tabs":"Collapse tabs"}</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={recalculateStageQtyFromLedger} title="Admin recovery: rebuilds production_orders.stage_qty from production_entries ledger. Rows without ledger are left unchanged."><RefreshCw size={14}/>Recalc Totals</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div></div><PresenceStrip peers={presenceRows}/></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
@@ -10825,7 +10888,7 @@ Continue?`);
       </div>
     </div>
     {releaseFocus && <ProductionFileReleaseModal row={releaseFocus.row} source={releaseFocus.source} onClose={()=>setReleaseFocus(null)} onSave={(payload)=>saveProductionFileRelease(releaseFocus.row, payload)} />}
-    {drawer && <DetailDrawer row={drawer.row} rows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} stageKey={drawer.stage} onClose={()=>setDrawer(null)} onOpenRegister={openRegisterFromWip} onOpenStyle={openStyleFromWip} onRelease={openReleaseFromAnyScreen} onSharedSave={handleSharedSave}/>} 
+    {drawer && liveDrawerRow && <DetailDrawer row={liveDrawerRow} rows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} stageKey={drawer.stage} onClose={()=>setDrawer(null)} onOpenRegister={openRegisterFromWip} onOpenStyle={openStyleFromWip} onRelease={openReleaseFromAnyScreen} onSharedSave={handleSharedSave}/>} 
     {dashboardDrill && <DashboardDrillDrawer drill={dashboardDrill} rows={visibleRows} ledger={ledger} onClose={()=>setDashboardDrill(null)}/>} 
   </div>;
 }
