@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V53_PRODUCTION_ENTRY_COMMENTS";
-const APP_COMMIT_MESSAGE = "Completes the production-team comments: live style lookups, a clear New Style action, usable/persistent cutting excess control, live WIP drawer refresh, and working Receive Alter / Alter Clear saves with visible validation feedback.";
+const APP_VERSION = "V55_ENTRY_DATE_MOVE";
+const APP_COMMIT_MESSAGE = "DPR Date View, Dept View and Style View now include an audit-safe Change date action that preserves quantity, size breakup, department, activity and line while recording an old-date reversal plus new-date repost. The V54 exact size-header upload fix remains included.";
 
 
 const PRODUCTION_APP_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -1584,6 +1584,44 @@ function sizeKeyAliases(size){
     `Size ${s}`, `Size ${compact}`, `${s} Qty`, `Qty ${s}`, `Order ${s}`, `Order Qty ${s}`,
     `Size ${noY}`, `${noY} Qty`, `Qty ${noY}`,
   ].filter(Boolean)));
+}
+function exactSizeHeaderToken(v){
+  let s = cleanSizeToken(v)
+    .replace(/[–—]/g, "-")
+    .replace(/\//g, "-")
+    .replace(/\s+/g, "");
+  if (/^(ORDER)?SIZE(SET|SETS|RATIO|BREAKUP|QTY|QTYBREAKUP|S|SIZES)$/.test(s)) return `__META__${s}`;
+  s = s
+    .replace(/^ORDERQTY/, "")
+    .replace(/^ORDERSIZE/, "")
+    .replace(/^ORDER/, "")
+    .replace(/^QTY/, "")
+    .replace(/^SIZE/, "")
+    .replace(/QTY$/, "");
+  return s;
+}
+function exactExcelSizeColumnValue(raw, size){
+  const wanted = exactSizeHeaderToken(size);
+  for (const [header,value] of Object.entries(raw || {})) {
+    if (exactSizeHeaderToken(header) === wanted) return { found:true, value:value ?? "" };
+  }
+  return { found:false, value:"" };
+}
+function legacyExcelSizeColumnValue(raw, size){
+  const wanted = exactSizeHeaderToken(size);
+  const protectedTokens = new Set(
+    Array.from(new Set(Object.values(getSizeSets()).flat()))
+      .map(exactSizeHeaderToken)
+      .filter(Boolean)
+  );
+  const aliasKeys = new Set(sizeKeyAliases(size).map(normalizedLooseKey));
+  for (const [header,value] of Object.entries(raw || {})) {
+    const exactHeader = exactSizeHeaderToken(header);
+    if (protectedTokens.has(exactHeader) && exactHeader !== wanted) continue;
+    if (!aliasKeys.has(normalizedLooseKey(header))) continue;
+    if (String(value ?? "").trim() !== "") return value;
+  }
+  return "";
 }
 function normalizeSizeQtyMap(map, sizes){
   const out = {};
@@ -5308,6 +5346,10 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onRelease, o
   const [dprEditKey, setDprEditKey] = useState(null);
   const [dprCorrectDraft, setDprCorrectDraft] = useState({});
   const [dprCorrectReason, setDprCorrectReason] = useState("");
+  const [dateMoveKey, setDateMoveKey] = useState(null);
+  const [dateMoveDate, setDateMoveDate] = useState("");
+  const [dateMoveReason, setDateMoveReason] = useState("");
+  const [isMovingDate, setIsMovingDate] = useState(false);
   const [lastSaveMsg, setLastSaveMsg] = useState(null);
   const operatorSimpleMode = isOperatorEntryMode();
   useEffect(()=>{ if (operatorSimpleMode && viewMode !== "date") setViewMode("date"); }, [operatorSimpleMode, viewMode]);
@@ -5334,9 +5376,9 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onRelease, o
       setStyleSearch("");
     }
   }, [focus?.id, rows.length]);
-  useEffect(()=>{ setCorrectRowId(null); setCorrectDraft({}); setDprEditKey(null); setDprCorrectDraft({}); setDprCorrectReason(""); }, [entryDate, stage, field]);
-  useEffect(()=>{ setStyleEditKey(null); setStyleCorrectDraft({}); setStyleCorrectReason(""); }, [selectedRowId]);
-  useEffect(()=>{ if (viewMode !== "style") { setSelectedRowId(""); setStyleEditKey(null); setStyleDeptFilter("all"); } }, [viewMode]);
+  useEffect(()=>{ setCorrectRowId(null); setCorrectDraft({}); setDprEditKey(null); setDprCorrectDraft({}); setDprCorrectReason(""); setDateMoveKey(null); setDateMoveDate(""); setDateMoveReason(""); }, [entryDate, stage, field]);
+  useEffect(()=>{ setStyleEditKey(null); setStyleCorrectDraft({}); setStyleCorrectReason(""); setDateMoveKey(null); setDateMoveDate(""); setDateMoveReason(""); }, [selectedRowId]);
+  useEffect(()=>{ if (viewMode !== "style") { setSelectedRowId(""); setStyleEditKey(null); setStyleDeptFilter("all"); } setDateMoveKey(null); setDateMoveDate(""); setDateMoveReason(""); }, [viewMode]);
 
   const entryStageIsAll = stage === "all";
   const entryFieldIsAll = field === "all_movement" || field === "all";
@@ -5468,6 +5510,9 @@ function QuickEntry({ rows, setRows, ledger, setLedger, focus=null, onRelease, o
     else nd[`${key}|__total__`] = String(n(raw?.Net_Total ?? raw?.Total));
     setDprCorrectDraft(nd);
     setDprCorrectReason("");
+    setDateMoveKey(null);
+    setDateMoveDate("");
+    setDateMoveReason("");
     setDprEditKey(key);
   }
   function dprCorrectVal(key, size){ const k = `${key}|${size}`; return dprCorrectDraft[k] !== undefined ? dprCorrectDraft[k] : ""; }
@@ -5546,6 +5591,111 @@ Save locally in this browser anyway?`)) return;
     [...fromEntry, ...fromMaster].forEach(k=>{ const key=String(k); if (!seen.has(key)) { seen.add(key); out.push(key); } });
     return out;
   }
+  function entryDateMoveParts(row, g){
+    const byLineAndSize = new Map();
+    (ledger || []).forEach(e=>{
+      if (!ledgerMatchesRow(e, row)) return;
+      if (ledgerDate(e) !== g.date || ledgerStage(e) !== g.stage || ledgerType(e) !== String(g.type || "").toLowerCase()) return;
+      const size = String(e.size || e.size_code || e.size_name || "").trim();
+      const line = String(e.line || e.stitching_line || row.line || "").trim();
+      const key = `${line}|::|${size}`;
+      const old = byLineAndSize.get(key) || { line, size, qty:0 };
+      old.qty += n(e.qty ?? e.delta);
+      byLineAndSize.set(key, old);
+    });
+    const exact = Array.from(byLineAndSize.values()).filter(x=>n(x.qty)!==0);
+    if (exact.length) return exact;
+    if (groupHasSizeSplit(g)) return Object.entries(g.sizes || {}).filter(([,qty])=>n(qty)!==0).map(([size,qty])=>({ line:String(row.line || "").trim(), size, qty:n(qty) }));
+    return n(g.total) ? [{ line:String(row.line || "").trim(), size:"", qty:n(g.total) }] : [];
+  }
+  function beginEntryDateMove(row, g, key){
+    if (!row) { alert("Could not find the style row for this DPR entry."); return; }
+    if (!n(g.total) && !groupHasSizeSplit(g)) { alert("Nothing to move — this entry is already zero."); return; }
+    setDprEditKey(null);
+    setStyleEditKey(null);
+    setDateMoveDate(g.date || "");
+    setDateMoveReason("");
+    setDateMoveKey(key);
+  }
+  function p0IssueIdentity(issue){
+    return [issue?.stage || "", issue?.date || "", issue?.type || "", Math.round(n(issue?.qty) * 1000) / 1000].join("|::|");
+  }
+  async function saveEntryDateMove(row, g, key){
+    if (isMovingDate) return;
+    const permissionError = requireCurrentPermission("production.correct_entry", "change a DPR entry date");
+    if (permissionError) return;
+    const oldDate = String(g.date || "");
+    const newDate = String(dateMoveDate || "");
+    const cleanReason = String(dateMoveReason || "").trim();
+    if (!oldDate || !newDate) { alert("Choose the new entry date."); return; }
+    if (oldDate === newDate) { alert("Choose a different date. Quantity has not been changed."); return; }
+    const moveRisk = backdateRisk(newDate);
+    if (moveRisk.future) { alert("Future entry dates are blocked. Choose today or an earlier production date."); return; }
+    if (!cleanReason) { alert("Reason is required to change an entry date."); return; }
+    const parts = entryDateMoveParts(row, g);
+    if (!parts.length) { alert("Nothing to move — the selected entry has no non-zero quantity."); return; }
+    const moveId = uid("date_move");
+    const field = fieldForEntryType(g.type);
+    const makeRows = (validationOverride=null)=>{
+      const reversalRows = [];
+      const repostRows = [];
+      const byLine = new Map();
+      parts.forEach(part=>{
+        const line = part.line || "";
+        if (!byLine.has(line)) byLine.set(line, []);
+        byLine.get(line).push(part);
+      });
+      byLine.forEach((lineParts,line)=>{
+        const reversalChanges = lineParts.map(part=>({ row, size:part.size, oldQty:n(part.qty), newQty:0, delta:-n(part.qty) }));
+        const repostChanges = lineParts.map(part=>({ row, size:part.size, oldQty:0, newQty:n(part.qty), delta:n(part.qty) }));
+        reversalRows.push(...buildLedgerRows({ changes:reversalChanges, stage:g.stage, field, entryDate:oldDate, reason:cleanReason, source:"dpr_entry_date_move_correction_old", line, validationOverride }));
+        repostRows.push(...buildLedgerRows({ changes:repostChanges, stage:g.stage, field, entryDate:newDate, reason:cleanReason, source:"dpr_entry_date_move_repost", line, validationOverride }));
+      });
+      return [...reversalRows, ...repostRows].map(x=>({
+        ...x,
+        backdate_reason:cleanReason,
+        remarks:`${x.remarks} Entry date moved ${oldDate} -> ${newDate}; quantity unchanged; reason: ${cleanReason}; move ${moveId}.`
+      }));
+    };
+    const provisionalRows = makeRows();
+    const beforeIssues = new Set(p0StockAuditIssues([row], ledger || []).map(p0IssueIdentity));
+    const newlyCreatedIssues = p0StockAuditIssues([row], [...provisionalRows, ...(ledger || [])]).filter(issue=>!beforeIssues.has(p0IssueIdentity(issue)));
+    const blockingSummary = newlyCreatedIssues.slice(0,6).map(issue=>`• ${issue.message}`).join("\n");
+    const totalMoved = parts.reduce((sum,part)=>sum+n(part.qty),0);
+    const lineSummary = Array.from(new Set(parts.map(part=>part.line).filter(Boolean))).join(", ") || "—";
+    const normalConfirm = `Change entry date?\n\n${row.style_no} · ${stageLabel(g.stage)} · ${registerActivityLabel(g.type)}\n${oldDate} -> ${newDate}\nQuantity stays ${fmt(totalMoved)}; size breakup and line (${lineSummary}) stay unchanged.\n\nReason: ${cleanReason}\n\nThe Register will retain an old-date reversal and a new-date repost for audit.`;
+    const issueConfirm = `${normalConfirm}\n\nWARNING: the new date creates ${newlyCreatedIssues.length} new date-sequence issue(s):\n${blockingSummary}\n\nContinue as an explicit P0 override and send this to Reconcile Review?`;
+    if (!window.confirm(newlyCreatedIssues.length ? issueConfirm : normalConfirm)) return;
+    const validationOverride = newlyCreatedIssues.length ? {
+      validation_status:"p0_date_sequence_override",
+      validation_scope:"p0_date_sequence_confirmed_reconcile",
+      validation_messages:newlyCreatedIssues.map(issue=>issue.message),
+      requires_reconcile:true
+    } : null;
+    const newLedger = makeRows(validationOverride);
+    setIsMovingDate(true);
+    try {
+      const sharedResult = await saveLedgerToSupabase(newLedger, field);
+      if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
+        const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
+        if (!window.confirm(`Shared Supabase save did not confirm: ${msg}\n\nSave this date move locally in this browser anyway?`)) return;
+      }
+      setLedger(prev=>mergeLedgerPrependUnique(prev, newLedger));
+      recordProductionAudit("ledger_entry_date_move", {
+        table_name:"production_entries", order_no:row.order_no, style_no:row.style_no, colour:row.colour, component:row.component,
+        stage:g.stage, entry_type:g.type, entry_date:newDate, qty:totalMoved, source:"DPR Change Entry Date",
+        before_data:{ entry_date:oldDate }, after_data:{ entry_date:newDate },
+        metadata:{ move_id:moveId, quantity_unchanged:true, old_date:oldDate, new_date:newDate, line:lineSummary, reason:cleanReason, ledger_rows:newLedger.length, requires_reconcile:!!newlyCreatedIssues.length }
+      });
+      setDateMoveKey(null);
+      setDateMoveDate("");
+      setDateMoveReason("");
+      setLastSaveMsg({ tone:newlyCreatedIssues.length?"warn":"ok", text:`Entry date changed: ${row.style_no} · ${oldDate} -> ${newDate} · quantity unchanged at ${fmt(totalMoved)}${newlyCreatedIssues.length ? " · sent to Reconcile Review" : ""}` });
+      onSharedSave?.(sharedResult, "DPR entry date move");
+    } finally {
+      setIsMovingDate(false);
+    }
+  }
   async function voidStyleEntry(row, g){
     const field = fieldForEntryType(g.type);
     const hasSplit = groupHasSizeSplit(g);
@@ -5586,6 +5736,9 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
     else nd[`${key}|__total__`] = String(n(g.total));
     setStyleCorrectDraft(nd);
     setStyleCorrectReason("");
+    setDateMoveKey(null);
+    setDateMoveDate("");
+    setDateMoveReason("");
     setStyleEditKey(key);
   }
   async function saveStyleCorrection(row, g){
@@ -5779,10 +5932,12 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
           const key = dprActivityKey(r);
           const row = findStyleFromDprRow(r);
           const isEditing = dprEditKey === key;
+          const isMovingThisDate = dateMoveKey === key;
+          const moveGroup = dprActivityGroup(r);
           return <React.Fragment key={key || i}>
             <tr>
               {cols.map(c=>{ const val=r[c]; return <td key={c} className={simpleTableCellTone(c,val)}>{typeof val === "number" ? fmt(val) : String(val === undefined || val === null ? "" : val)}</td>; })}
-              <td className="no-print"><button className={`mt-btn ${isEditing?"active":"ghost"}`} onClick={(e)=>{e.stopPropagation(); isEditing ? setDprEditKey(null) : beginDprInlineCorrection(r);}}>{isEditing ? "Close" : "Correct"}</button></td>
+              <td className="no-print"><div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}><button className={`mt-btn ${isEditing?"active":"ghost"}`} onClick={(e)=>{e.stopPropagation(); isEditing ? setDprEditKey(null) : beginDprInlineCorrection(r);}}>{isEditing ? "Close qty" : "Correct qty"}</button><button className={`mt-btn ${isMovingThisDate?"active":"ghost"}`} onClick={(e)=>{e.stopPropagation(); isMovingThisDate ? setDateMoveKey(null) : beginEntryDateMove(row, moveGroup, key);}}>{isMovingThisDate ? "Close date" : "Change date"}</button></div></td>
             </tr>
             {isEditing && <tr className="mt-correction-row"><td colSpan={cols.length+1}>
               <div className="mt-inline-correction">
@@ -5805,6 +5960,19 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
                 </div>
               </div>
             </td></tr>}
+            {isMovingThisDate && <tr className="mt-correction-row"><td colSpan={cols.length+1}>
+              <div className="mt-inline-correction">
+                <div className="mt-correction-head"><b>Change entry date: {r.Date} · {r.Department} · {r.Action}</b><span className="mt-small">Quantity, size breakup, department, activity and line remain unchanged. The audit register keeps a reversal on the old date and a repost on the new date.</span></div>
+                <div className="mt-correction-controls">
+                  <label>Old date <input className="mt-input" type="date" value={r.Date || ""} disabled /></label>
+                  <label>New date <input className="mt-input mandatory" type="date" value={dateMoveDate} max={today()} onChange={e=>setDateMoveDate(e.target.value)} /></label>
+                  <label>Reason <input className="mt-input" value={dateMoveReason} onChange={e=>setDateMoveReason(e.target.value)} placeholder="Why is the entry date being changed?" style={{minWidth:280}} /></label>
+                  <button className="mt-btn primary" disabled={isMovingDate} onClick={()=>saveEntryDateMove(row, moveGroup, key)}><CheckCircle2 size={14}/>{isMovingDate ? "Moving…" : "Move date — qty unchanged"}</button>
+                  <button className="mt-btn ghost" disabled={isMovingDate} onClick={()=>setDateMoveKey(null)}>Cancel</button>
+                </div>
+                <div className="mt-small">Total remains <b>{fmt(r.Net_Total ?? r.Total)}</b>. A future date is blocked; any new date-sequence conflict requires explicit Reconcile Review confirmation.</div>
+              </div>
+            </td></tr>}
           </React.Fragment>;
         }) : <tr><td colSpan={cols.length+1} style={{padding:18}}>{empty}</td></tr>}
       </tbody></table></div>
@@ -5819,7 +5987,7 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
   return <div className="mt-card">
     <div className="mt-section">
       <h3 className="mt-panel-title">DPR Quick Entry</h3>
-      <div className="mt-panel-sub">{stageLabel(stage)} · {fieldLabel(field)} {entryDate ? `for ${entryDate}` : "across all dates"}. Date is optional for review; choose a date only when posting/saving a DPR entry. {operatorSimpleMode ? "Operator mode shows only the core entry task: date, department, style rows, size numbers and save confirmation." : "Rows in Date/Dept views are directly editable inline; Style View is only for full style-level detail."}</div>
+      <div className="mt-panel-sub">{stageLabel(stage)} · {fieldLabel(field)} {entryDate ? `for ${entryDate}` : "across all dates"}. Date is optional for review; choose a date only when posting/saving a DPR entry. {operatorSimpleMode ? "Operator mode shows only the core entry task: date, department, style rows, size numbers and save confirmation." : "Rows in Date/Dept views support separate quantity correction and date-only movement; Style View provides the same controls with full style history."}</div>
       {operatorSimpleMode && <span className="mt-chip mt-info">Operator-safe mode</span>}
       {lastSaveMsg && <div className={`mt-save-banner ${lastSaveMsg.tone === "warn" ? "warn" : ""}`}><CheckCircle2 size={16}/>{lastSaveMsg.text}</div>}
     </div>
@@ -5861,12 +6029,12 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
     </div>
     {viewMode === "dept" ? <>
     <div className="mt-section">
-      <DprActivityEditableTable title={`${stage === "all" ? "All departments" : stageLabel(stage)} DPR history`} sub="Dept view: posted entries across dates. Open balances below are date/quantity checked as-of selected date when a date is chosen; future ledger impact is flagged for Review." rows={dprDeptActivityRows} empty="No entries match this department/action filter." />
+      <DprActivityEditableTable title={`${stage === "all" ? "All departments" : stageLabel(stage)} DPR history`} sub="Dept view: posted entries across dates. Correct qty changes quantity; Change date preserves quantity and posts an audit-safe reversal/repost. Open balances are checked as-of the selected date." rows={dprDeptActivityRows} empty="No entries match this department/action filter." />
     </div>
     <div className="mt-section"><SimpleTable title="Open to complete / issue" sub="All styles' open balance for the selected department/action, as of the selected date. Follows P0 date + quantity rules; later entries are flagged for Reconcile review." rows={dprOpenRowsForSelection} empty="No open movement balances for this filter." onRowClick={openDprOpenRowForEntry} /></div>
     </> : viewMode === "date" ? <>
     <div className="mt-section">
-      <DprActivityEditableTable title={entryDate ? `Entered on ${entryDate}` : "Entered across all dates"} sub="First check: entries already posted for the selected date/dept/action filter. Date can be blank for all dates. Correct old entries directly here, even if that row already includes earlier correction/reversal entries." rows={dprDateActivityRows} empty="No entries posted yet for this filter." />
+      <DprActivityEditableTable title={entryDate ? `Entered on ${entryDate}` : "Entered across all dates"} sub="First check: entries already posted for the selected date/dept/action filter. Correct qty changes quantity; Change date moves the entry without changing quantity. Both retain full Register history." rows={dprDateActivityRows} empty="No entries posted yet for this filter." />
     </div>
     <div className="mt-section"><SimpleTable title="Open to complete / issue" sub="All styles' open balance for the selected department/action, as of the selected date. Follows P0 date + quantity rules; later entries are flagged for Reconcile review." rows={dprOpenRowsForSelection} empty="No open movement balances for this filter." onRowClick={openDprOpenRowForEntry} /></div>
     {entryStageIsAll || entryFieldIsAll ? null : <>
@@ -5986,6 +6154,7 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
           {selectedStyleHistory.length ? selectedStyleHistory.map(g=>{
             const key = groupKeyOf(g);
             const isEditing = styleEditKey === key;
+            const isMovingThisDate = dateMoveKey === key;
             return <React.Fragment key={key}>
               <tr>
                 <td><b>{g.date}</b></td>
@@ -5993,7 +6162,7 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
                 <td>{registerActivityLabel(g.type)}</td>
                 <td><b>{fmt(g.total)}</b></td>
                 <td className="mt-small">{Object.keys(g.sizes||{}).filter(sz=>n(g.sizes[sz])).map(sz=>`${sz||"(blank)"} ${fmt(g.sizes[sz])}`).join(" · ") || "—"}</td>
-                <td><div style={{display:"flex",gap:4,alignItems:"center"}}>{n(g.total)!==0 || groupHasSizeSplit(g) ? <><button className={`mt-btn ghost ${isEditing?"active":""}`} onClick={()=>isEditing ? setStyleEditKey(null) : beginStyleCorrection(selectedStyleRow, g)}>{isEditing?"Close edit":"Edit"}</button><button className="mt-btn ghost danger" onClick={()=>voidStyleEntry(selectedStyleRow, g)} title="Delete / void this entry (posts an audit-safe reversal)">Delete</button></> : <span className="mt-small">already 0</span>}</div></td>
+                <td><div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>{n(g.total)!==0 || groupHasSizeSplit(g) ? <><button className={`mt-btn ghost ${isEditing?"active":""}`} onClick={()=>isEditing ? setStyleEditKey(null) : beginStyleCorrection(selectedStyleRow, g)}>{isEditing?"Close qty":"Edit qty"}</button><button className={`mt-btn ghost ${isMovingThisDate?"active":""}`} onClick={()=>isMovingThisDate ? setDateMoveKey(null) : beginEntryDateMove(selectedStyleRow, g, key)}>{isMovingThisDate?"Close date":"Change date"}</button><button className="mt-btn ghost danger" onClick={()=>voidStyleEntry(selectedStyleRow, g)} title="Delete / void this entry (posts an audit-safe reversal)">Delete</button></> : <span className="mt-small">already 0</span>}</div></td>
               </tr>
               {isEditing && <tr className="mt-correction-row"><td colSpan={6}>
                 <div className="mt-inline-correction">
@@ -6026,6 +6195,19 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
                     <button className="mt-btn primary" onClick={()=>saveStyleCorrection(selectedStyleRow, g)}><CheckCircle2 size={14}/>Save correction</button>
                     <button className="mt-btn ghost" onClick={()=>setStyleEditKey(null)}>Cancel</button>
                   </div>
+                </div>
+              </td></tr>}
+              {isMovingThisDate && <tr className="mt-correction-row"><td colSpan={6}>
+                <div className="mt-inline-correction">
+                  <div className="mt-correction-head"><b>Change entry date: {g.date} · {stageLabel(g.stage)} · {registerActivityLabel(g.type)}</b><span className="mt-small">This changes the date only. Quantity, size breakup, department, activity and stitching line remain exactly as recorded.</span></div>
+                  <div className="mt-correction-controls">
+                    <label>Old date <input className="mt-input" type="date" value={g.date || ""} disabled /></label>
+                    <label>New date <input className="mt-input mandatory" type="date" value={dateMoveDate} max={today()} onChange={e=>setDateMoveDate(e.target.value)} /></label>
+                    <label>Reason <input className="mt-input" value={dateMoveReason} onChange={e=>setDateMoveReason(e.target.value)} placeholder="Why is the entry date being changed?" style={{minWidth:280}} /></label>
+                    <button className="mt-btn primary" disabled={isMovingDate} onClick={()=>saveEntryDateMove(selectedStyleRow, g, key)}><CheckCircle2 size={14}/>{isMovingDate ? "Moving…" : "Move date — qty unchanged"}</button>
+                    <button className="mt-btn ghost" disabled={isMovingDate} onClick={()=>setDateMoveKey(null)}>Cancel</button>
+                  </div>
+                  <div className="mt-small">Total remains <b>{fmt(g.total)}</b>. The old-date reversal and new-date repost remain visible in Register for audit.</div>
                 </div>
               </td></tr>}
             </React.Fragment>;
@@ -9583,7 +9765,11 @@ function parseSizeQtyText(text){
   return out;
 }
 function excelSizeValue(raw, size){
-  return excelValue(raw, sizeKeyAliases(size));
+  // Exact identity wins even when the exact template cell is blank.
+  // Without this guard, loose punctuation removal makes "Size 3-4" and
+  // "Size 34" the same key, so waist 34 can be falsely read as kids 3-4Y.
+  const exact = exactExcelSizeColumnValue(raw, size);
+  return exact.found ? exact.value : legacyExcelSizeColumnValue(raw, size);
 }
 function extractOrderSizeQtyFromExcel(raw, sizeSet, existing){
   const sizes = getSizeSets()[sizeSet] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha;
@@ -10860,7 +11046,7 @@ Continue?`);
   return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
     <style>{FONT + CSS}</style>
     <LoginDialog open={showLogin} force={!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
-    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>Production-team comments completed.</b></div><div className="mt-small">Style creation has lookup suggestions and a clear New Style action; cutting-only excess is usable and remembered; Live WIP updates without closing; Receive Alter / Alter Clear can be saved with visible validation feedback.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
+    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>Entry dates can now be corrected without changing quantity.</b></div><div className="mt-small">Use Change date in DPR Date View, Dept View or Style View. The app preserves size breakup, department, activity and line, while keeping an audit reversal/repost in Register. The exact size-header upload fix remains included.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
     <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Review · Reports. Supabase-first autosave · email login · audit/cell history · Excel-like exports.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className="mt-chip mt-info">{presenceSummaryText(presenceRows)}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${navCollapsed?"active":"ghost"}`} onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand left navigation"><Layers size={14}/>{navCollapsed?"Expand tabs":"Collapse tabs"}</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={recalculateStageQtyFromLedger} title="Admin recovery: rebuilds production_orders.stage_qty from production_entries ledger. Rows without ledger are left unchanged."><RefreshCw size={14}/>Recalc Totals</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div></div><PresenceStrip peers={presenceRows}/></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
