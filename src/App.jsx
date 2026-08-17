@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V55_ENTRY_DATE_MOVE";
-const APP_COMMIT_MESSAGE = "DPR Date View, Dept View and Style View now include an audit-safe Change date action that preserves quantity, size breakup, department, activity and line while recording an old-date reversal plus new-date repost. The V54 exact size-header upload fix remains included.";
+const APP_VERSION = "V58_ARCH_HARDENING_B1_B2";
+const APP_COMMIT_MESSAGE = "Batches 1+2 combined: Supabase-authoritative production truth, atomic/idempotent DPR posting, full pagination, Supabase Auth, RLS/server-owned permissions, secure audit/session RPCs, shared settings table, active-master guards, no active hard delete, exact release-size snapshots, and legacy 540→next-dept compatibility.";
 
 
 const PRODUCTION_APP_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -870,19 +870,8 @@ function cleanSizeToken(v){ return String(v || "").trim().toUpperCase(); }
 function normalizeSizeGroupKey(v){
   return String(v || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g,"_").replace(/^_+|_+$/g,"") || "custom";
 }
-function getCustomSizeSets(){
-  try {
-    const parsed = JSON.parse(localStorage.getItem("production_size_sets") || "{}");
-    if (!parsed || typeof parsed !== "object") return {};
-    const out = {};
-    Object.entries(parsed).forEach(([k,arr])=>{
-      const key = normalizeSizeGroupKey(k);
-      const sizes = Array.isArray(arr) ? arr.map(cleanSizeToken).filter(Boolean) : [];
-      if (key && sizes.length) out[key] = Array.from(new Set(sizes));
-    });
-    return out;
-  } catch { return {}; }
-}
+let SHARED_CUSTOM_SIZE_SETS = {};
+function getCustomSizeSets(){ return { ...SHARED_CUSTOM_SIZE_SETS }; }
 function getSizeSets(){ return { ...DEFAULT_SIZE_SETS, ...getCustomSizeSets() }; }
 function sizeSetsToText(sets=getSizeSets()){
   return Object.entries(sets).map(([k,v])=>`${k} = ${(v||[]).join(", ")}`).join("\n");
@@ -907,7 +896,8 @@ function saveCustomSizeSets(allSets){
     const sizes = Array.isArray(arr) ? arr.map(cleanSizeToken).filter(Boolean) : [];
     if (key && sizes.length) clean[key] = Array.from(new Set(sizes));
   });
-  try { localStorage.setItem("production_size_sets", JSON.stringify(clean)); } catch {}
+  SHARED_CUSTOM_SIZE_SETS = clean;
+  return clean;
 }
 
 const STAGES = [
@@ -931,9 +921,20 @@ function initials(row){
 }
 function LazyStylePhoto({ row, large=false }){
   const [err, setErr] = useState(false);
-  const src = row?.photo_thumb_url || row?.photo_url || "";
+  const rawSrc = row?.photo_thumb_url || row?.photo_url || "";
+  const [src,setSrc] = useState(rawSrc && !String(rawSrc).startsWith("storage://") ? rawSrc : "");
+  useEffect(()=>{
+    let cancelled=false; setErr(false);
+    const value=String(rawSrc||"");
+    if (!value.startsWith("storage://")) { setSrc(value); return ()=>{cancelled=true;}; }
+    const rest=value.slice("storage://".length); const slash=rest.indexOf("/");
+    const bucket=slash>0?rest.slice(0,slash):"production-photos"; const path=slash>0?rest.slice(slash+1):rest;
+    if (!supabase || !path) { setSrc(""); setErr(true); return ()=>{cancelled=true;}; }
+    supabase.storage.from(bucket).createSignedUrl(path, 3600).then(({data,error})=>{ if(!cancelled){ if(error||!data?.signedUrl){setErr(true);setSrc("");} else setSrc(data.signedUrl); } });
+    return ()=>{cancelled=true;};
+  },[rawSrc]);
   const cls = `mt-thumb ${large ? "large" : ""}`;
-  if (!src || err) return <div className={cls}><div className="mt-photo-empty"><ImageIcon size={large ? 28 : 16}/><br/>{initials(row)}</div></div>;
+  if (!rawSrc || err || !src) return <div className={cls}><div className="mt-photo-empty"><ImageIcon size={large ? 28 : 16}/><br/>{initials(row)}</div></div>;
   return <div className={cls}><img src={src} alt={`${row.style_no || "style"} photo`} loading="lazy" decoding="async" fetchPriority="low" onError={()=>setErr(true)} /></div>;
 }
 function uid(prefix="id"){ return `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`; }
@@ -1026,7 +1027,7 @@ function normalizeUserEmail(email){ return String(email || "").trim().toLowerCas
 function emailLooksValid(email){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeUserEmail(email)); }
 function displayNameFromEmail(email){ return normalizeUserEmail(email).split("@")[0].replace(/[._-]+/g," ").replace(/\b\w/g,m=>m.toUpperCase()); }
 function defaultUserProfile(){
-  return { name:"", email:"", role:"Data Operator", department:"Production", permissions:[], access_status:"approved", password_hash:"", requested_role:"Data Operator", requested_department:"Production" };
+  return { name:"", email:"", role:"Data Operator", department:"Production", permissions:[], access_status:"pending", password_hash:"", requested_role:"Data Operator", requested_department:"Production", is_active:false, auth_user_id:"" };
 }
 function currentUserProfile(){
   try {
@@ -1174,85 +1175,111 @@ function PresenceStrip({ peers=[] }){
     </span>) : <span className="mt-chip mt-muted">Realtime users will appear here after Supabase presence connects.</span>}
   </div>;
 }
-async function upsertProductionAppUser(profile=currentUserProfile()){
-  if (!profile?.name || !hasValidSupabaseEnv()) return { skipped:true };
-  const row = {
-    display_name:profile.name || displayNameFromEmail(profile.email),
-    email:normalizeUserEmail(profile.email) || null,
-    role:profile.role || "Data Operator",
-    department:profile.department || "Production",
-    access_status:profile.access_status || "approved",
-    requested_role:profile.requested_role || profile.role || "Data Operator",
-    requested_department:profile.requested_department || profile.department || "Production",
-    password_hash:profile.password_hash || undefined,
-    is_active:true,
-    browser_id:productionBrowserId(), last_seen_at:new Date().toISOString(), app_version:APP_VERSION
+function profileFromDbUser(user, authUser=null){
+  if (!user) return defaultUserProfile();
+  const email = normalizeUserEmail(user.email || authUser?.email || "");
+  return {
+    ...defaultUserProfile(),
+    auth_user_id:user.auth_user_id || authUser?.id || "",
+    name:user.display_name || user.user_name || displayNameFromEmail(email),
+    email,
+    role:user.role || "Pending Approval",
+    department:user.department || user.requested_department || "Production",
+    requested_role:user.requested_role || user.role || "Data Operator",
+    requested_department:user.requested_department || user.department || "Production",
+    access_status:user.access_status || (user.is_active ? "approved" : "pending"),
+    is_active:user.is_active !== false,
+    permissions:Array.isArray(user.permissions) ? user.permissions : [],
   };
-  return fetchRestUpsertToSupabase("production_app_users", [row], row.email ? "email" : "display_name");
+}
+async function claimProductionProfile({ displayName="", requestedRole="Data Operator", requestedDepartment="Production" }={}){
+  if (!isSupabaseConfigured || !supabase || !hasValidSupabaseEnv()) return { error:{ message:"Supabase Auth is required." } };
+  const { data, error } = await supabase.rpc("claim_production_profile", {
+    p_display_name:displayName || null,
+    p_requested_role:requestedRole || "Data Operator",
+    p_requested_department:requestedDepartment || "Production",
+    p_browser_id:productionBrowserId(),
+    p_app_version:APP_VERSION,
+  });
+  if (error) return { error };
+  const sessionRes = await supabase.auth.getSession();
+  const authUser = sessionRes?.data?.session?.user || null;
+  return { error:null, data:profileFromDbUser(data, authUser) };
+}
+async function loadAuthenticatedProductionProfile(){
+  if (!isSupabaseConfigured || !supabase || !hasValidSupabaseEnv()) return { error:{ message:"Supabase is not configured." }, session:null, profile:null };
+  const { data:{ session }, error } = await supabase.auth.getSession();
+  if (error) return { error, session:null, profile:null };
+  if (!session?.user) return { error:null, session:null, profile:null };
+  const claimed = await claimProductionProfile({
+    displayName:session.user.user_metadata?.display_name || displayNameFromEmail(session.user.email),
+    requestedRole:session.user.user_metadata?.requested_role || "Data Operator",
+    requestedDepartment:session.user.user_metadata?.requested_department || "Production",
+  });
+  return { error:claimed.error || null, session, profile:claimed.data || null };
+}
+async function touchProductionSession(loginNote=""){
+  if (!isSupabaseConfigured || !supabase || !hasValidSupabaseEnv()) return { skipped:true };
+  const { data, error } = await supabase.rpc("touch_production_session", {
+    p_login_note:loginNote || null,
+    p_browser_id:productionBrowserId(),
+    p_app_version:APP_VERSION,
+  });
+  return error ? { error } : { error:null, data };
+}
+async function upsertProductionAppUser(profile=currentUserProfile()){
+  return touchProductionSession(profile?.name ? `Active user: ${profile.name}` : "Active production session");
 }
 async function recordUserSession(event_type, profile=currentUserProfile(), extra={}){
-  if (!profile?.name || !hasValidSupabaseEnv()) return { skipped:true };
-  const row = userAuditBase({ event_type, action:event_type, metadata:extra });
-  const result = await fetchRestInsertToSupabase("production_user_sessions", [row]);
-  await upsertProductionAppUser(profile);
-  return result;
+  if (!isSupabaseConfigured || !supabase || !hasValidSupabaseEnv()) return { skipped:true };
+  const { data, error } = await supabase.rpc("record_production_session", { p_event_type:event_type, p_metadata:{ ...extra, browser_id:productionBrowserId(), app_version:APP_VERSION } });
+  return error ? { error } : { error:null, data };
 }
 async function recordProductionAudit(action, meta={}){
-  if (!hasValidSupabaseEnv()) return { skipped:true };
-  const row = userAuditBase({ action, event_type:action, table_name:meta.table_name || "", order_no:meta.order_no || "", style_no:meta.style_no || "", colour:meta.colour || "", component:meta.component || "", stage:meta.stage || "", entry_type:meta.entry_type || "", entry_date:meta.entry_date || null, qty:n(meta.qty || 0), source:meta.source || "app", before_data:meta.before_data || null, after_data:meta.after_data || null, metadata:meta.metadata || {} });
-  return fetchRestInsertToSupabase("production_audit_log", [row]);
+  if (!isSupabaseConfigured || !supabase || !hasValidSupabaseEnv()) return { skipped:true };
+  const { data, error } = await supabase.rpc("record_production_audit", { p_action:action, p_meta:meta || {} });
+  return error ? { error } : { error:null, data };
 }
 async function fetchProductionAudit(limit=250){
-  return fetchRestSelectFromSupabase("production_audit_log", `select=*&order=created_at.desc&limit=${limit}`);
+  if (!isSupabaseConfigured || !supabase) return { data:[], error:{ message:"Supabase unavailable" } };
+  const { data, error } = await supabase.from("production_audit_log").select("*").order("created_at",{ascending:false}).limit(limit);
+  return { data:data || [], error:error || null };
 }
 async function fetchProductionUsers(){
-  return fetchRestSelectFromSupabase("production_app_users", "select=*&order=last_seen_at.desc&limit=500");
-}
-async function hashLoginPassword(email, password){
-  const cleanEmail = normalizeUserEmail(email);
-  const cleanPass = String(password || "");
-  const text = `production-dpr-login::${cleanEmail}::${cleanPass}`;
-  try {
-    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-    return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
-  } catch {
-    let h = 0;
-    for (let i=0; i<text.length; i++) h = Math.imul(31, h) + text.charCodeAt(i) | 0;
-    return `fallback_${Math.abs(h)}`;
-  }
+  if (!isSupabaseConfigured || !supabase) return { data:[], error:{ message:"Supabase unavailable" } };
+  const { data, error } = await supabase.from("production_app_users").select("*").order("last_seen_at",{ascending:false}).limit(500);
+  return { data:data || [], error:error || null };
 }
 async function fetchProductionUserByEmail(email){
   const clean = normalizeUserEmail(email);
-  if (!clean || !hasValidSupabaseEnv()) return { data:null, skipped:true };
-  const q = `select=*&email=eq.${encodeURIComponent(clean)}&limit=1`;
-  const res = await fetchRestSelectFromSupabase("production_app_users", q);
-  return { ...res, data:Array.isArray(res.data) ? res.data[0] || null : null };
+  if (!clean || !isSupabaseConfigured || !supabase) return { data:null, error:{ message:"Missing email or Supabase" } };
+  const { data, error } = await supabase.from("production_app_users").select("*").eq("email",clean).maybeSingle();
+  return { data:data || null, error:error || null };
 }
 async function requestProductionAccess(form){
   const email = normalizeUserEmail(form.email);
-  const passwordHash = await hashLoginPassword(email, form.password || "");
-  const row = {
-    display_name:String(form.name || displayNameFromEmail(email)).trim(),
+  const password = String(form.password || "");
+  if (!isSupabaseConfigured || !supabase) return { error:{ message:"Supabase Auth unavailable" } };
+  const { data, error } = await supabase.auth.signUp({
     email,
-    role:"Pending Approval",
-    department:form.department || form.requested_department || "Production",
-    requested_role:form.requested_role || "Data Operator",
-    requested_department:form.department || form.requested_department || "Production",
-    password_hash:passwordHash,
-    access_status:"pending",
-    is_active:false,
-    browser_id:productionBrowserId(),
-    last_seen_at:new Date().toISOString(),
-    app_version:APP_VERSION
-  };
-  return fetchRestUpsertToSupabase("production_app_users", [row], "email");
+    password,
+    options:{ data:{ display_name:String(form.name || displayNameFromEmail(email)).trim(), requested_role:form.requested_role || "Data Operator", requested_department:form.requested_department || form.department || "Production" } }
+  });
+  if (error) return { error };
+  if (!data?.session) return { error:null, data, confirmationRequired:true };
+  const claim = await claimProductionProfile({ displayName:form.name, requestedRole:form.requested_role, requestedDepartment:form.requested_department || form.department });
+  return { ...claim, auth:data };
 }
 async function updateProductionUserAccess(email, patch){
-  const clean = normalizeUserEmail(email);
-  if (!clean || !hasValidSupabaseEnv()) return { error:{ message:"Missing email or Supabase config" } };
-  const existing = await fetchProductionUserByEmail(clean);
-  const row = { ...(existing.data || {}), email:clean, ...patch, last_seen_at:new Date().toISOString(), app_version:APP_VERSION };
-  return fetchRestUpsertToSupabase("production_app_users", [row], "email");
+  if (!isSupabaseConfigured || !supabase) return { error:{ message:"Supabase unavailable" } };
+  const role = patch.role || (String(patch.access_status||"").toLowerCase()==="rejected" ? "Pending Approval" : patch.requested_role || "Data Operator");
+  const department = patch.department || patch.requested_department || "Production";
+  const accessStatus = String(patch.access_status || (patch.is_active===false ? "rejected" : "approved")).toLowerCase();
+  const isActive = patch.is_active !== undefined ? !!patch.is_active : accessStatus === "approved";
+  const { data, error } = await supabase.rpc("admin_set_production_user_access", {
+    p_email:normalizeUserEmail(email), p_role:role, p_department:department, p_access_status:accessStatus, p_is_active:isActive
+  });
+  return error ? { error } : { error:null, data };
 }
 function defaultEntryDate(ledger=[]){
   // Factory reality: production is normally entered next day. Use latest activity date if present,
@@ -1569,7 +1596,15 @@ function wipOrderViewRows(rows){
 function stageLabel(k){ return STAGE_BY_KEY[k]?.label || k; }
 function stageOwner(k){ return STAGE_BY_KEY[k]?.owner || "Production Owner"; }
 function hodAndCoordinator(k){ return `${stageOwner(k)} + Production Coordinator`; }
-function sizesFor(row){ const sets = getSizeSets(); return sets[row?.size_set] || sets.alpha || DEFAULT_SIZE_SETS.alpha; }
+function sizesFor(row){
+  const persisted = Array.isArray(row?.size_list) ? row.size_list.map(cleanSizeToken).filter(Boolean) : [];
+  if (persisted.length) return Array.from(new Set(persisted));
+  const rawMap = row?.order_size_qty || row?.order_sizes || row?.size_qty || row?.orderSizeQty || {};
+  const explicit = Object.keys(rawMap || {}).map(cleanSizeToken).filter(Boolean);
+  if (explicit.length) return Array.from(new Set(explicit));
+  const sets = getSizeSets();
+  return sets[row?.size_set] || sets.alpha || DEFAULT_SIZE_SETS.alpha;
+}
 function normalizedLooseKey(v){
   return String(v || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
@@ -1714,28 +1749,51 @@ function cuttingAccountableOpen(row){
 }
 
 // ---- Configurable production rules (single source of truth) ----
-function loadLineNames(){
-  try {
-    const saved = JSON.parse(localStorage.getItem("production_line_names") || "[]");
-    if (Array.isArray(saved) && saved.length) return saved.map(x=>String(x).trim()).filter(Boolean);
-  } catch {}
-  return ["STF-1","STF-2","STF-3","STF-4","STF-5","STF-6"];
+const DEFAULT_PRODUCTION_LINE_NAMES = ["STF-1","STF-2","STF-3","STF-4","STF-5","STF-6"];
+function loadLineNames(){ return [...DEFAULT_PRODUCTION_LINE_NAMES]; }
+function loadDispatchRejectAllowed(){ return false; }
+function loadProductionNumberSetting(key, fallback){ return fallback; }
+// IMPORTANT: core production rules must never come from browser-local storage.
+// Different browsers/users were calculating 1,236 vs 1,260 because one browser
+// had a 3% cutting tolerance while another had 5%. These values are now shared
+// through the production audit/settings snapshot below.
+const PROD_SETTINGS = { cuttingTolerancePct:5, dispatchRamHoldPct:2, dispatchRejectAllowed:false, lineNames:loadLineNames() };
+function sharedProductionSettingsSnapshot(){
+  return {
+    cuttingTolerancePct:Math.max(0,n(PROD_SETTINGS.cuttingTolerancePct)),
+    dispatchRamHoldPct:Math.max(0,n(PROD_SETTINGS.dispatchRamHoldPct)),
+    dispatchRejectAllowed:!!PROD_SETTINGS.dispatchRejectAllowed,
+    lineNames:Array.from(new Set((PROD_SETTINGS.lineNames || []).map(x=>String(x||"").trim()).filter(Boolean))),
+    sizeSets:getCustomSizeSets(),
+  };
 }
-function loadDispatchRejectAllowed(){
-  try { return localStorage.getItem("production_dispatch_reject_allowed") === "true"; } catch {}
-  return false;
+function applySharedProductionSettingsSnapshot(raw){
+  const settings = raw?.settings || raw || {};
+  const before = JSON.stringify(sharedProductionSettingsSnapshot());
+  if (settings.cuttingTolerancePct !== undefined) PROD_SETTINGS.cuttingTolerancePct = Math.max(0,n(settings.cuttingTolerancePct));
+  if (settings.dispatchRamHoldPct !== undefined) PROD_SETTINGS.dispatchRamHoldPct = Math.max(0,n(settings.dispatchRamHoldPct));
+  if (settings.dispatchRejectAllowed !== undefined) PROD_SETTINGS.dispatchRejectAllowed = !!settings.dispatchRejectAllowed;
+  if (Array.isArray(settings.lineNames) && settings.lineNames.length) PROD_SETTINGS.lineNames = Array.from(new Set(settings.lineNames.map(x=>String(x||"").trim()).filter(Boolean)));
+  if (settings.sizeSets && typeof settings.sizeSets === "object") saveCustomSizeSets(settings.sizeSets);
+  return before !== JSON.stringify(sharedProductionSettingsSnapshot());
 }
-function loadProductionNumberSetting(key, fallback){
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw === null || raw === "") return fallback;
-    const value = Number(raw);
-    return Number.isFinite(value) && value >= 0 ? value : fallback;
-  } catch {}
-  return fallback;
+async function saveSharedProductionSettingsSnapshot(){
+  const settings = sharedProductionSettingsSnapshot();
+  if (!hasValidSupabaseEnv() || !isSupabaseConfigured || !supabase) return { error:{ message:"Supabase is required for shared production settings." }, settings };
+  const { error } = await supabase.from("production_settings").upsert({ id:"global", settings, updated_at:new Date().toISOString() }, { onConflict:"id" });
+  if (error) return { error, settings };
+  recordProductionAudit("production_settings_update", { table_name:"production_settings", source:"Settings", metadata:{ scope:"global", settings } });
+  return { error:null, via:"supabase-js", settings };
 }
-const PROD_SETTINGS = { cuttingTolerancePct: loadProductionNumberSetting("production_cutting_tolerance_pct", 5), dispatchRamHoldPct:loadProductionNumberSetting("production_dispatch_ram_hold_pct", 2), dispatchRejectAllowed: loadDispatchRejectAllowed(), lineNames: loadLineNames() };
-function cuttingToleranceFrac(){ return Math.max(0, n(PROD_SETTINGS.cuttingTolerancePct)) / 100; }
+async function pullSharedProductionSettingsSnapshot(){
+  if (!hasValidSupabaseEnv() || !isSupabaseConfigured || !supabase) return { skipped:true, changed:false };
+  const { data, error } = await supabase.from("production_settings").select("settings,updated_at").eq("id","global").maybeSingle();
+  if (error) return { error, changed:false };
+  const settings = data?.settings || null;
+  if (!settings) return { changed:false, settings:null };
+  return { error:null, changed:applySharedProductionSettingsSnapshot(settings), settings };
+}
+function cuttingToleranceFrac(row=null){ const pct=row?.cutting_tolerance_pct_at_release === undefined || row?.cutting_tolerance_pct_at_release === null ? PROD_SETTINGS.cuttingTolerancePct : row.cutting_tolerance_pct_at_release; return Math.max(0,n(pct))/100; }
 function cuttingEntryAllowedQty(row){
   const released = cuttingBaseQty(row);
   const salesOrder = n(row?.order_qty);
@@ -1744,7 +1802,7 @@ function cuttingEntryAllowedQty(row){
   // partial file release, apply the same percentage only to that released part;
   // if release already includes extra, never apply the percentage twice.
   const allowanceBase = salesOrder ? Math.min(released, salesOrder) : released;
-  return Math.ceil(allowanceBase * (1 + cuttingToleranceFrac()));
+  return Math.ceil(allowanceBase * (1 + cuttingToleranceFrac(row)));
 }
 function cuttingEntryOpenQty(row){
   const st = sdata(row, "cutting");
@@ -1883,19 +1941,35 @@ function cuttingBaseQty(row){
   // V32: Cutting feed is a deliberate Production File Release. Do not silently use order qty as feed.
   return Math.max(0, fileReleaseQty(row));
 }
+function exactProportionalAllocation(total, weightMap, keys){
+  const target = Math.max(0, Math.round(n(total)));
+  const list = Array.isArray(keys) ? keys : Object.keys(weightMap || {});
+  const weights = list.map(k=>Math.max(0,n(weightMap?.[k])));
+  const weightTotal = weights.reduce((a,b)=>a+b,0);
+  if (!target || !list.length) return Object.fromEntries(list.map(k=>[k,0]));
+  if (!weightTotal) {
+    const base = Math.floor(target/list.length), extra=target-base*list.length;
+    return Object.fromEntries(list.map((k,i)=>[k, base + (i < extra ? 1 : 0)]));
+  }
+  const raw = weights.map(w=>target*w/weightTotal);
+  const floors = raw.map(Math.floor);
+  let left = target - floors.reduce((a,b)=>a+b,0);
+  const rank = raw.map((v,i)=>({i, frac:v-floors[i]})).sort((a,b)=>b.frac-a.frac || a.i-b.i);
+  for (let j=0; j<left; j++) floors[rank[j % rank.length].i] += 1;
+  return Object.fromEntries(list.map((k,i)=>[k,floors[i]]));
+}
 function fileReleaseSizeQtyMap(row){
   const sizes = sizesFor(row);
   const releaseQty = fileReleaseQty(row);
   if (releaseQty <= 0) return Object.fromEntries(sizes.map(size=>[size,0]));
+  // Once a release is saved, its exact size split is immutable historical truth.
+  // Later order-ratio edits must never rewrite old Cutting availability.
+  const stored = normalizeSizeQtyMap(row?.file_release_size_qty || row?.production_file_release_size_qty || {}, sizes);
+  if (qtyMapTotal(stored) > 0 && Math.abs(qtyMapTotal(stored)-releaseQty) <= 0.001) return stored;
   const orderMap = orderSizeQtyMap(row);
   const orderTotal = qtyMapTotal(orderMap) || n(row.order_qty) || releaseQty;
   if (!orderTotal || Math.abs(orderTotal - releaseQty) <= 0.001) return normalizeSizeQtyMap(orderMap, sizes);
-  let used = 0;
-  return Object.fromEntries(sizes.map((size,idx)=>{
-    const qty = idx === sizes.length - 1 ? releaseQty - used : Math.round((releaseQty * n(orderMap[size])) / orderTotal);
-    used += qty;
-    return [size, Math.max(0, qty)];
-  }));
+  return exactProportionalAllocation(releaseQty, orderMap, sizes);
 }
 function fileReleaseStatusText(row){
   const rel = fileReleaseQty(row);
@@ -2950,6 +3024,7 @@ function normalizeSizeStageSnapshot(row){
 function orderToSupabase(row){
   const stageQty = Object.fromEntries(routeFor(row).map(k=>[k, sdata(row,k)]));
   stageQty.__order_size_qty = normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row));
+  stageQty.__size_list = sizesFor(row);
   stageQty.__cutting_short_close_qty = cuttingShortCloseQty(row);
   stageQty.__cutting_short_close_reason = row.cutting_short_close_reason || row.short_close_reason || "";
   // Keep newer planning/style metadata inside existing JSON so old Supabase schemas
@@ -2965,6 +3040,8 @@ function orderToSupabase(row){
   stageQty.__size_stage = normalizeSizeStageSnapshot(row);
   stageQty.__file_released_qty = n(row.file_released_qty || row.production_file_released_qty || row.cutting_file_released_qty || 0);
   stageQty.__file_released_date = row.file_released_date || row.production_file_released_date || row.cutting_file_released_date || "";
+  stageQty.__file_release_size_qty = normalizeSizeQtyMap(row.file_release_size_qty || row.production_file_release_size_qty || {}, sizesFor(row));
+  stageQty.__cutting_tolerance_pct_at_release = row.cutting_tolerance_pct_at_release === undefined || row.cutting_tolerance_pct_at_release === null ? null : Math.max(0,n(row.cutting_tolerance_pct_at_release));
   stageQty.__set_piece_count = n(row.set_piece_count || 0);
   return {
     // production_orders.id is NOT NULL in the current Supabase schema.
@@ -2991,7 +3068,10 @@ function supabaseToOrder(row){
   const raw = row.stage_qty || {};
   const route = Array.isArray(row.route) ? row.route : BASE_ROUTE;
   const sizeSet = row.size_set || "alpha";
-  const sizeList = getSizeSets()[sizeSet] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha;
+  const orderSizeRaw = row.order_size_qty || raw.__order_size_qty || raw.order_size_qty || row.size_qty || {};
+  const storedSizeList = Array.isArray(raw.__size_list) ? raw.__size_list.map(cleanSizeToken).filter(Boolean) : [];
+  const rawSizeKeys = Object.keys(orderSizeRaw || {}).map(cleanSizeToken).filter(Boolean);
+  const sizeList = storedSizeList.length ? Array.from(new Set(storedSizeList)) : rawSizeKeys.length ? Array.from(new Set(rawSizeKeys)) : (getSizeSets()[sizeSet] || getSizeSets().alpha || DEFAULT_SIZE_SETS.alpha);
   const stages = Object.fromEntries(route.map(k=>{
     const v = raw[k] || {};
     if (typeof v === "number") return [k, { ...blankStage(), received:v, output:v, issued:v }];
@@ -3001,7 +3081,6 @@ function supabaseToOrder(row){
     const idleVal = row.idle_by_stage?.[k] ?? v.idle;
     return [k, { ...blankStage(), ...v, reject:n(rejectVal), alter:n(alterVal), missing:n(missingVal), party:row.party_by_stage?.[k] || v.party || "", idle:n(idleVal) }];
   }));
-  const orderSizeRaw = row.order_size_qty || raw.__order_size_qty || raw.order_size_qty || row.size_qty || {};
   const dailyTargetRaw = row.daily_target ?? raw.__daily_target;
   const printRequiredRaw = raw.__print_required;
   const embroideryRequiredRaw = raw.__embroidery_required;
@@ -3011,8 +3090,8 @@ function supabaseToOrder(row){
   return {
     id:row.id, order_no:row.order_no, style_no:row.style_no, buyer:row.buyer || row.brand || "", colour:row.colour || "", component:row.component || "",
     photo_url:row.photo_url || "", photo_thumb_url:row.photo_thumb_url || row.photo_url || "", photo_folder_url:row.photo_folder_url || "",
-    order_qty:n(row.order_qty), order_size_qty:normalizeSizeQtyMap(orderSizeRaw, sizeList), size_set:sizeSet, size_ratio:row.size_ratio || raw.__size_ratio || "", set_id:row.set_id || "",
-    file_released_qty:n(row.file_released_qty || raw.__file_released_qty || 0), file_released_date:row.file_released_date || raw.__file_released_date || "", set_piece_count:n(row.set_piece_count || raw.__set_piece_count || 0),
+    order_qty:n(row.order_qty), order_size_qty:normalizeSizeQtyMap(orderSizeRaw, sizeList), size_list:sizeList, size_set:sizeSet, size_ratio:row.size_ratio || raw.__size_ratio || "", set_id:row.set_id || "",
+    file_released_qty:n(row.file_released_qty || raw.__file_released_qty || 0), file_released_date:row.file_released_date || raw.__file_released_date || "", file_release_size_qty:normalizeSizeQtyMap(row.file_release_size_qty || raw.__file_release_size_qty || {}, sizeList), cutting_tolerance_pct_at_release:row.cutting_tolerance_pct_at_release ?? raw.__cutting_tolerance_pct_at_release ?? null, set_piece_count:n(row.set_piece_count || raw.__set_piece_count || 0),
     line:row.default_line || raw.__default_line || "", difficulty:row.difficulty || raw.__difficulty || "Normal", priority:row.priority || raw.__priority || "Normal",
     daily_target:n(dailyTargetRaw), cutting_short_close_qty:n(row.cutting_short_close_qty || raw.__cutting_short_close_qty), cutting_short_close_reason:row.cutting_short_close_reason || raw.__cutting_short_close_reason || "",
     print_required:(printRequiredRaw ?? printFallback),
@@ -3021,6 +3100,11 @@ function supabaseToOrder(row){
     route, stages, size_stage: raw.__size_stage || row.size_stage || {}
   };
 }
+function supabaseToLedgerEntry(row){
+  const payload = row?.event_payload && typeof row.event_payload === "object" && !Array.isArray(row.event_payload) ? row.event_payload : {};
+  return { ...row, ...payload, id:row?.client_event_id || payload?.id || row?.id, client_event_id:row?.client_event_id || payload?.client_event_id || payload?.id || row?.id };
+}
+
 async function exportXlsx(filename, sheets){
   const XLSX = await import("xlsx");
   const wb = XLSX.utils.book_new();
@@ -3115,10 +3199,10 @@ const LOCAL_LEDGER_KEY = "production_dpr_ledger_local_v1";
 const LOCAL_PLAN_KEY = "production_dpr_plan_rows_local_v1";
 const DELETED_STYLE_KEYS_KEY = "production_dpr_deleted_style_tombstones_v1";
 function deletedStyleKeys(){ return safeJsonLoad(DELETED_STYLE_KEYS_KEY, []); }
-function rememberDeletedStyle(row){ const key=styleCompositeKey(row); if(!key) return; const next=Array.from(new Set([key, ...deletedStyleKeys()])).slice(0,500); safeJsonSave(DELETED_STYLE_KEYS_KEY, next); }
-function forgetDeletedStyle(row){ const key=styleCompositeKey(row); if(!key) return; safeJsonSave(DELETED_STYLE_KEYS_KEY, deletedStyleKeys().filter(k=>k!==key)); }
-function isDeletedStyle(row){ return deletedStyleKeys().includes(styleCompositeKey(row)); }
-function filterDeletedStyles(rows){ const tomb=deletedStyleKeys(); if(!tomb.length) return rows || []; return (rows||[]).filter(r=>!tomb.includes(styleCompositeKey(r))); }
+function rememberDeletedStyle(row){ if (sharedAuthorityEnabled()) return; const key=styleCompositeKey(row); if(!key) return; const next=Array.from(new Set([key, ...deletedStyleKeys()])).slice(0,500); safeJsonSave(DELETED_STYLE_KEYS_KEY, next); }
+function forgetDeletedStyle(row){ if (sharedAuthorityEnabled()) return; const key=styleCompositeKey(row); if(!key) return; safeJsonSave(DELETED_STYLE_KEYS_KEY, deletedStyleKeys().filter(k=>k!==key)); }
+function isDeletedStyle(row){ return sharedAuthorityEnabled() ? false : deletedStyleKeys().includes(styleCompositeKey(row)); }
+function filterDeletedStyles(rows){ if (sharedAuthorityEnabled()) return rows || []; const tomb=deletedStyleKeys(); if(!tomb.length) return rows || []; return (rows||[]).filter(r=>!tomb.includes(styleCompositeKey(r))); }
 function uiStorageKey(name){
   const user = String(currentUserName()).replace(/[^a-z0-9]+/gi,"_").toLowerCase() || "current_user";
   return `production_dpr_ui_${user}_${name}`;
@@ -3134,16 +3218,22 @@ function safeJsonLoad(key, fallback){
 function safeJsonSave(key, value){
   try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
+function sharedAuthorityEnabled(){ return !!(isSupabaseConfigured && hasValidSupabaseEnv()); }
 function loadInitialRows(){
+  // Live/shared mode must never boot from browser production truth. Empty state is
+  // deliberate until the complete Supabase snapshot has hydrated successfully.
+  if (sharedAuthorityEnabled()) return [];
   const saved = safeJsonLoad(LOCAL_ROWS_KEY, null);
   if (Array.isArray(saved) && saved.length) return filterDeletedStyles(saved.map(r=>({ ...r, route:routeFor(r) })));
   return filterDeletedStyles(demoRows.map(r=>({ ...r, route:routeFor(r) })));
 }
 function loadInitialLedger(){
+  if (sharedAuthorityEnabled()) return [];
   const saved = safeJsonLoad(LOCAL_LEDGER_KEY, null);
   return Array.isArray(saved) ? saved : [];
 }
 function loadInitialPlanRows(){
+  if (sharedAuthorityEnabled()) return [];
   const saved = safeJsonLoad(LOCAL_PLAN_KEY, null);
   return Array.isArray(saved) && saved.length ? saved : demoPlanRowsFromRows(demoRows);
 }
@@ -4555,19 +4645,24 @@ function ledgerSizeQtyAsOfDate(row, ledger, stage, types, asOfDate){
   return { hasLedger, sizes:out, qty:Object.values(out).reduce((a,v)=>a+n(v),0) };
 }
 function fieldQtyAsOfDate(row, ledger, stage, field, asOfDate){
+  const cutoff = asOfDate || "9999-12-31";
   if (field === "alter") {
-    const raised = ledgerSizeQtyAsOfDate(row, ledger, stage, ["alter","alter_issue"], asOfDate);
-    const cleared = ledgerSizeQtyAsOfDate(row, ledger, stage, ["alter_clear"], asOfDate);
-    if (raised.hasLedger || cleared.hasLedger) {
+    const raised = ledgerSizeQtyAsOfDate(row, ledger || [], stage, ["alter","alter_issue"], cutoff);
+    const cleared = ledgerSizeQtyAsOfDate(row, ledger || [], stage, ["alter_clear"], cutoff);
+    const anyRaised = ledgerSizeQtyAsOfDate(row, ledger || [], stage, ["alter","alter_issue"], "9999-12-31");
+    const anyCleared = ledgerSizeQtyAsOfDate(row, ledger || [], stage, ["alter_clear"], "9999-12-31");
+    if (anyRaised.hasLedger || anyCleared.hasLedger) {
       const sizes = Object.fromEntries(sizesFor(row).map(size=>[size, Math.max(0, n(raised.sizes?.[size])-n(cleared.sizes?.[size]))]));
-      return { hasLedger:true, sizes, qty:Object.values(sizes).reduce((a,v)=>a+n(v),0) };
+      return { hasLedger:!!(raised.hasLedger || cleared.hasLedger), hasAnyLedger:true, sizes, qty:Object.values(sizes).reduce((a,v)=>a+n(v),0) };
     }
   }
   const types = ledgerTypesForFieldForDate(field);
-  const fromLedger = ledgerSizeQtyAsOfDate(row, ledger, stage, types, asOfDate);
-  if (fromLedger.hasLedger) return fromLedger;
+  const fromLedger = ledgerSizeQtyAsOfDate(row, ledger || [], stage, types, cutoff);
+  if (fromLedger.hasLedger) return { ...fromLedger, hasAnyLedger:true };
+  const anyLedger = ledgerSizeQtyAsOfDate(row, ledger || [], stage, types, "9999-12-31");
+  if (anyLedger.hasLedger) return { ...fromLedger, hasAnyLedger:true };
   const fallback = Object.fromEntries(sizeMatrix(row, stage, field === "alter_clear" ? "output" : field).map(x=>[x.size, n(x.qty)]));
-  return { hasLedger:false, sizes:fallback, qty:Object.values(fallback).reduce((a,v)=>a+n(v),0) };
+  return { hasLedger:false, hasAnyLedger:false, legacyFallback:true, sizes:fallback, qty:Object.values(fallback).reduce((a,v)=>a+n(v),0) };
 }
 function feedAsOfDate(row, ledger, stage, asOfDate){
   if (stage === "cutting") {
@@ -4581,16 +4676,29 @@ function feedAsOfDate(row, ledger, stage, asOfDate){
   return fieldQtyAsOfDate(row, ledger, route[idx-1], "issued", asOfDate);
 }
 function p0StrictFieldQtyAsOfDate(row, ledger, stage, field, asOfDate){
+  const cutoff = asOfDate || "9999-12-31";
   if (field === "alter") {
-    const raised = ledgerSizeQtyAsOfDate(row, ledger || [], stage, ["alter","alter_issue"], asOfDate || "9999-12-31");
-    const cleared = ledgerSizeQtyAsOfDate(row, ledger || [], stage, ["alter_clear"], asOfDate || "9999-12-31");
-    const sizes = Object.fromEntries(sizesFor(row).map(size=>[size, Math.max(0, n(raised.sizes?.[size])-n(cleared.sizes?.[size]))]));
-    return { hasLedger:!!(raised.hasLedger || cleared.hasLedger), sizes, qty:Object.values(sizes).reduce((a,v)=>a+n(v),0) };
+    const raised = ledgerSizeQtyAsOfDate(row, ledger || [], stage, ["alter","alter_issue"], cutoff);
+    const cleared = ledgerSizeQtyAsOfDate(row, ledger || [], stage, ["alter_clear"], cutoff);
+    const anyRaised = ledgerSizeQtyAsOfDate(row, ledger || [], stage, ["alter","alter_issue"], "9999-12-31");
+    const anyCleared = ledgerSizeQtyAsOfDate(row, ledger || [], stage, ["alter_clear"], "9999-12-31");
+    if (anyRaised.hasLedger || anyCleared.hasLedger) {
+      const sizes = Object.fromEntries(sizesFor(row).map(size=>[size, Math.max(0, n(raised.sizes?.[size])-n(cleared.sizes?.[size]))]));
+      return { hasLedger:!!(raised.hasLedger || cleared.hasLedger), hasAnyLedger:true, sizes, qty:Object.values(sizes).reduce((a,v)=>a+n(v),0) };
+    }
+    const fallback = Object.fromEntries(sizeMatrix(row, stage, "alter").map(x=>[x.size,n(x.qty)]));
+    return { hasLedger:false, hasAnyLedger:false, legacyFallback:true, sizes:fallback, qty:Object.values(fallback).reduce((a,v)=>a+n(v),0) };
   }
   const types = ledgerTypesForFieldForDate(field);
-  const fromLedger = ledgerSizeQtyAsOfDate(row, ledger || [], stage, types, asOfDate || "9999-12-31");
+  const fromLedger = ledgerSizeQtyAsOfDate(row, ledger || [], stage, types, cutoff);
+  const anyLedger = ledgerSizeQtyAsOfDate(row, ledger || [], stage, types, "9999-12-31");
+  if (!anyLedger.hasLedger) {
+    const fallbackField = field === "alter_clear" ? "output" : field;
+    const fallback = Object.fromEntries(sizeMatrix(row, stage, fallbackField).map(x=>[x.size,n(x.qty)]));
+    return { hasLedger:false, hasAnyLedger:false, legacyFallback:true, sizes:fallback, qty:Object.values(fallback).reduce((a,v)=>a+n(v),0) };
+  }
   const cleanSizes = Object.fromEntries(sizesFor(row).map(size=>[size, n(fromLedger.sizes?.[size])]));
-  return { hasLedger:!!fromLedger.hasLedger, sizes:cleanSizes, qty:Object.values(cleanSizes).reduce((a,v)=>a+n(v),0) };
+  return { hasLedger:!!fromLedger.hasLedger, hasAnyLedger:true, sizes:cleanSizes, qty:Object.values(cleanSizes).reduce((a,v)=>a+n(v),0) };
 }
 function p0StrictFeedAsOfDate(row, ledger, stage, asOfDate){
   if (stage === "cutting") {
@@ -4642,14 +4750,14 @@ function p0EntryImpactIssues(row, ledger, stage, field, entryDate, sizeMap){
     const overSizes = sizes.map(size=>{ const over=n(accountedBySize[size])-n(feed.sizes[size]); return over>0 ? `${size} +${fmt(over)}` : null; }).filter(Boolean);
     const overTotal = qtyMapTotal(accountedBySize) - n(feed.qty);
     if (overTotal > 0) messages.push(`${stageLabel(stage)} accounted qty dated ${entryDate} exceeds previous department issue/feed as-of that date by ${fmt(overTotal)}${overSizes.length ? ` (${overSizes.join(", ")})` : ""}.`);
-    if (!feed.hasLedger && qtyMapTotal(accountedBySize) > 0) messages.push(`${stageLabel(stage)} has dated activity on ${entryDate} but no dated upstream issue/feed exists before/on that date. This must be reviewed/reconciled.`);
+    if (!feed.hasLedger && !feed.legacyFallback && qtyMapTotal(accountedBySize) > 0) messages.push(`${stageLabel(stage)} has dated activity on ${entryDate} but no dated upstream issue/feed exists before/on that date. This must be reviewed/reconciled.`);
   }
   if (field === "issued") {
     const outputAsOf = p0StrictFieldQtyAsOfDate(row, ledger, stage, "output", entryDate);
     const overSizes = sizes.map(size=>{ const over=n(updatedBySize[size])-n(outputAsOf.sizes[size]); return over>0 ? `${size} +${fmt(over)}` : null; }).filter(Boolean);
     const overTotal = updatedTotal - n(outputAsOf.qty);
     if (overTotal > 0) messages.push(`${stageLabel(stage)} issue-forward dated ${entryDate} exceeds ${stageLabel(stage)} output available as-of that date by ${fmt(overTotal)}${overSizes.length ? ` (${overSizes.join(", ")})` : ""}.`);
-    if (!outputAsOf.hasLedger && updatedTotal > 0) messages.push(`${stageLabel(stage)} issue-forward dated ${entryDate} has no dated ${stageLabel(stage)} output before/on that date. This must be reviewed/reconciled.`);
+    if (!outputAsOf.hasLedger && !outputAsOf.legacyFallback && updatedTotal > 0) messages.push(`${stageLabel(stage)} issue-forward dated ${entryDate} has no dated ${stageLabel(stage)} output before/on that date. This must be reviewed/reconciled.`);
   }
   messages.push(...futureDependentEntryMessages(row, ledger, stage, field, entryDate));
   return Array.from(new Set(messages));
@@ -4833,8 +4941,10 @@ function buildLedgerRows({ changes, stage, field, entryDate, reason, source, lin
   const risk = backdateRisk(entryDate);
   const created = new Date().toISOString();
   const profile = currentUserProfile();
+  const eventGroupId = uid("evtgrp");
   return changes.map(c => ({
     id:uid("led"),
+    event_group_id:eventGroupId,
     entry_date:entryDate,
     created_at:created,
     order_no:c.row.order_no,
@@ -4873,6 +4983,8 @@ async function saveLedgerToSupabase(newLedger, field){
   const profile = currentUserProfile();
   const payload = newLedger.map(({id, ...x})=>({
     ...x,
+    client_event_id:id,
+    production_order_id:stableProductionOrderId(x),
     changed_by:x.changed_by || profile.name || currentUserName(),
     changed_by_role:x.changed_by_role || profile.role || "",
     changed_by_department:x.changed_by_department || profile.department || "",
@@ -4885,8 +4997,9 @@ async function saveLedgerToSupabase(newLedger, field){
     validation_messages:x.validation_messages || [],
     validation_snapshot:{ old_qty:x.old_qty, new_qty:x.new_qty, entry_source:x.entry_source, is_backdated:x.is_backdated, approval_status:x.approval_status, validation_status:x.validation_status || "ok", validation_messages:x.validation_messages || [], validation_requires_reconcile:!!x.validation_requires_reconcile, changed_by:x.changed_by || profile.name, changed_by_role:x.changed_by_role || profile.role, changed_by_department:x.changed_by_department || profile.department }
   }));
-  const result = await robustInsertEntriesToSupabase(payload);
-  if(result?.error) console.warn("Supabase production_entries save failed", result.error);
+  const actor = { email:normalizeUserEmail(profile.email), name:profile.name || currentUserName(), role:profile.role || "", department:profile.department || "" };
+  const result = await postProductionEntryBatchToSupabase(payload, actor);
+  if(result?.error) console.warn("Supabase transactional DPR save failed", result.error);
   if(!result?.error && !result?.skipped && !result?.warning) {
     const first = payload[0] || {};
     recordProductionAudit(isCorrection ? "ledger_correction" : "ledger_insert", {
@@ -5112,12 +5225,11 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
     try {
       const newLedger = buildLedgerRows({ changes, stage, field, entryDate, reason, source, validationOverride:validationOverrideForP0(validation) });
       const sharedResult = await saveLedgerToSupabase(newLedger, field);
-      if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
-        const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
-        if (!window.confirm(`Shared Supabase save did not confirm: ${msg}
-
-Save locally in this browser anyway? Other users will not see it until Supabase is fixed/synced.`)) return;
-      }
+    if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
+      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase did not confirm the transaction";
+      alert(`NOT SAVED: ${msg}\n\nProduction truth stays unchanged. Fix shared Supabase/RPC and retry.`);
+      return;
+    }
       setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:[row], stage, field, getVal }));
       setLedger(prev => mergeLedgerPrependUnique(prev, newLedger));
       setDraft({});
@@ -5560,10 +5672,9 @@ Only the difference is saved as an audit-safe correction; original history remai
     const newLedger = buildLedgerRows({ changes, stage:correctionStage, field:correctionField, entryDate:correctionDate, reason:dprCorrectReason, source:"dpr_inline_view_correction" });
     const sharedResult = await saveLedgerToSupabase(newLedger, correctionField);
     if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
-      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
-      if (!window.confirm(`Shared Supabase save did not confirm: ${msg}
-
-Save locally in this browser anyway?`)) return;
+      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase did not confirm the transaction";
+      alert(`NOT SAVED: ${msg}\n\nProduction truth stays unchanged. Fix shared Supabase/RPC and retry.`);
+      return;
     }
     const totalDelta = changes.reduce((a,c)=>a+n(c.delta),0);
     const deltaMap = Object.fromEntries(changes.filter(c=>c.size).map(c=>[c.size, c.delta]));
@@ -5676,10 +5787,11 @@ Save locally in this browser anyway?`)) return;
     setIsMovingDate(true);
     try {
       const sharedResult = await saveLedgerToSupabase(newLedger, field);
-      if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
-        const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
-        if (!window.confirm(`Shared Supabase save did not confirm: ${msg}\n\nSave this date move locally in this browser anyway?`)) return;
-      }
+    if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
+      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase did not confirm the transaction";
+      alert(`NOT SAVED: ${msg}\n\nProduction truth stays unchanged. Fix shared Supabase/RPC and retry.`);
+      return;
+    }
       setLedger(prev=>mergeLedgerPrependUnique(prev, newLedger));
       recordProductionAudit("ledger_entry_date_move", {
         table_name:"production_entries", order_no:row.order_no, style_no:row.style_no, colour:row.colour, component:row.component,
@@ -5718,8 +5830,9 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
     const newLedger = buildLedgerRows({ changes, stage:g.stage, field, entryDate:g.date, reason:reason.trim(), source:"dpr_style_view_void" });
     const sharedResult = await saveLedgerToSupabase(newLedger, field);
     if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
-      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
-      if (!window.confirm(`Shared Supabase save did not confirm: ${msg}\n\nSave locally in this browser anyway?`)) return;
+      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase did not confirm the transaction";
+      alert(`NOT SAVED: ${msg}\n\nProduction truth stays unchanged. Fix shared Supabase/RPC and retry.`);
+      return;
     }
     const deltaMap = Object.fromEntries(changes.filter(c=>c.size).map(c=>[c.size, c.delta]));
     const totalDelta = changes.reduce((a,c)=>a+n(c.delta),0);
@@ -5773,8 +5886,9 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
     const newLedger = buildLedgerRows({ changes, stage:g.stage, field, entryDate:g.date, reason:styleCorrectReason, source:"dpr_style_view_correction" });
     const sharedResult = await saveLedgerToSupabase(newLedger, field);
     if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
-      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
-      if (!window.confirm(`Shared Supabase save did not confirm: ${msg}\n\nSave locally in this browser anyway?`)) return;
+      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase did not confirm the transaction";
+      alert(`NOT SAVED: ${msg}\n\nProduction truth stays unchanged. Fix shared Supabase/RPC and retry.`);
+      return;
     }
     const totalDelta = changes.reduce((a,c)=>a+n(c.delta),0);
     const deltaMap = Object.fromEntries(changes.filter(c=>c.size).map(c=>[c.size, c.delta]));
@@ -5823,10 +5937,11 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
       const override = p0Rows.length ? { validation_status:"p0_date_sequence_override", validation_scope:"p0_date_sequence_confirmed_reconcile", validation_messages:p0Rows.flatMap(x=>x.validation.dateMessages || []), requires_reconcile:true } : null;
       const newLedger = buildLedgerRows({ changes:changed, stage, field, entryDate, reason, source:"dpr_quick_entry", line: stage === "stitching" ? entryLine : "", validationOverride:override });
       const sharedResult = await saveLedgerToSupabase(newLedger, field);
-      if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
-        const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
-        if (!window.confirm(`Shared Supabase save did not confirm: ${msg}\n\nSave locally in this browser anyway? Other users will not see it until Supabase is fixed/synced.`)) return;
-      }
+    if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
+      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase did not confirm the transaction";
+      alert(`NOT SAVED: ${msg}\n\nProduction truth stays unchanged. Fix shared Supabase/RPC and retry.`);
+      return;
+    }
       setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:activeRows, stage, field, getVal }));
       setLedger(prev => mergeLedgerPrependUnique(prev, newLedger));
       setDraft({});
@@ -5862,10 +5977,11 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
       const override = validation.p0DateViolation ? validationOverrideForP0(validation) : null;
       const newLedger = buildLedgerRows({ changes:changed, stage, field, entryDate, reason, source:"dpr_style_view_new_entry", line: stage === "stitching" ? entryLine : "", validationOverride:override });
       const sharedResult = await saveLedgerToSupabase(newLedger, field);
-      if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
-        const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
-        if (!window.confirm(`Shared Supabase save did not confirm: ${msg}\n\nSave locally in this browser anyway? Other users will not see it until Supabase is fixed/synced.`)) return;
-      }
+    if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
+      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase did not confirm the transaction";
+      alert(`NOT SAVED: ${msg}\n\nProduction truth stays unchanged. Fix shared Supabase/RPC and retry.`);
+      return;
+    }
       setRows(prev => applyDailySizeEntries({ rows:prev, targetRows:[row], stage, field, getVal }));
       setLedger(prev => mergeLedgerPrependUnique(prev, newLedger));
       clearRow(row);
@@ -5908,8 +6024,9 @@ ${sizeGate.slice(0,8).join("\n")}`); return; }
     const newLedger = buildLedgerRows({ changes, stage, field, entryDate, reason: reason || "DPR quick-entry edit", source:"dpr_quick_entry_correction" });
     const sharedResult = await saveLedgerToSupabase(newLedger, field);
     if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
-      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
-      if (!window.confirm(`Shared Supabase save did not confirm: ${msg}\n\nSave locally in this browser anyway? Other users will not see it until Supabase is fixed/synced.`)) return;
+      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase did not confirm the transaction";
+      alert(`NOT SAVED: ${msg}\n\nProduction truth stays unchanged. Fix shared Supabase/RPC and retry.`);
+      return;
     }
     const deltaMap = Object.fromEntries(changes.map(c=>[c.size, c.delta]));
     const getValForApply = (r, size)=> n(deltaMap[size]);
@@ -6714,10 +6831,9 @@ You entered the corrected final quantity below the original row. The app will sa
     const newLedger = buildLedgerRows({ changes, stage, field, entryDate:correction.entryDate || r.Entry_Date, reason, source:"register_inline_corrected_qty", validationOverride });
     const sharedResult = await saveLedgerToSupabase(newLedger, field);
     if (sharedResult?.error || sharedResult?.warning || sharedResult?.skipped) {
-      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase was skipped";
-      if (!window.confirm(`Shared Supabase correction did not confirm: ${msg}
-
-Save locally in this browser anyway? Other users will not see it until Supabase is fixed/synced.`)) return;
+      const msg = sharedResult?.error?.message || sharedResult?.warning || "Supabase did not confirm the transaction";
+      alert(`NOT SAVED: ${msg}\n\nProduction truth stays unchanged. Fix shared Supabase/RPC and retry.`);
+      return;
     }
     setRows(prev=>applyRegisterCorrectionToRows({ rows:prev, target:r, stage, field, sizeMap }));
     setLedger(prev=>[...newLedger, ...(prev||[])]);
@@ -7180,8 +7296,9 @@ function resolvePlanStyle(rows, raw){
   }
   const exactStyleMatches = list.filter(r=>String(r.style_no||"").trim().toUpperCase()===q);
   if (exactStyleMatches.length === 1) return exactStyleMatches[0];
-  if (exactStyleMatches.length > 1) return exactStyleMatches[0];
-  return list.find(r=>[r.style_no,r.order_no,r.buyer,r.colour,r.component].join(" ").toUpperCase().includes(q)) || null;
+  if (exactStyleMatches.length > 1) return null; // Ambiguous style number: require order/colour/component or row_id.
+  const fuzzyMatches = list.filter(r=>[r.style_no,r.order_no,r.buyer,r.colour,r.component].join(" ").toUpperCase().includes(q));
+  return fuzzyMatches.length === 1 ? fuzzyMatches[0] : null;
 }
 function sumPlanQty(planRows, matcher){ return (planRows||[]).filter(matcher).reduce((a,p)=>a+n(p.planned_qty),0); }
 function upstreamStageFor(row, dept){ const route=routeFor(row); const idx=route.indexOf(dept); return idx>0 ? route[idx-1] : null; }
@@ -8384,7 +8501,7 @@ function styleActualBreakupRows(row){
 function stylePlanDrillRows(row, planRows=[], ledger=[]){
   if (!row) return [];
   const key = styleKeyOf(row);
-  const base = (planRows||[]).filter(p=>p.row_id===row.id || styleKeyOf(p)===key || planStyleText(p).toUpperCase()===String(row.style_no||"").toUpperCase()).sort((a,b)=>String(a.plan_date).localeCompare(String(b.plan_date)) || String(a.dept).localeCompare(String(b.dept)) || String(a.line).localeCompare(String(b.line)) || planSlotNo(a)-planSlotNo(b)).map(p=>{
+  const base = (planRows||[]).filter(p=>p.row_id===row.id || styleKeyOf(p)===key).sort((a,b)=>String(a.plan_date).localeCompare(String(b.plan_date)) || String(a.dept).localeCompare(String(b.dept)) || String(a.line).localeCompare(String(b.line)) || planSlotNo(a)-planSlotNo(b)).map(p=>{
     const need = planNeedBreakdown(p, [row], planRows, p.dept || "stitching", p.line || "", p.plan_date, ledger);
     const ach = achievedForPlan(p, [row], ledger);
     return { Date:p.plan_date, Dept:stageLabel(p.dept), Line:p.line||"Dept total", Slot:planSlotNo(p), Style:planStyleText(p), Plan_Qty:planRowEffectiveQty(p), Load_Ready:planLoadReadyShort(p, [row], planRows, p.dept || "stitching", p.line || "", p.plan_date, ledger), Achieved_Qty:ach, Balance:Math.max(0, planRowEffectiveQty(p)-ach), Actual_Ready_Feed:need.actualReadyFeed, Projected_Upstream_Feed:need.projectedFeed, Available_For_This_Slot:need.availableForThisSlot, After_This_Slot:need.afterThisSlot, Feed_Status:need.status, Hours:planHours(p), OPS:n(p.ops), Finish_Date:p.stitching_end_date||"", Short_Close:p.short_close?"Yes":"No", Remarks:p.remarks||"" };
@@ -8471,7 +8588,7 @@ function StylePlanDrilldown({ rows, planRows, ledger, selectedText, setSelectedT
   const options = uniqueList([...(rows||[]).map(r=>r.style_no).filter(Boolean), ...(planRows||[]).map(planStyleText).filter(Boolean)]).slice(0,500);
   const planDrill = linked ? stylePlanDrillRows(linked, planRows, ledger) : [];
   const actualBreakup = linked ? styleActualBreakupRows(linked) : [];
-  const stylePlans = linked ? (planRows||[]).filter(p=>p.row_id===linked.id || styleKeyOf(p)===styleKeyOf(linked) || planStyleText(p).toUpperCase()===String(linked.style_no||"").toUpperCase()).sort((a,b)=>String(a.plan_date).localeCompare(String(b.plan_date)) || planSlotNo(a)-planSlotNo(b)) : [];
+  const stylePlans = linked ? (planRows||[]).filter(p=>p.row_id===linked.id || styleKeyOf(p)===styleKeyOf(linked)).sort((a,b)=>String(a.plan_date).localeCompare(String(b.plan_date)) || planSlotNo(a)-planSlotNo(b)) : [];
   const planActionRows = linked ? planActionRowsForWeek(stylePlans, rows, planRows, ledger, stylePlans[0]?.dept || "stitching", stylePlans.map(p=>String(p.plan_date||"").slice(0,10))) : [];
   const planned = planDrill.reduce((a,r)=>a+n(r.Plan_Qty),0);
   const achieved = planDrill.reduce((a,r)=>a+n(r.Achieved_Qty),0);
@@ -9346,14 +9463,12 @@ function PhotoManager({ rows, setRows, clearTick=0 }){
       const path = `${sanitizePhotoName(row.order_no)}/${sanitizePhotoName(row.style_no)}-${sanitizePhotoName(row.colour)}-${sanitizePhotoName(row.component)}-${Date.now()}.webp`;
       const { error: uploadError } = await supabase.storage.from("production-photos").upload(path, blob, { cacheControl:"31536000", upsert:true, contentType:"image/webp" });
       if (uploadError) throw uploadError;
-      const { data } = supabase.storage.from("production-photos").getPublicUrl(path);
-      const publicUrl = data?.publicUrl || "";
-      if (!publicUrl) throw new Error("Upload finished but public URL was not returned.");
-      setUrl(row.id, publicUrl);
-      setRows(prev=>prev.map(r=>r.id===row.id ? ({ ...r, photo_url:publicUrl, photo_thumb_url:publicUrl }) : r));
-      const result = await robustUpsertOrdersToSupabase([{ ...row, photo_url:publicUrl, photo_thumb_url:publicUrl, photo_folder_url:folderDraft[row.id] || row.photo_folder_url || "" }]);
-      if (result?.error) throw result.error;
-      setMsg(`Photo uploaded. Thumbnail will show in WIP/Planning/Review tables. ${supabaseSaveLabel(result)}`);
+      const storageRef = `storage://production-photos/${path}`;
+      setUrl(row.id, storageRef);
+      const result = await robustUpsertOrdersToSupabase([{ ...row, photo_url:storageRef, photo_thumb_url:storageRef, photo_folder_url:folderDraft[row.id] || row.photo_folder_url || "" }]);
+      if (result?.error || result?.warning || result?.skipped) throw new Error(result?.error?.message || result?.warning || "Supabase did not confirm photo reference save");
+      setRows(prev=>prev.map(r=>r.id===row.id ? ({ ...r, photo_url:storageRef, photo_thumb_url:storageRef }) : r));
+      setMsg(`Photo uploaded to private Supabase Storage and linked to style. ${supabaseSaveLabel(result)}`);
     } catch (e) {
       setMsg(e?.message || "Photo upload failed. Check Supabase Storage bucket/policies.");
     } finally {
@@ -9362,12 +9477,11 @@ function PhotoManager({ rows, setRows, clearTick=0 }){
   }
   async function save(){
     const nextRows = rows.map(r=>({ ...r, photo_url:draft[r.id] || "", photo_thumb_url:draft[r.id] || "", photo_folder_url:folderDraft[r.id] || "" }));
+    setMsg("Saving photo references to authoritative Supabase…");
+    const result = await robustUpsertOrdersToSupabase(nextRows);
+    if (result?.error || result?.warning || result?.skipped) { setMsg(`Photo references NOT saved: ${result?.error?.message || result?.warning || "Supabase did not confirm"}. Local rows were not changed.`); return; }
     setRows(prev=>prev.map(r=>Object.prototype.hasOwnProperty.call(draft, r.id) ? ({ ...r, photo_url:draft[r.id] || "", photo_thumb_url:draft[r.id] || "", photo_folder_url:folderDraft[r.id] || "" }) : r));
-    setMsg("Photos saved locally. Seed/Pull will sync once Supabase columns exist.");
-    if (hasValidSupabaseEnv()) {
-      const result = await robustUpsertOrdersToSupabase(nextRows);
-      setMsg(result.error ? result.error.message : `Photo thumbnail/folder URLs saved to Supabase. ${supabaseSaveLabel(result)}`);
-    }
+    setMsg(`Photo thumbnail/folder references saved to Supabase. ${supabaseSaveLabel(result)}`);
   }
   return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Style Photos</h3><div className="mt-panel-sub">Upload one style photo or paste a direct thumbnail URL. WIP/Planning/Review tables show tiny lazy-loaded thumbnails; detail drawer shows a larger preview.</div></div>
     <div className="mt-section"><div className="mt-speed-note"><b>Best workflow:</b> upload here → app compresses to WebP → saves to Supabase Storage bucket <code>production-photos</code> → writes <code>photo_url</code> and <code>photo_thumb_url</code>. Keep OneDrive only as optional folder/reference link.</div></div>
@@ -9444,8 +9558,24 @@ function hasValidSupabaseEnv(){
   } catch { return false; }
 }
 function supabaseConfigWarning(){
-  return "Supabase URL/key is missing or invalid. Use the project URL like https://xxxxx.supabase.co in VITE_SUPABASE_URL, not a copied REST path. Changes are saved in this browser fallback until Supabase is fixed.";
+  return "Supabase URL/key is missing or invalid. Use the project URL like https://xxxxx.supabase.co in VITE_SUPABASE_URL. V58 does not allow browser-only production saves.";
 }
+async function fetchAllSupabaseRows(table, { orderBy="created_at", ascending=false, pageSize=1000, maxPages=250 }={}){
+  if (!isSupabaseConfigured || !supabase || !hasValidSupabaseEnv()) return { data:null, error:{ message:supabaseConfigWarning() } };
+  const all=[];
+  for (let page=0; page<maxPages; page++) {
+    const from=page*pageSize, to=from+pageSize-1;
+    let query=supabase.from(table).select("*").range(from,to);
+    if (orderBy) query=query.order(orderBy,{ascending});
+    const {data,error}=await query;
+    if (error) return { data:null, error };
+    const batch=data || [];
+    all.push(...batch);
+    if (batch.length < pageSize) return { data:all, error:null, pages:page+1 };
+  }
+  return { data:null, error:{ message:`${table} exceeded ${maxPages*pageSize} rows; pull aborted rather than silently truncate production truth.` } };
+}
+
 function urlEncodedEqQuery(key){
   return Object.entries(key).map(([k,v])=>`${encodeURIComponent(k)}=eq.${encodeURIComponent(String(v || ""))}`).join("&");
 }
@@ -9461,37 +9591,31 @@ function removeColumnFromPayloadRows(payloadRows, column){
 }
 async function retrySchemaSafeSupabaseUpsert(table, payloadRows, onConflict, maxRetries=8){
   if (!isSupabaseConfigured || !supabase) return { error:{ message:"Supabase client unavailable" } };
-  let payload = Array.isArray(payloadRows) ? payloadRows : [payloadRows];
-  const removed = [];
-  for (let i=0; i<=maxRetries; i++){
-    const { error } = await supabase.from(table).upsert(payload, { onConflict });
-    if (!error) return { error:null, via:"supabase-js", savedCount:payload.length, removedColumns:removed };
-    const col = missingSchemaColumnName(error);
-    if (!col || removed.includes(col)) return { error, removedColumns:removed };
-    removed.push(col);
-    payload = removeColumnFromPayloadRows(payload, col);
-  }
-  return { error:{ message:`Supabase save failed after removing schema-missing columns: ${removed.join(", ")}` }, removedColumns:removed };
+  const payload = Array.isArray(payloadRows) ? payloadRows : [payloadRows];
+  const { error } = await supabase.from(table).upsert(payload, { onConflict });
+  if (error) return { error:{ message:`${error.message}. V58 does not silently drop unknown columns; run the combined SQL/schema migration or fix the payload.` } };
+  return { error:null, via:"supabase-js", savedCount:payload.length, removedColumns:[] };
 }
 
 async function retrySchemaSafeSupabaseInsert(table, payloadRows, maxRetries=8){
   if (!isSupabaseConfigured || !supabase) return { error:{ message:"Supabase client unavailable" } };
-  let payload = Array.isArray(payloadRows) ? payloadRows : [payloadRows];
-  const removed = [];
-  for (let i=0; i<=maxRetries; i++){
-    const { error } = await supabase.from(table).insert(payload);
-    if (!error) return { error:null, via:"supabase-js", savedCount:payload.length, removedColumns:removed };
-    const col = missingSchemaColumnName(error);
-    if (!col || removed.includes(col)) return { error, removedColumns:removed };
-    removed.push(col);
-    payload = removeColumnFromPayloadRows(payload, col);
-  }
-  return { error:{ message:`Supabase insert failed after removing schema-missing columns: ${removed.join(", ")}` }, removedColumns:removed };
+  const payload = Array.isArray(payloadRows) ? payloadRows : [payloadRows];
+  const { error } = await supabase.from(table).insert(payload);
+  if (error) return { error:{ message:`${error.message}. V58 does not silently drop unknown columns; run the combined SQL/schema migration or fix the payload.` } };
+  return { error:null, via:"supabase-js", savedCount:payload.length, removedColumns:[] };
+}
+async function authenticatedRestHeaders(extra={}){
+  const anon=supabaseEnvAnonKey();
+  if (!anon || !supabase) return null;
+  const { data:{ session } } = await supabase.auth.getSession();
+  const token=session?.access_token;
+  if (!token) return null;
+  return { apikey:anon, Authorization:`Bearer ${token}`, ...extra };
 }
 async function fetchRestInsertToSupabase(table, payloadRows){
   const base = supabaseEnvBaseUrl();
-  const anon = supabaseEnvAnonKey();
-  if (!base || !anon) return { skipped:true, warning:supabaseConfigWarning() };
+  const headers = await authenticatedRestHeaders({ "Content-Type":"application/json", Prefer:"return=minimal" });
+  if (!base || !headers) return { error:{ message:"Authenticated Supabase session required for REST fallback." } };
   let rows = Array.isArray(payloadRows) ? payloadRows : [payloadRows];
   if (!rows.length) return { error:null, via:"rest", savedCount:0 };
   const removed = [];
@@ -9500,17 +9624,13 @@ async function fetchRestInsertToSupabase(table, payloadRows){
     try {
       const res = await fetch(url, {
         method:"POST",
-        headers:{ apikey:anon, Authorization:`Bearer ${anon}`, "Content-Type":"application/json", Prefer:"return=minimal" },
+        headers,
         body:JSON.stringify(rows)
       });
       if (res.ok) return { error:null, via:"rest", savedCount:rows.length, removedColumns:removed };
       const text = await res.text().catch(()=>"");
       const col = missingSchemaColumnName({ message:text });
-      if (col && !removed.includes(col)) {
-        removed.push(col);
-        rows = removeColumnFromPayloadRows(rows, col);
-        continue;
-      }
+      if (col) return { error:{ message:`${text || `REST insert HTTP ${res.status}`}. V58 refuses schema-stripping fallback for missing column ${col}.` }, removedColumns:removed };
       return { error:{ message:text || `REST insert HTTP ${res.status}` }, removedColumns:removed };
     } catch (e) {
       return { error:{ message:e?.message || String(e) }, removedColumns:removed };
@@ -9518,21 +9638,27 @@ async function fetchRestInsertToSupabase(table, payloadRows){
   }
   return { error:{ message:`REST insert failed after removing schema-missing columns: ${removed.join(", ")}` }, removedColumns:removed };
 }
-async function robustInsertEntriesToSupabase(payloadRows){
-  if (!hasValidSupabaseEnv()) return { skipped:true, warning:supabaseConfigWarning() };
-  let firstError = null;
-  if (isSupabaseConfigured && supabase) {
-    try {
-      const result = await retrySchemaSafeSupabaseInsert("production_entries", payloadRows);
-      if (!result.error) return result;
-      firstError = result.error;
-    } catch (e) {
-      firstError = { message:e?.message || String(e) };
-    }
+async function postProductionEntryBatchToSupabase(payloadRows, actor={}){
+  if (!hasValidSupabaseEnv() || !isSupabaseConfigured || !supabase) return { error:{ message:"Shared Supabase is required for production posting." } };
+  const rows = Array.isArray(payloadRows) ? payloadRows : [payloadRows];
+  if (!rows.length) return { error:null, via:"rpc", savedCount:0 };
+  try {
+    const { data, error } = await supabase.rpc("post_production_entry_batch", { p_entries:rows, p_actor:actor });
+    if (error) return { error:{ message:`Atomic DPR RPC failed: ${error.message}. Run the V58 combined Batch 1+2 SQL migration before using production entry.` } };
+    return { error:null, via:"rpc", savedCount:n(data?.inserted ?? rows.length), duplicateCount:n(data?.duplicates ?? 0), rpcData:data };
+  } catch(e) {
+    return { error:{ message:`Atomic DPR RPC failed: ${e?.message || String(e)}. Production was NOT saved locally.` } };
   }
-  const fallback = await fetchRestInsertToSupabase("production_entries", payloadRows);
-  if (!fallback?.error) return { ...fallback, recoveredFrom:firstError?.message || "Supabase client was unavailable" };
-  return { error:{ message:`${firstError?.message || "Supabase client entry insert failed"}; REST fallback also failed: ${fallback.error.message}` } };
+}
+
+async function robustInsertEntriesToSupabase(payloadRows){
+  const groupId=uid("evtgrp_rpc");
+  const rows=(Array.isArray(payloadRows)?payloadRows:[payloadRows]).map((r,i)=>({
+    ...r,
+    client_event_id:r?.client_event_id || r?.id || uid(`evt_rpc_${i}`),
+    event_group_id:r?.event_group_id || groupId,
+  }));
+  return postProductionEntryBatchToSupabase(rows, {});
 }
 
 function isDuplicatePrimaryKeyError(text){
@@ -9541,8 +9667,8 @@ function isDuplicatePrimaryKeyError(text){
 }
 async function fetchRestUpsertToSupabase(table, payloadRows, onConflict){
   const base = supabaseEnvBaseUrl();
-  const anon = supabaseEnvAnonKey();
-  if (!base || !anon) return { skipped:true, warning:supabaseConfigWarning() };
+  const headers = await authenticatedRestHeaders({ "Content-Type":"application/json", Prefer:"resolution=merge-duplicates,return=minimal" });
+  if (!base || !headers) return { error:{ message:"Authenticated Supabase session required for REST fallback." } };
   let rows = Array.isArray(payloadRows) ? payloadRows : [payloadRows];
   if (!rows.length) return { error:null, via:"rest", savedCount:0 };
   const removed = [];
@@ -9550,12 +9676,7 @@ async function fetchRestUpsertToSupabase(table, payloadRows, onConflict){
     const url = `${base}/rest/v1/${encodeURIComponent(table)}?on_conflict=${encodeURIComponent(conflictTarget)}`;
     return fetch(url, {
       method:"POST",
-      headers:{
-        apikey:anon,
-        Authorization:`Bearer ${anon}`,
-        "Content-Type":"application/json",
-        Prefer:"resolution=merge-duplicates,return=minimal"
-      },
+      headers,
       body:JSON.stringify(postRowsPayload)
     });
   };
@@ -9571,11 +9692,7 @@ async function fetchRestUpsertToSupabase(table, payloadRows, onConflict){
         return { error:{ message:`Primary-key recovery also failed: ${byIdText || `REST upsert HTTP ${byId.status}`}. Original: ${text}` }, removedColumns:removed };
       }
       const col = missingSchemaColumnName({ message:text });
-      if (col && !removed.includes(col)) {
-        removed.push(col);
-        rows = removeColumnFromPayloadRows(rows, col);
-        continue;
-      }
+      if (col) return { error:{ message:`${text || `REST upsert HTTP ${res.status}`}. V58 refuses schema-stripping fallback for missing column ${col}.` }, removedColumns:removed };
       return { error:{ message:text || `REST upsert HTTP ${res.status}` }, removedColumns:removed };
     } catch (e) {
       return { error:{ message:e?.message || String(e) }, removedColumns:removed };
@@ -9616,11 +9733,11 @@ function shortRecoveredSupabaseNote(text){
 }
 async function fetchRestSelectFromSupabase(table, query="select=*&limit=1"){
   const base = supabaseEnvBaseUrl();
-  const anon = supabaseEnvAnonKey();
-  if (!base || !anon) return { skipped:true, warning:supabaseConfigWarning() };
+  const headers = await authenticatedRestHeaders();
+  if (!base || !headers) return { error:{ message:"Authenticated Supabase session required for REST read." } };
   const joiner = query ? `?${query}` : "";
   try {
-    const res = await fetch(`${base}/rest/v1/${encodeURIComponent(table)}${joiner}`, { headers:{ apikey:anon, Authorization:`Bearer ${anon}` } });
+    const res = await fetch(`${base}/rest/v1/${encodeURIComponent(table)}${joiner}`, { headers });
     const text = await res.text().catch(()=>"");
     if (!res.ok) return { error:{ message:text || `REST select HTTP ${res.status}` } };
     return { error:null, data:text ? JSON.parse(text) : [], via:"rest" };
@@ -9630,10 +9747,10 @@ async function fetchRestSelectFromSupabase(table, query="select=*&limit=1"){
 }
 async function fetchRestDeleteFromSupabase(table, query){
   const base = supabaseEnvBaseUrl();
-  const anon = supabaseEnvAnonKey();
-  if (!base || !anon) return { skipped:true, warning:supabaseConfigWarning() };
+  const headers = await authenticatedRestHeaders({ Prefer:"return=minimal" });
+  if (!base || !headers) return { error:{ message:"Authenticated Supabase session required for REST delete." } };
   try {
-    const res = await fetch(`${base}/rest/v1/${encodeURIComponent(table)}?${query}`, { method:"DELETE", headers:{ apikey:anon, Authorization:`Bearer ${anon}`, Prefer:"return=minimal" } });
+    const res = await fetch(`${base}/rest/v1/${encodeURIComponent(table)}?${query}`, { method:"DELETE", headers });
     if (!res.ok) { const text = await res.text().catch(()=>""); return { error:{ message:text || `REST delete HTTP ${res.status}` } }; }
     return { error:null, via:"rest", deleted:true };
   } catch(e) { return { error:{ message:e?.message || String(e) } }; }
@@ -9646,13 +9763,13 @@ async function fetchRestSelectByNaturalKey(table, row){
 }
 async function fetchDeleteByNaturalKey(table, row){
   const base = supabaseEnvBaseUrl();
-  const anon = supabaseEnvAnonKey();
+  const headers = await authenticatedRestHeaders({ Prefer:"return=minimal" });
   const key = styleNaturalKey(row);
-  if (!base || !anon) return { skipped:true, warning:supabaseConfigWarning() };
+  if (!base || !headers) return { error:{ message:"Authenticated Supabase session required for delete." } };
   if (!key.order_no || !key.style_no || !key.colour || !key.component) return { error:{ message:"Delete needs Order No, Style No, Colour and Component." } };
   const url = `${base}/rest/v1/${encodeURIComponent(table)}?${urlEncodedEqQuery(key)}`;
   try {
-    const res = await fetch(url, { method:"DELETE", headers:{ apikey:anon, Authorization:`Bearer ${anon}`, Prefer:"return=minimal" } });
+    const res = await fetch(url, { method:"DELETE", headers });
     if (!res.ok) {
       let text = await res.text().catch(()=>"");
       return { error:{ message:text || `HTTP ${res.status}` } };
@@ -9943,7 +10060,7 @@ function styleTemplateRows(){
   return [
     { Action:"ADD_UPDATE", "Order No":"SO/25-26/100", "Style No":"STYLE-001", Buyer:"VMM", Colour:"BLACK", Component:"TOP", "Order Qty":1200, "File Released Qty":1200, "File Released Date":"", "Set Piece Count":"", "Size Set":"alpha", "Size Ratio":"1:2:3:3:2:1", ...blankSizeCols, "Size XS":100, "Size S":200, "Size M":300, "Size L":300, "Size XL":200, "Size XXL":100, "Set ID":"", "Planning Line Override":"", "Print Required":"No", "Embroidery Required":"No", Priority:"Normal", Difficulty:"Normal", "Photo URL":"", "OneDrive Folder URL":"" },
     { Action:"ADD_UPDATE", "Order No":"SO/25-26/101", "Style No":"KIDS-001", Buyer:"HOPSCOTCH", Colour:"PINK", Component:"TOP", "Order Qty":400, "File Released Qty":400, "File Released Date":"", "Set Piece Count":"", "Size Set":"kids", "Size Ratio":"1:1:1:1:1:0", ...blankSizeCols, "Size 2-3Y":80, "Size 3-4Y":80, "Size 4-5Y":80, "Size 5-6Y":80, "Size 7-8Y":80, "Order Size Breakup":"", "Set ID":"", "Planning Line Override":"", "Print Required":"No", "Embroidery Required":"Yes", Priority:"Normal", Difficulty:"Normal", "Photo URL":"", "OneDrive Folder URL":"" },
-    { Action:"HARD_DELETE", "Order No":"SO/25-26/OLD", "Style No":"WRONG-STYLE", Buyer:"", Colour:"BLACK", Component:"TOP", "Order Qty":"", "File Released Qty":"", "File Released Date":"", "Set Piece Count":"", "Size Set":"", "Size Ratio":"", ...blankSizeCols, "Order Size Breakup":"", "Set ID":"", "Planning Line Override":"", "Print Required":"", "Embroidery Required":"", Priority:"", Difficulty:"", "Photo URL":"", "OneDrive Folder URL":"" },
+    { Action:"DELETE", "Order No":"SO/25-26/OLD", "Style No":"WRONG-STYLE", Buyer:"", Colour:"BLACK", Component:"TOP", "Order Qty":"", "File Released Qty":"", "File Released Date":"", "Set Piece Count":"", "Size Set":"", "Size Ratio":"", ...blankSizeCols, "Order Size Breakup":"", "Set ID":"", "Planning Line Override":"", "Print Required":"", "Embroidery Required":"", Priority:"", Difficulty:"", "Photo URL":"", "OneDrive Folder URL":"" },
   ];
 }
 
@@ -10087,8 +10204,12 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, focus, clearT
       if (n(prevRow.order_qty) !== clean.order_qty) changes.push(`Order Qty: ${fmt(prevRow.order_qty)} → ${fmt(clean.order_qty)}`);
       if (JSON.stringify(normalizeSizeQtyMap(prevRow.order_size_qty || {}, formSizes)) !== JSON.stringify(cleanSizeQty)) changes.push("Order size breakup changed");
       if (!!prevRow.print_required !== !!clean.print_required || !!prevRow.embroidery_required !== !!clean.embroidery_required) changes.push("Route toggle changed");
+      if (changes.length && hasActivity) {
+        setMsg({ tone:"late", text:`Blocked structural edit after production activity: ${changes.join(" · ")}. Use an audited migration/correction flow; do not rewrite the master under existing ledger history.` });
+        return;
+      }
       if (changes.length) {
-        const ok = window.confirm(`Confirm production style data change.\n\nUnique row key is Order No + Style No + Colour + Component, not Style alone.\n\n${changes.join("\n")}\n\n${hasActivity ? "This row has production activity/ledger, so confirm carefully." : ""}`);
+        const ok = window.confirm(`Confirm production style data change.\n\nUnique row key is Order No + Style No + Colour + Component, not Style alone.\n\n${changes.join("\n")}`);
         if (!ok) return;
       }
     }
@@ -10108,8 +10229,26 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, focus, clearT
     const mainRow = rowsToSave[0];
     setBusy(true);
     try {
+      const result = rowsToSave.length > 1
+        ? await robustUpsertOrdersToSupabase(rowsToSave)
+        : await upsertOneStyleToSupabase(mainRow);
+      const { error, skipped, warning, via, recoveredFrom } = result || {};
+      const saveLabel = rowsToSave.length > 1 ? `Added ${rowsToSave.length} set components (${componentList.join(", ")})` : `${editing ? "Updated" : "Added"} ${mainRow.style_no}`;
+      if (error || warning || skipped) {
+        setMsg({ tone:"late", text:`${saveLabel} NOT saved: ${error?.message || warning || "Supabase did not confirm"}. Local style master was not changed.` });
+        return;
+      }
+      if (editing && prevRow && styleCompositeKey(prevRow) !== styleCompositeKey(mainRow)) {
+        const del=await deleteOneStyleFromSupabase(prevRow);
+        if (del?.error || del?.warning) {
+          setMsg({ tone:"late", text:`New key saved but old unused key could not be removed: ${del?.error?.message || del?.warning}. Refresh and resolve duplicate before further entry.` });
+          await onSharedSave?.(result, `${saveLabel} key migration review`);
+          return;
+        }
+      }
       setRows(prev=>{
         let next = [...prev];
+        if (editing && prevRow && styleCompositeKey(prevRow) !== styleCompositeKey(mainRow)) next=next.filter(r=>String(r.id)!==String(prevRow.id) && styleCompositeKey(r)!==styleCompositeKey(prevRow));
         rowsToSave.forEach(rowToSave=>{ forgetDeletedStyle(rowToSave);
           const key = styleCompositeKey(rowToSave);
           const exists = next.some(r=>String(r.id)===String(rowToSave.id) || styleCompositeKey(r)===key);
@@ -10117,20 +10256,9 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, focus, clearT
         });
         return next;
       });
-      const { error, skipped, warning, via, recoveredFrom } = rowsToSave.length > 1
-        ? await robustUpsertOrdersToSupabase(rowsToSave)
-        : await upsertOneStyleToSupabase(mainRow);
-      if (editing && prevRow && styleCompositeKey(prevRow) !== styleCompositeKey(mainRow) && !skipped) {
-        await deleteOneStyleFromSupabase(prevRow);
-      }
-      const saveLabel = rowsToSave.length > 1 ? `Added ${rowsToSave.length} set components (${componentList.join(", ")})` : `${editing ? "Updated" : "Added"} ${mainRow.style_no}`;
-      if (error) setMsg({ tone:"late", text:`${saveLabel} in browser, Supabase save failed: ${error.message}` });
-      else if (warning) setMsg({ tone:"warn", text:`${saveLabel} in browser. ${warning}` });
-      else setMsg({ tone:variance.diff ? "warn" : "ok", text:`${saveLabel}. ${variance.diff ? variance.text + " " : ""}${skipped ? "Browser/demo save only." : supabaseSaveLabel({via})}${shortRecoveredSupabaseNote(recoveredFrom)}` });
-      if (!error && !warning) {
-        recordProductionAudit(editing ? "style_update" : "style_add", { table_name:"production_orders", order_no:mainRow.order_no, style_no:mainRow.style_no, colour:mainRow.colour, component:mainRow.component, qty:mainRow.order_qty, source:"Styles", after_data:{ rows:rowsToSave.length, components:componentList } });
-        onSharedSave?.({ skipped, via, recoveredFrom }, saveLabel);
-      }
+      setMsg({ tone:variance.diff ? "warn" : "ok", text:`${saveLabel}. ${variance.diff ? variance.text + " " : ""}${supabaseSaveLabel({via})}${shortRecoveredSupabaseNote(recoveredFrom)}` });
+      recordProductionAudit(editing ? "style_update" : "style_add", { table_name:"production_orders", order_no:mainRow.order_no, style_no:mainRow.style_no, colour:mainRow.colour, component:mainRow.component, qty:mainRow.order_qty, source:"Styles", after_data:{ rows:rowsToSave.length, components:componentList } });
+      onSharedSave?.(result, saveLabel);
       if (!editing) setForm(emptyForm);
     } finally { setBusy(false); }
   }
@@ -10139,10 +10267,12 @@ function StyleManager({ rows, allRows, setRows, ledger, setLedger, focus, clearT
     if (permission) { setMsg({ tone:"late", text:permission.error.message }); return; }
     const hasLedger = (ledger||[]).some(x=>ledgerRowMatchesStyle(x,row));
     const hasActivity = styleHasStageActivity(row) || hasLedger;
-    const word = hasActivity ? "HARD DELETE" : "DELETE";
-    const warning = hasActivity
-      ? `Hard delete will remove ${row.style_no} and its local ledger/history from this demo app. This is okay for demo cleanup, but not for live factory audit. Type HARD DELETE to confirm.`
-      : `Delete unused style ${row.style_no}? Type DELETE to confirm.`;
+    if (hasActivity) {
+      setMsg({ tone:"late", text:`Blocked: ${row.style_no} has production activity/history. Live production rows cannot be hard-deleted. Reverse/correct wrong events and archive/close the style instead.` });
+      return;
+    }
+    const word = "DELETE";
+    const warning = `Delete unused style ${row.style_no}? Type DELETE to confirm.`;
     const confirmText = window.prompt(`${warning}
 
 ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
@@ -10150,16 +10280,14 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
     setBusy(true);
     try {
       const orderDelete = await deleteOneStyleFromSupabase(row);
-      let cleanupWarning = orderDelete?.error ? `Supabase order cleanup failed: ${orderDelete.error.message}` : "";
-      if (hasActivity) {
-        const led = await deleteStyleLedgerFromSupabase(row);
-        if (led.error) cleanupWarning = [cleanupWarning, `Supabase ledger cleanup failed: ${led.error.message}`].filter(Boolean).join(" · ");
+      if (orderDelete?.error || orderDelete?.warning || orderDelete?.skipped) {
+        setMsg({ tone:"late", text:`Delete NOT confirmed by Supabase: ${orderDelete?.error?.message || orderDelete?.warning || "save skipped"}. Local style list was not changed.` });
+        return;
       }
       rememberDeletedStyle(row);
       setRows(prev=>prev.filter(r=>String(r.id)!==String(row.id) && styleCompositeKey(r)!==styleCompositeKey(row)));
-      setLedger?.(prev=>(prev||[]).filter(x=>!ledgerRowMatchesStyle(x,row)));
-      setMsg(cleanupWarning ? { tone:"warn", text:`${hasActivity ? "Hard deleted" : "Deleted"} locally/demo. ${cleanupWarning}. If Pull brings it back, delete the Supabase row manually or check table RLS.` } : { tone:"ok", text:`${hasActivity ? "Hard deleted" : "Deleted"} ${row.style_no}. ${isSupabaseConfigured ? "Supabase cleanup completed." : "Local/demo cleanup only."}` });
-      if (!cleanupWarning) recordProductionAudit(hasActivity ? "style_hard_delete" : "style_delete", { table_name:"production_orders", order_no:row.order_no, style_no:row.style_no, colour:row.colour, component:row.component, qty:row.order_qty, source:"Styles delete", before_data:{ had_activity:hasActivity, had_ledger:hasLedger } });
+      setMsg({ tone:"ok", text:`Deleted unused style ${row.style_no} from Supabase.` });
+      recordProductionAudit("style_delete", { table_name:"production_orders", order_no:row.order_no, style_no:row.style_no, colour:row.colour, component:row.component, qty:row.order_qty, source:"Styles delete", before_data:{ had_activity:false, had_ledger:false } });
       if (String(form.id)===String(row.id)) reset();
     } finally { setBusy(false); }
   }
@@ -10247,13 +10375,17 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
     });
     setBusy(true);
     try {
-      const payload = newLedger.map(({id, ...x})=>x);
+      const groupId=uid("evtgrp_size_repair");
+      const payload = newLedger.map(({id, ...x})=>({ ...x, client_event_id:id, event_group_id:groupId }));
       const result = await robustInsertEntriesToSupabase(payload);
-      setLedger?.(prev=>mergeLedgerPrependUnique(prev, newLedger));
       const text = `Size repair posted for ${row.style_no}: ${mappings.map(m=>`${m.old}->${m.next}`).join(", ")} · ${newLedger.length} correction rows.`;
-      if (result?.error) setMsg({ tone:"warn", text:`${text} Browser updated; Supabase insert failed: ${result.error.message}` });
-      else setMsg({ tone:"ok", text });
-      recordProductionAudit("style_size_map_repair", { table_name:"production_entries", order_no:row.order_no, style_no:row.style_no, colour:row.colour, component:row.component, qty:newLedger.reduce((a,e)=>a+Math.abs(n(e.qty)),0)/2, source:"Styles size repair", metadata:{ mappings, affected_rows:affected.length, correction_rows:newLedger.length, supabase:result?.via || "browser" } });
+      if (result?.error || result?.warning || result?.skipped) {
+        setMsg({ tone:"late", text:`Size repair NOT saved: ${result?.error?.message || result?.warning || "Supabase did not confirm"}. Local WIP was not changed.` });
+        return;
+      }
+      setLedger?.(prev=>mergeLedgerPrependUnique(prev, newLedger));
+      setMsg({ tone:"ok", text });
+      recordProductionAudit("style_size_map_repair", { table_name:"production_entries", order_no:row.order_no, style_no:row.style_no, colour:row.colour, component:row.component, qty:newLedger.reduce((a,e)=>a+Math.abs(n(e.qty)),0)/2, source:"Styles size repair", metadata:{ mappings, affected_rows:affected.length, correction_rows:newLedger.length, supabase:result?.via || "rpc" } });
       onSharedSave?.(result || {}, "Size repair");
     } finally { setBusy(false); }
   }
@@ -10262,12 +10394,12 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
     exportXlsx("production_style_bulk_template.xlsx", [
       { name:"Bulk Update", rows:styleTemplateRows() },
       { name:"Instructions", rows:[
-        { Rule:"Action", Detail:"Use ADD_UPDATE to add/update rows. Use HARD_DELETE to remove a style/order/colour/component from demo data." },
+        { Rule:"Action", Detail:"Use ADD_UPDATE to add/update rows. HARD_DELETE is blocked once any production activity exists. Only unused rows may be deleted." },
         { Rule:"Unique key", Detail:"Order No + Style No + Colour + Component identifies the row." },
         { Rule:"Size Set", Detail:`Allowed: ${Object.keys(getSizeSets()).join(", ")}. Add/edit groups in Settings.` },
         { Rule:"Order size breakup", Detail:"Order Qty is mandatory and remains master. Fill only size columns belonging to the chosen Size Set. If XL/L/M quantities are uploaded against a kids size set, preview blocks the row until you map/fix the file." },
         { Rule:"Booleans", Detail:"Print Required / Embroidery Required accept Yes/No, TRUE/FALSE, 1/0." },
-        { Rule:"Hard delete", Detail:"For demo cleanup only. Live production should archive/approve instead of hard deleting." },
+        { Rule:"Hard delete", Detail:"Active styles cannot hard delete. Wrong live activity must be reversed/corrected; unused rows only may delete." },
       ]}
     ]);
   }
@@ -10298,9 +10430,12 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
         rec.existing = existing || null;
         if (action === "DELETE") {
           if (!existing) { rec.errors.push("Delete target not found."); skipped++; errorCount++; records.push(rec); continue; }
+          const activeDelete = styleHasStageActivity(existing) || (ledger||[]).some(x=>ledgerRowMatchesStyle(x,existing));
           rec.kind = "DELETE"; rec.clean = existing; rec.merged = existing;
-          rec.changes = [{ label:"Delete row", old:naturalKeyLabel(existing), next:"Will remove style row" }];
-          deleteCount++; records.push(rec); continue;
+          if (activeDelete) rec.errors.push("Active production style cannot be hard-deleted. Reverse/correct ledger activity and archive/close instead.");
+          rec.changes = [{ label:"Delete row", old:naturalKeyLabel(existing), next:activeDelete ? "BLOCKED — has production activity" : "Will remove unused style row" }];
+          if (activeDelete) { skipped++; errorCount++; } else deleteCount++;
+          records.push(rec); continue;
         }
         const clean = styleFromExcelRow(raw, existing);
         rec.clean = clean;
@@ -10349,40 +10484,41 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
     if (blocked && !window.confirm(`${blocked} rows are blocked and will be skipped. Apply valid rows only?`)) return;
     const valid = records.filter(r=>!r.errors?.length);
     if (!valid.length) { setBulkMsg({ tone:"late", text:"No valid rows to apply." }); return; }
-    if (!window.confirm(`Apply ${valid.length} valid bulk change rows? This will update style master and Supabase where configured.`)) return;
-    setBusy(true); setBulkMsg({ tone:"info", text:"Applying bulk preview..." });
+    const deletes=valid.filter(r=>r.kind==="DELETE").map(r=>r.merged);
+    if (deletes.length && !currentUserCan("production.delete_styles")) { setBulkMsg({tone:"late",text:"Bulk file contains DELETE rows but your role cannot delete styles."}); return; }
+    if (!window.confirm(`Apply ${valid.length} valid bulk change rows to authoritative Supabase? Local style state changes only after server confirmation.`)) return;
+    setBusy(true); setBulkMsg({ tone:"info", text:"Applying bulk changes to Supabase first…" });
     try {
+      const upserts=valid.filter(r=>r.kind!=="DELETE").map(r=>r.merged);
+      if (upserts.length) {
+        const result=await robustUpsertOrdersToSupabase(upserts);
+        if (result?.error || result?.warning || result?.skipped) {
+          setBulkMsg({tone:"late",text:`Bulk upsert NOT completed: ${result?.error?.message || result?.warning || "Supabase did not confirm"}. Refresh shared data before retrying.`});
+          return;
+        }
+      }
+      for (const row of deletes) {
+        const result=await deleteOneStyleFromSupabase(row);
+        if (result?.error || result?.warning || result?.skipped) {
+          setBulkMsg({tone:"late",text:`Bulk delete stopped at ${row.style_no}: ${result?.error?.message || result?.warning || "Supabase did not confirm"}. Some earlier rows may already be committed; refresh shared data now.`});
+          onSharedSave?.({error:{message:"Partial bulk operation — refresh required"}},"Bulk master update");
+          return;
+        }
+      }
       let nextRows=[...(allRows||[])];
-      const upserts=[], deletes=[], errors=[];
-      let added=0, updated=0, deleted=0;
+      let added=0,updated=0,deleted=0;
       valid.forEach(rec=>{
-        if (rec.kind === "DELETE") {
-          const row = rec.merged;
-          nextRows = nextRows.filter(r=>styleCompositeKey(r)!==styleCompositeKey(row));
-          deletes.push(row); rememberDeletedStyle(row); deleted++;
-        } else {
-          const row = rec.merged;
-          forgetDeletedStyle(row);
-          const existing = nextRows.find(r=>String(r.id)===String(row.id) || styleCompositeKey(r)===styleCompositeKey(row));
-          nextRows = existing ? nextRows.map(r=>(String(r.id)===String(row.id) || styleCompositeKey(r)===styleCompositeKey(row)) ? row : r) : [row, ...nextRows];
-          upserts.push(row); if (rec.kind === "ADD") added++; else updated++;
+        if (rec.kind==="DELETE") { nextRows=nextRows.filter(r=>styleCompositeKey(r)!==styleCompositeKey(rec.merged)); deleted++; }
+        else {
+          const row=rec.merged; const existing=nextRows.find(r=>String(r.id)===String(row.id)||styleCompositeKey(r)===styleCompositeKey(row));
+          nextRows=existing?nextRows.map(r=>(String(r.id)===String(row.id)||styleCompositeKey(r)===styleCompositeKey(row))?row:r):[row,...nextRows];
+          if(rec.kind==="ADD") added++; else updated++;
         }
       });
       setRows(nextRows);
-      if (deletes.length) setLedger?.(prev=>(prev||[]).filter(x=>!deletes.some(row=>ledgerRowMatchesStyle(x,row))));
-      if (hasValidSupabaseEnv()) {
-        if (upserts.length) {
-          const result = await robustUpsertOrdersToSupabase(upserts);
-          if (result.error) errors.push(`Supabase upsert: ${result.error.message}`);
-          else if (result.recoveredFrom) errors.push(`Supabase upsert saved via REST fallback.${shortRecoveredSupabaseNote(result.recoveredFrom)}`);
-        }
-        for (const row of deletes) {
-          const a = await deleteOneStyleFromSupabase(row); if (a.error) errors.push(`Supabase delete ${row.style_no}: ${a.error.message}`);
-          const b = await deleteStyleLedgerFromSupabase(row); if (b.error) errors.push(`Supabase ledger delete ${row.style_no}: ${b.error.message}`);
-        }
-      }
-      setBulkMsg({ tone:errors.length ? "warn" : "ok", text:`Bulk changes applied. Added ${added}, updated ${updated}, deleted ${deleted}, skipped ${blocked}.${errors.length ? " Issues: "+errors.slice(0,4).join(" | ")+(errors.length>4?` | +${errors.length-4} more`:"") : ""}` });
-      recordProductionAudit("style_bulk_update", { table_name:"production_orders", qty:upserts.length, source:"Styles bulk preview/apply", metadata:{ added, updated, deleted, skipped:blocked, error_count:errors.length } });
+      setBulkMsg({tone:"ok",text:`Bulk changes confirmed by Supabase. Added ${added}, updated ${updated}, deleted ${deleted}, skipped ${blocked}.`});
+      recordProductionAudit("style_bulk_update", { table_name:"production_orders", qty:upserts.length, source:"Styles bulk preview/apply", metadata:{ added,updated,deleted,skipped:blocked } });
+      onSharedSave?.({via:"supabase-js"},"Bulk style update");
       setBulkReview(null);
     } catch(e) {
       setBulkMsg({ tone:"late", text:e?.message || "Bulk Excel apply failed." });
@@ -10413,17 +10549,17 @@ ${row.order_no} / ${row.style_no} / ${row.colour} / ${row.component}`);
       </div>
     </div>
 
-    <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Bulk Excel Add / Update / Hard Delete</h3><div className="mt-panel-sub">Upload one Excel sheet to add or update many styles at once. Use Action = HARD_DELETE to remove wrong demo rows and their local ledger entries.</div></div>
+    <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Bulk Excel Add / Update / Delete Unused</h3><div className="mt-panel-sub">Upload one Excel sheet to add or update many styles at once. DELETE/HARD_DELETE is permitted only for rows with no production activity; active production history is immutable.</div></div>
       <div className="mt-section no-print" style={{display:"grid", gap:10}}>
         {bulkMsg && <span className={`mt-chip ${statusClass(bulkMsg.tone)}`}>{bulkMsg.text}</span>}
-        <div className="mt-toolbar"><button className="mt-btn" disabled={busy} onClick={downloadTemplate}><Download size={14}/>Download Template</button><label className="mt-btn primary" style={{cursor:busy?"not-allowed":"pointer"}}><Upload size={14}/>Upload Excel<input type="file" accept=".xlsx,.xls,.csv" style={{display:"none"}} disabled={busy} onChange={e=>{ const f=e.target.files?.[0]; if(f) bulkUploadExcel(f); e.target.value=""; }}/></label><span className="mt-chip mt-warn"><AlertTriangle size={12}/>Hard delete allowed for demo cleanup</span></div>
-        <div className="mt-speed-note"><b>Required key:</b> Order No + Style No + Colour + Component. <b>Action:</b> ADD_UPDATE or HARD_DELETE. Bulk update preserves existing WIP where possible; hard delete removes the style row and matching ledger entries from this demo dataset.</div>
+        <div className="mt-toolbar"><button className="mt-btn" disabled={busy} onClick={downloadTemplate}><Download size={14}/>Download Template</button><label className="mt-btn primary" style={{cursor:busy?"not-allowed":"pointer"}}><Upload size={14}/>Upload Excel<input type="file" accept=".xlsx,.xls,.csv" style={{display:"none"}} disabled={busy} onChange={e=>{ const f=e.target.files?.[0]; if(f) bulkUploadExcel(f); e.target.value=""; }}/></label><span className="mt-chip mt-warn"><AlertTriangle size={12}/>Active delete blocked</span></div>
+        <div className="mt-speed-note"><b>Required key:</b> Order No + Style No + Colour + Component. <b>Action:</b> ADD_UPDATE or HARD_DELETE. Bulk update is server-first. DELETE/HARD_DELETE only removes unused style rows; ledger history is never deleted.</div>
         {bulkReview && <div className="mt-order-size-card"><div style={{display:"flex", justifyContent:"space-between", gap:8, alignItems:"center", flexWrap:"wrap"}}><div><b>Bulk Preview — review before entry</b><div className="mt-small">{bulkReview.fileName} · {bulkReview.addCount} add · {bulkReview.updateCount} update · {bulkReview.deleteCount} delete · {bulkReview.errorCount} blocked · {bulkReview.warnCount} warnings</div></div><div style={{display:"flex", gap:6, flexWrap:"wrap"}}><button className="mt-btn primary" disabled={busy || !bulkReview.records?.some(r=>!r.errors?.length)} onClick={applyBulkReview}><CheckCircle2 size={14}/>Apply Valid Changes</button><button className="mt-btn ghost" disabled={busy} onClick={()=>setBulkReview(null)}>Cancel Preview</button></div></div><div className="mt-bulk-preview-grid" style={{marginTop:10}}>{(bulkReview.records||[]).slice(0,60).map(rec=><div key={rec.rowNo} className={`mt-bulk-preview-card ${bulkPreviewClass(rec)}`}><div className="mt-bulk-preview-head"><div><div className="mt-bulk-preview-title">Row {rec.rowNo} · {rec.kind}</div><div className="mt-small">{rec.clean ? naturalKeyLabel(rec.clean) : rec.existing ? naturalKeyLabel(rec.existing) : "Missing key"}</div></div><span className={`mt-chip ${statusClass(bulkPreviewTone(rec))}`}>{rec.errors?.length ? "Blocked" : rec.warnings?.length ? "Review" : "OK"}</span></div><div className="mt-bulk-change-list">{rec.clean?.size_set && <span className="mt-size-set-badge">Size set: {rec.clean.size_set}</span>}{rec.errors?.map((e,i)=><div className="mt-bulk-change" key={`e${i}`}><b>Blocked</b><span className="mt-bulk-old">{e}</span></div>)}{rec.warnings?.map((w,i)=><div className="mt-bulk-change" key={`w${i}`}><b>Warning</b><span>{w}</span></div>)}{(rec.changes||[]).slice(0,8).map((ch,i)=><div className="mt-bulk-change" key={i}><b>{ch.label}</b><span className="mt-bulk-old">{ch.old}</span><span className="mt-bulk-new">→ {ch.next}</span></div>)}</div></div>)}{(bulkReview.records||[]).length > 60 && <div className="mt-small">Showing first 60 preview rows. Apply will process all valid rows.</div>}</div></div>}
       </div>
     </div>
-    <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Style List / Edit / Hard Delete</h3><div className="mt-panel-sub">Search, edit, delete unused rows, or hard delete demo rows with activity. For live production, hard delete should be replaced by archive/approval governance.</div></div>
+    <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Style List / Edit / Delete Unused</h3><div className="mt-panel-sub">Search and edit styles. Deletion is available only before any production activity; active rows are server-locked and must be corrected/closed, never erased.</div></div>
       <div className="mt-section no-print"><div className="mt-toolbar"><Search size={14}/><input className="mt-input" value={q} onChange={e=>setQ(e.target.value)} placeholder="Search order / style / buyer / colour"/><span className="mt-chip mt-muted">{tableRows.length} rows</span></div></div>
-      <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style</th><th>Order</th><th>Buyer</th><th>Colour</th><th>Component</th><th>Qty</th><th>Route</th><th>Activity</th><th>Action</th></tr></thead><tbody>{tableRows.map(row=>{ const hasLedger=(ledger||[]).some(x=>ledgerRowMatchesStyle(x,row)); const hasActivity=styleHasStageActivity(row)||hasLedger; const sizeInfo=ledgerWrongSizeInfo(row); return <tr key={row.id}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.set_id ? `Set ${row.set_id} · ` : ""}{row.size_set}{row.size_ratio ? ` · Ratio ${row.size_ratio}` : ""}</div></div></div></td><td>{row.order_no}</td><td>{row.buyer}</td><td>{row.colour}</td><td>{row.component}</td><td><b>{fmt(row.order_qty)}</b><div className="mt-small">{fileReleaseStatusText(row)}</div><div className="mt-small">{explicitOrderSizeQtyTotal(row) ? sizesFor(row).map(sz=>`${sz} ${fmt(normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row))[sz]||0)}`).join(" · ") : <span style={{color:"var(--fg-warn)", fontWeight:800}}>Size breakup missing</span>}</div></td><td>{routeFor(row).map(stageLabel).join(" → ")}</td><td>{hasActivity ? <span className="mt-chip mt-warn">Has activity</span> : <span className="mt-chip mt-ok">Unused</span>} {sizeInfo?.wrong?.length ? <><br/><span className="mt-chip mt-size-repair-chip">Size clash {sizeInfo.wrong.map(x=>x.size).join(", ")}</span></> : null}</td><td><button className="mt-btn primary" onClick={()=>onRelease?.(row, "styles_list")}>{isProductionFileReleased(row) ? "Edit Release" : "Release File"}</button> <button className="mt-btn" onClick={()=>edit(row)}>Edit</button> {sizeInfo?.wrong?.length ? <button className="mt-btn" disabled={busy} onClick={()=>repairSizeClash(row)}>Repair Sizes</button> : null} <button className="mt-btn ghost" disabled={busy} onClick={()=>remove(row)}>{hasActivity ? "Hard Delete" : "Delete"}</button>{hasActivity && <div className="mt-small">Demo cleanup only; removes matching ledger locally.</div>}</td></tr>; })}</tbody></table></div>
+      <div className="mt-table-wrap"><table className="mt-table"><thead><tr><th className="mt-sticky">Style</th><th>Order</th><th>Buyer</th><th>Colour</th><th>Component</th><th>Qty</th><th>Route</th><th>Activity</th><th>Action</th></tr></thead><tbody>{tableRows.map(row=>{ const hasLedger=(ledger||[]).some(x=>ledgerRowMatchesStyle(x,row)); const hasActivity=styleHasStageActivity(row)||hasLedger; const sizeInfo=ledgerWrongSizeInfo(row); return <tr key={row.id}><td className="mt-sticky"><div className="mt-style-main"><LazyStylePhoto row={row}/><div><b>{row.style_no}</b><div className="mt-small">{row.set_id ? `Set ${row.set_id} · ` : ""}{row.size_set}{row.size_ratio ? ` · Ratio ${row.size_ratio}` : ""}</div></div></div></td><td>{row.order_no}</td><td>{row.buyer}</td><td>{row.colour}</td><td>{row.component}</td><td><b>{fmt(row.order_qty)}</b><div className="mt-small">{fileReleaseStatusText(row)}</div><div className="mt-small">{explicitOrderSizeQtyTotal(row) ? sizesFor(row).map(sz=>`${sz} ${fmt(normalizeSizeQtyMap(row.order_size_qty || {}, sizesFor(row))[sz]||0)}`).join(" · ") : <span style={{color:"var(--fg-warn)", fontWeight:800}}>Size breakup missing</span>}</div></td><td>{routeFor(row).map(stageLabel).join(" → ")}</td><td>{hasActivity ? <span className="mt-chip mt-warn">Has activity</span> : <span className="mt-chip mt-ok">Unused</span>} {sizeInfo?.wrong?.length ? <><br/><span className="mt-chip mt-size-repair-chip">Size clash {sizeInfo.wrong.map(x=>x.size).join(", ")}</span></> : null}</td><td><button className="mt-btn primary" onClick={()=>onRelease?.(row, "styles_list")}>{isProductionFileReleased(row) ? "Edit Release" : "Release File"}</button> <button className="mt-btn" onClick={()=>edit(row)}>Edit</button> {sizeInfo?.wrong?.length ? <button className="mt-btn" disabled={busy} onClick={()=>repairSizeClash(row)}>Repair Sizes</button> : null} <button className="mt-btn ghost" disabled={busy} onClick={()=>remove(row)}>{hasActivity ? "Delete Locked" : "Delete"}</button>{hasActivity && <div className="mt-small">Locked after production activity.</div>}</td></tr>; })}</tbody></table></div>
     </div>
   </div>;
 }
@@ -10434,39 +10570,52 @@ function SettingsView({ onChanged }){
   const [dispatchReject,setDispatchReject]=useState(dispatchRejectAllowed());
   const [linesText,setLinesText]=useState(productionLineNames().join("\n"));
   const [sizeSetsText,setSizeSetsText]=useState(sizeSetsToText(getSizeSets()));
-  function applyTol(v){ const num=Math.max(0, Number(String(v).replace(/[^0-9.]/g,"")) || 0); setTol(num); PROD_SETTINGS.cuttingTolerancePct=num; try { localStorage.setItem("production_cutting_tolerance_pct", String(num)); } catch {} onChanged?.(); }
-  function applyDispatchHold(v){ const num=Math.max(0, Number(String(v).replace(/[^0-9.]/g,"")) || 0); setDispatchHold(num); PROD_SETTINGS.dispatchRamHoldPct=num; try { localStorage.setItem("production_dispatch_ram_hold_pct", String(num)); } catch {} onChanged?.(); }
-  function applyDispatchReject(checked){ PROD_SETTINGS.dispatchRejectAllowed=!!checked; setDispatchReject(!!checked); try { localStorage.setItem("production_dispatch_reject_allowed", checked ? "true" : "false"); } catch {} onChanged?.(); }
-  function saveLines(){
+  const [saveState,setSaveState]=useState("");
+  function applyTol(v){ const num=Math.max(0, Number(String(v).replace(/[^0-9.]/g,"")) || 0); setTol(num); }
+  function applyDispatchHold(v){ const num=Math.max(0, Number(String(v).replace(/[^0-9.]/g,"")) || 0); setDispatchHold(num); }
+  function applyDispatchReject(checked){ setDispatchReject(!!checked); }
+  async function saveRules(message="Shared production rules saved for all users.", patch={}){
+    setSaveState("Saving shared rules…");
+    const before = sharedProductionSettingsSnapshot();
+    PROD_SETTINGS.cuttingTolerancePct=Math.max(0,n(tol));
+    PROD_SETTINGS.dispatchRamHoldPct=Math.max(0,n(dispatchHold));
+    PROD_SETTINGS.dispatchRejectAllowed=!!dispatchReject;
+    if (Array.isArray(patch.lineNames) && patch.lineNames.length) PROD_SETTINGS.lineNames=Array.from(new Set(patch.lineNames));
+    if (patch.sizeSets && typeof patch.sizeSets === "object") saveCustomSizeSets(patch.sizeSets);
+    const res = await saveSharedProductionSettingsSnapshot();
+    if (res?.error || res?.skipped) {
+      applySharedProductionSettingsSnapshot(before);
+      setSaveState(`Shared save failed: ${res?.error?.message || res?.warning || "Supabase unavailable"}`);
+      onChanged?.();
+      return false;
+    }
+    setSaveState(message); onChanged?.(); return true;
+  }
+  async function saveLines(){
     const lines = linesText.split(/\r?\n|,/).map(x=>x.trim()).filter(Boolean);
     if (!lines.length) { alert("Add at least one stitching line name."); return; }
-    PROD_SETTINGS.lineNames = Array.from(new Set(lines));
-    try { localStorage.setItem("production_line_names", JSON.stringify(PROD_SETTINGS.lineNames)); } catch {}
-    onChanged?.();
-    alert(`Saved ${PROD_SETTINGS.lineNames.length} line name(s).`);
+    await saveRules(`Saved ${Array.from(new Set(lines)).length} shared line name(s).`, { lineNames:lines });
   }
-  function saveSizeSets(){
+  async function saveSizeSets(){
     const parsed = parseSizeSetsText(sizeSetsText);
     if (!Object.keys(parsed).length) { alert("Add at least one size group, for example alpha = XS, S, M, L, XL"); return; }
-    saveCustomSizeSets(parsed);
-    onChanged?.();
-    alert(`Saved ${Object.keys(parsed).length} size group(s). Styles and entry screens will use this list.`);
+    await saveRules(`Saved ${Object.keys(parsed).length} shared size group(s).`, { sizeSets:parsed });
   }
-  function resetSizeSets(){
-    try { localStorage.removeItem("production_size_sets"); } catch {}
-    setSizeSetsText(sizeSetsToText(DEFAULT_SIZE_SETS));
-    onChanged?.();
+  async function resetSizeSets(){
+    const ok = await saveRules("Reset shared size groups to app defaults.", { sizeSets:{} });
+    if (ok) setSizeSetsText(sizeSetsToText(DEFAULT_SIZE_SETS));
   }
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Rules</h3><div className="mt-panel-sub">Editable business rules — single source of truth used by entry validation, status flags and dashboards. Applies on the next screen render.</div></div>
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Production Rules</h3><div className="mt-panel-sub">Shared business rules — one Supabase-backed value for every login/browser. Browser-local rule values are ignored for production calculations.</div></div>
     <div className="mt-section" style={{display:"grid", gap:10}}>
-      <div className="mt-toolbar"><span className="mt-toolbar-label">Cutting-only excess allowance %</span><input className="mt-input" style={{maxWidth:120}} value={tol} onChange={e=>applyTol(e.target.value)} /><span className="mt-small">Applies only to Cutting output. It increases the allowed total and size-entry caps and is remembered after refresh. Stitching and every downstream department remain capped by actual issued feed.</span></div>
-      <div className="mt-toolbar"><span className="mt-toolbar-label">Dispatch hold if R/A/M % above</span><input className="mt-input" style={{maxWidth:120}} value={dispatchHold} onChange={e=>applyDispatchHold(e.target.value)} /><span className="mt-small">Default 2%. Dispatch output/issue is blocked if any reconcile exists or dispatch-blocking R/A/M is above this % of order qty.</span></div>
+      <div className="mt-toolbar"><span className="mt-toolbar-label">Cutting-only excess allowance %</span><input className="mt-input" style={{maxWidth:120}} value={tol} onChange={e=>applyTol(e.target.value)} /><button className="mt-btn primary" onClick={()=>saveRules()}>Save Shared Rules</button><span className="mt-small">Applies only to Cutting output. The same percentage is used for every user/browser after shared save. Stitching and every downstream department remain capped by actual issued feed.</span></div>
+      <div className="mt-toolbar"><span className="mt-toolbar-label">Dispatch hold if R/A/M % above</span><input className="mt-input" style={{maxWidth:120}} value={dispatchHold} onChange={e=>applyDispatchHold(e.target.value)} /><span className="mt-small">Shared rule. Dispatch output/issue is blocked if any reconcile exists or dispatch-blocking R/A/M is above this % of order qty.</span></div>
       <div className="mt-toolbar"><span className="mt-toolbar-label">Allow rejection dispatch default</span><label className="mt-chip mt-info" style={{cursor:"pointer"}}><input type="checkbox" checked={dispatchReject} onChange={e=>applyDispatchReject(e.target.checked)} style={{marginRight:6}}/> Default for new/unspecified orders</label><span className="mt-small">Actual approval is order/style-wise in Add/Edit Style. Missing, Alter and Reconcile still block.</span></div>
       <div className="mt-toolbar" style={{alignItems:"flex-start"}}><span className="mt-toolbar-label">Stitching line names</span><textarea className="mt-input" style={{minWidth:260, minHeight:110}} value={linesText} onChange={e=>setLinesText(e.target.value)} placeholder={'STF-1\nSTF-2\nSTF-3'} /><button className="mt-btn primary" onClick={saveLines}>Save Lines</button><span className="mt-small">One line per row, or comma separated. Planning uses this list for line-wise stitching plans.</span></div>
-      <div className="mt-toolbar" style={{alignItems:"flex-start"}}><span className="mt-toolbar-label">Size groups</span><textarea className="mt-input" style={{minWidth:360, minHeight:140}} value={sizeSetsText} onChange={e=>setSizeSetsText(e.target.value)} placeholder={'alpha = XS, S, M, L, XL, XXL\nkids = 2-3Y, 3-4Y, 4-5Y\nwaist = 30, 32, 34, 36'} /><div style={{display:"grid",gap:8}}><button className="mt-btn primary" onClick={saveSizeSets}>Save Size Groups</button><button className="mt-btn ghost" onClick={resetSizeSets}>Reset Defaults</button></div><span className="mt-small">Format: group = size, size, size. Add buyer/category groups anytime, then select them in Styles or bulk upload.</span></div>
+      <div className="mt-toolbar" style={{alignItems:"flex-start"}}><span className="mt-toolbar-label">Size groups</span><textarea className="mt-input" style={{minWidth:360, minHeight:140}} value={sizeSetsText} onChange={e=>setSizeSetsText(e.target.value)} placeholder={'alpha = XS, S, M, L, XL, XXL\nkids = 2-3Y, 3-4Y, 4-5Y\nwaist = 30, 32, 34, 36'} /><div style={{display:"grid",gap:8}}><button className="mt-btn primary" onClick={saveSizeSets}>Save Shared Size Groups</button><button className="mt-btn ghost" onClick={resetSizeSets}>Reset Shared Defaults</button></div><span className="mt-small">Format: group = size, size, size. Saved groups are shared to all users. Existing styles also carry their own explicit size list, so a browser can never silently drop sizes such as 40 / 42 / 44.</span></div>
+      {saveState && <div className="mt-speed-note"><b>Shared settings:</b> {saveState}</div>}
     </div>
     <div className="mt-section"><h3 className="mt-panel-title">Bottleneck metric guide</h3><div className="mt-panel-sub">Daily Rate = recent 7-day average output from ledger for that department. Days Cover = queue/open WIP ÷ Daily Rate. Bottleneck Score = Queue WIP + 2×Reconcile Qty + R/A/M Qty, so impossible movements and quality loss rank higher than normal queue.</div></div>
-    <div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included through V6 logic</b><ul className="mt-small"><li>Add/edit production styles manually with horizontal order-size breakup; Order Qty remains master and size shortage/excess is warned in manual and bulk upload.</li><li>Browser fallback persistence keeps style updates after refresh even when Supabase URL/key is not configured correctly.</li><li>Cutting Pending now appears correctly until cut/output/R/A/M/short-close accounts for order qty; Cutting short-close action is available in Cutting detail.</li><li>Editable size groups in Settings; Styles and bulk upload can use custom buyer/category size sets.</li><li>Order-wise rejection dispatch flag: approved rejected pieces can be included in Dispatch feed by size only for that order/style.</li><li>WIP Other Open Split column is now toggleable and hidden by default to avoid duplicate/confusing status reading.</li><li>Simple 6-day Excel-style planning grid: enter total day target by style/line without SMV/OPS complexity</li><li>WIP now separates one Pending Stage from All Activity by Cut %, so the grid stays narrow while still showing the full cut/order breakup</li><li>Selected department detail shows Good Output together with Reject/Missing/Alter and accounted/tail quantities for a complete HOD picture</li><li>Size-wise day entry with previous/updated total cross-check</li><li>Print / embroidery route toggles</li><li>Standard route changed to Checking → Packing → Dispatch; Iron removed as a normal department</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Dispatch hold: no dispatch when reconcile exists or dispatch-blocking R/A/M exceeds configured order %. Optional setting allows approved rejection to be dispatched while Missing/Alter still block.</li><li>Editable stitching line names in Settings used by Planning</li><li>Issue-forward is the next department feed; no separate Receive entry in normal factory flow</li><li>Completed-not-issued-forward owner = Production Coordinator + Production Manager</li><li>Individual owner chase: Department HOD owns work-not-completed; Coordinator + Production Manager own completed-not-issued-forward</li><li>Style closure owner = Production Coordinator + Dept HOD; Production Manager handles movement/escalation/approval</li><li>WIP table page-specific filters, sorting, quick status buckets, and size-breakup toggle</li><li>Dashboard uses current-bin WIP logic: once a quantity moves to the next stage, it leaves the previous department bin.</li><li>Dashboard includes daily / 4-4-5 weekly / calendar-month production numbers, department × issue-type board, owner activity breakup, and production meeting focus.</li><li>Department-first dashboard pack: plan-vs-achieved/line efficiency, bottleneck/flow, aging/stuck WIP, quality/loss rate, party/outsource pending.</li><li>Dashboard drilldowns now use dashboard-specific rows, subtotal summaries, real size-stage data where available, and a visible size-source indicator.</li><li>Monthly comparison tab against Stitching Feed with drillable summary filters</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Open-first WIP sheet modes: Open Control, Order View, Department View, Issue View, and Full Matrix</li><li>Focused WIP cell drawer shows selected department only; DPR entry shows only open styles for selected department/field; entry cells show open, previous, available, new entry, remaining and updated total; reductions/corrections require approval workflow later</li><li>Entry date / backdated audit logic with next-day default, same-day confirmation, reason and approval status</li><li>Live idle recalculation from production ledger where activity exists</li><li>Set convergence: a set packs/ships only min(components); Sets board + WIP chip show packable sets and unmatched pieces</li><li>Backdated entries validate feed as-of the entry date from the ledger; locked (older) backdated entries require reason + explicit manager-approval confirmation and are stamped in the audit ledger</li><li>Single configurable cutting tolerance replaces the old 8%/5%/0% mismatch</li><li>Party/outsource pending is consistent with the WIP open bucket (feed − output − R/A/M); outsourced stages label the with-department bucket as Pending at party</li><li>R/A/M day-entry path and impossible sequence reconcile checks</li><li>Planning tab: stitching line-wise rolling plan, department day-wise plan, department-specific planning pool, manual future plan, style-change-only changeover remaining-hours formula, plan-vs-achieved style adherence, and Review control room. Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-info"><Lock size={12}/> Future RLS</span> <span className="mt-small">Keep this as a development app. We tighten RLS before real users and live factory data.</span></div></div>;
+    <div className="mt-section"><h3 className="mt-panel-title">ERP / Supabase Reference</h3><div className="mt-panel-sub">Separate app now, future module inside mega ERP. Production owns movement/WIP; Style Master/BOM/Procurement will own master/material truth.</div></div><div className="mt-section mt-two"><div><b>Included through V6 logic</b><ul className="mt-small"><li>Add/edit production styles manually with horizontal order-size breakup; Order Qty remains master and size shortage/excess is warned in manual and bulk upload.</li><li>Browser fallback persistence can still keep a temporary style cache, but production rules and existing style size lists are shared/canonical so two logins cannot calculate different WIP from browser settings.</li><li>Cutting Pending now appears correctly until cut/output/R/A/M/short-close accounts for order qty; Cutting short-close action is available in Cutting detail.</li><li>Editable size groups in Settings; Styles and bulk upload can use custom buyer/category size sets.</li><li>Order-wise rejection dispatch flag: approved rejected pieces can be included in Dispatch feed by size only for that order/style.</li><li>WIP Other Open Split column is now toggleable and hidden by default to avoid duplicate/confusing status reading.</li><li>Simple 6-day Excel-style planning grid: enter total day target by style/line without SMV/OPS complexity</li><li>WIP now separates one Pending Stage from All Activity by Cut %, so the grid stays narrow while still showing the full cut/order breakup</li><li>Selected department detail shows Good Output together with Reject/Missing/Alter and accounted/tail quantities for a complete HOD picture</li><li>Size-wise day entry with previous/updated total cross-check</li><li>Print / embroidery route toggles</li><li>Standard route changed to Checking → Packing → Dispatch; Iron removed as a normal department</li><li>Department cells max 3 numbers</li><li>Cutting over allowed; downstream total jump blocked</li><li>Dispatch hold: no dispatch when reconcile exists or dispatch-blocking R/A/M exceeds configured order %. Optional setting allows approved rejection to be dispatched while Missing/Alter still block.</li><li>Editable stitching line names in Settings used by Planning</li><li>Issue-forward is the next department feed; no separate Receive entry in normal factory flow</li><li>Completed-not-issued-forward owner = Production Coordinator + Production Manager</li><li>Individual owner chase: Department HOD owns work-not-completed; Coordinator + Production Manager own completed-not-issued-forward</li><li>Style closure owner = Production Coordinator + Dept HOD; Production Manager handles movement/escalation/approval</li><li>WIP table page-specific filters, sorting, quick status buckets, and size-breakup toggle</li><li>Dashboard uses current-bin WIP logic: once a quantity moves to the next stage, it leaves the previous department bin.</li><li>Dashboard includes daily / 4-4-5 weekly / calendar-month production numbers, department × issue-type board, owner activity breakup, and production meeting focus.</li><li>Department-first dashboard pack: plan-vs-achieved/line efficiency, bottleneck/flow, aging/stuck WIP, quality/loss rate, party/outsource pending.</li><li>Dashboard drilldowns now use dashboard-specific rows, subtotal summaries, real size-stage data where available, and a visible size-source indicator.</li><li>Monthly comparison tab against Stitching Feed with drillable summary filters</li><li>Printable HOD WIP / horizontal Excel reports</li><li>Style photo support with lazy-loading thumbnails</li><li>Open-first WIP sheet modes: Open Control, Order View, Department View, Issue View, and Full Matrix</li><li>Focused WIP cell drawer shows selected department only; DPR entry shows only open styles for selected department/field; entry cells show open, previous, available, new entry, remaining and updated total; reductions/corrections require approval workflow later</li><li>Entry date / backdated audit logic with next-day default, same-day confirmation, reason and approval status</li><li>Live idle recalculation from production ledger where activity exists</li><li>Set convergence: a set packs/ships only min(components); Sets board + WIP chip show packable sets and unmatched pieces</li><li>Backdated entries validate feed as-of the entry date from the ledger; locked (older) backdated entries require reason + explicit manager-approval confirmation and are stamped in the audit ledger</li><li>Single configurable cutting tolerance replaces the old 8%/5%/0% mismatch</li><li>Party/outsource pending is consistent with the WIP open bucket (feed − output − R/A/M); outsourced stages label the with-department bucket as Pending at party</li><li>R/A/M day-entry path and impossible sequence reconcile checks</li><li>Planning tab: stitching line-wise rolling plan, department day-wise plan, department-specific planning pool, manual future plan, style-change-only changeover remaining-hours formula, plan-vs-achieved style adherence, and Review control room. Future procurement/stores quantity checks must validate as-of entry date</li><li>Slow-internet rule: tables use thumbnails only; heavy image/detail loads on click</li></ul></div><div><b>Future shared keys</b><ul className="mt-small"><li>style_id / order_id later</li><li>production_file_id from Merch Tracker</li><li>bom_id from Costing/BOM</li><li>order_no, style_no, colour, component, size, set_id</li></ul></div></div><div className="mt-section"><span className="mt-chip mt-ok"><Lock size={12}/> Supabase Auth + RLS active</span> <span className="mt-small">V58 server policies are the permission boundary; browser role state is UI-only.</span></div></div>;
 }
 
 function withLiveIdle(rows, ledger=[], referenceDate=today()){
@@ -10514,11 +10663,10 @@ function PermissionGate({ permission, children, label }){
 }
 function LoginDialog({ open, profile, onSave, onClose, force=false }){
   const [mode,setMode] = useState("login");
-  const [remember,setRemember] = useState(true);
   const [form,setForm] = useState(()=>({ ...defaultUserProfile(), ...profile, email:normalizeUserEmail(profile?.email || ""), password:"", requested_role:profile?.requested_role || "Data Operator", requested_department:profile?.requested_department || profile?.department || "Production" }));
   const [msg,setMsg] = useState(null);
   const [busy,setBusy] = useState(false);
-  useEffect(()=>setForm({ ...defaultUserProfile(), ...profile, email:normalizeUserEmail(profile?.email || ""), password:"", requested_role:profile?.requested_role || "Data Operator", requested_department:profile?.requested_department || profile?.department || "Production" }), [profile?.name, profile?.email, profile?.role, profile?.department]);
+  useEffect(()=>setForm({ ...defaultUserProfile(), ...profile, email:normalizeUserEmail(profile?.email || ""), password:"", requested_role:profile?.requested_role || "Data Operator", requested_department:profile?.requested_department || profile?.department || "Production" }), [profile?.name, profile?.email, profile?.role, profile?.department, profile?.access_status]);
   if (!open) return null;
   const departments = ["Production","Cutting","Printing","Embroidery","Stitching","Checking","Packing","Dispatch","Management","Merchandising","Admin"];
   const requestedRole = form.requested_role || "Data Operator";
@@ -10526,41 +10674,58 @@ function LoginDialog({ open, profile, onSave, onClose, force=false }){
     const email = normalizeUserEmail(form.email);
     if (!emailLooksValid(email)) { setMsg({tone:"warn", text:"Enter a valid work email."}); return; }
     if (!String(form.password || "").trim()) { setMsg({tone:"warn", text:"Password is required."}); return; }
-    if (!hasValidSupabaseEnv()) { setMsg({tone:"warn", text:"Supabase is required for multi-user login. Check Vercel env and redeploy."}); return; }
-    setBusy(true); setMsg({tone:"info", text:"Checking user access..."});
+    if (!hasValidSupabaseEnv() || !supabase) { setMsg({tone:"late", text:"Supabase Auth is required. Check Vercel Supabase env and redeploy."}); return; }
+    setBusy(true); setMsg({tone:"info", text:"Signing in with Supabase Auth…"});
     try {
-      const found = await fetchProductionUserByEmail(email);
-      if (found.error) { setMsg({tone:"warn", text:`Could not read user registry: ${found.error.message}`}); return; }
-      const user = found.data;
-      if (!user) { setMsg({tone:"warn", text:"No approved user found for this email. Create account / Request Access first."}); setMode("request"); return; }
-      const status = String(user.access_status || (user.is_active === false ? "pending" : "approved")).toLowerCase();
-      if (status !== "approved") { setMsg({tone:"warn", text:`Access is ${status}. Ask Admin/Production Manager to approve in Users/Audit.`}); return; }
-      const hash = await hashLoginPassword(email, form.password || "");
-      if (user.password_hash && user.password_hash !== hash) { setMsg({tone:"warn", text:"Incorrect password for this email."}); return; }
-      if (!user.password_hash) await updateProductionUserAccess(email, { password_hash:hash });
-      const clean = saveCurrentUserProfile({
-        name:user.display_name || user.user_name || displayNameFromEmail(email), email,
-        role:user.role || "Data Operator", department:user.department || user.requested_department || "Production",
-        requested_role:user.requested_role || user.role || "Data Operator", requested_department:user.requested_department || user.department || "Production",
-        access_status:"approved", password_hash:hash, permissions:user.permissions || []
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password:String(form.password || "") });
+      if (error) {
+        setMsg({tone:"warn", text:`Sign in failed: ${error.message}. If this is your first login after the V58 security upgrade, use Create / Activate Account once with the SAME work email.`});
+        return;
+      }
+      const claim = await claimProductionProfile({
+        displayName:data?.user?.user_metadata?.display_name || form.name || displayNameFromEmail(email),
+        requestedRole:data?.user?.user_metadata?.requested_role || requestedRole,
+        requestedDepartment:data?.user?.user_metadata?.requested_department || form.requested_department || form.department || "Production",
       });
-      try { localStorage.setItem("production_login_remember", remember ? "1" : "0"); } catch {}
-      await recordUserSession("login", clean, { force, remember, note:"Production DPR Merch Tracker style login" });
+      if (claim.error) { setMsg({tone:"late", text:`Auth succeeded but production profile could not be linked: ${claim.error.message}`}); return; }
+      const clean = claim.data;
+      saveCurrentUserProfile(clean);
+      await recordUserSession("login", clean, { force, auth:"supabase", note:"V58 Supabase Auth login" });
+      const status = String(clean.access_status || "pending").toLowerCase();
+      if (status !== "approved" || clean.is_active === false) {
+        setMsg({tone:"warn", text:`Supabase login is valid, but production access is ${status}. Admin / Production Manager must approve your role in Users/Audit.`});
+        return;
+      }
       onSave?.(clean);
     } finally { setBusy(false); }
   }
   async function requestAccess(){
     const email = normalizeUserEmail(form.email);
     if (!emailLooksValid(email)) { setMsg({tone:"warn", text:"Enter a valid work email."}); return; }
-    if (!String(form.password || "").trim()) { setMsg({tone:"warn", text:"Create a password for this Production login request."}); return; }
+    if (String(form.password || "").length < 6) { setMsg({tone:"warn", text:"Use a Supabase Auth password of at least 6 characters."}); return; }
     if (!String(form.name || "").trim()) { setMsg({tone:"warn", text:"Enter display name so Admin can identify the user."}); return; }
-    setBusy(true); setMsg({tone:"info", text:"Saving access request..."});
+    setBusy(true); setMsg({tone:"info", text:"Creating / activating Supabase Auth account…"});
     try {
-      const existing = await fetchProductionUserByEmail(email);
-      if (existing.data && String(existing.data.access_status || "approved").toLowerCase() === "approved") { setMsg({tone:"warn", text:"This email already has approved access. Sign in instead."}); setMode("login"); return; }
       const res = await requestProductionAccess({ ...form, email, requested_role:requestedRole, requested_department:form.requested_department || form.department || "Production" });
-      if (res.error) { setMsg({tone:"warn", text:`Access request failed: ${res.error.message}`}); return; }
-      setMsg({tone:"ok", text:"Account request saved. Admin / Production Manager must approve your role in Users/Audit before login."});
+      if (res.error) {
+        const already = /already|registered|exists/i.test(String(res.error.message || ""));
+        setMsg({tone:"warn", text:already ? `This Auth email may already exist. Switch to Sign In. ${res.error.message}` : `Account activation failed: ${res.error.message}`});
+        return;
+      }
+      if (res.confirmationRequired) {
+        setMsg({tone:"ok", text:"Supabase Auth account created. Email confirmation is enabled: confirm the email, then return here and Sign In. Your existing production approval will be linked automatically by the same email."});
+        return;
+      }
+      const clean = res.data;
+      if (!clean) { setMsg({tone:"warn", text:"Auth account was created but profile linking is waiting. Sign In once to finish linking."}); return; }
+      saveCurrentUserProfile(clean);
+      const status = String(clean.access_status || "pending").toLowerCase();
+      if (status === "approved" && clean.is_active !== false) {
+        await recordUserSession("login", clean, { auth:"supabase", note:"V58 account activation linked existing approval" });
+        onSave?.(clean);
+      } else {
+        setMsg({tone:"ok", text:"Supabase Auth account is active and the production access request is saved. Admin / Production Manager must approve the requested role."});
+      }
     } finally { setBusy(false); }
   }
   const isLogin = mode === "login";
@@ -10571,19 +10736,19 @@ function LoginDialog({ open, profile, onSave, onClose, force=false }){
         <div>
           <div className="mt-login-brand">KOTHARI SPORTS & APPARELS</div>
           <div className="mt-login-product">Production DPR</div>
-          <div className="mt-login-copy">Live WIP command center for cutting, printing, embroidery, stitching, checking, packing, dispatch and review history.</div>
+          <div className="mt-login-copy">Live WIP command center with Supabase-authenticated production truth.</div>
           <div className="mt-login-feature-grid">
-            <div className="mt-login-feature"><b>WIP</b><span>Current status</span></div>
-            <div className="mt-login-feature"><b>DPR</b><span>Daily entry</span></div>
-            <div className="mt-login-feature"><b>REVIEW</b><span>Audit + reconcile</span></div>
-            <div className="mt-login-feature"><b>REPORTS</b><span>Management clarity</span></div>
+            <div className="mt-login-feature"><b>AUTH</b><span>Supabase identity</span></div>
+            <div className="mt-login-feature"><b>WIP</b><span>Server truth</span></div>
+            <div className="mt-login-feature"><b>DPR</b><span>Atomic posting</span></div>
+            <div className="mt-login-feature"><b>RLS</b><span>Server permissions</span></div>
           </div>
         </div>
-        <div className="mt-login-note">Use the same work email direction as Merch Tracker. Production entries are quantity truth: every save, correction, backdate and approval is stamped to the logged-in user.</div>
+        <div className="mt-login-note"><b>V58 first login:</b> if your account existed in the old Production login, use <b>Create / Activate Account</b> once with the exact same work email. Your existing approved role is preserved and linked to Supabase Auth.</div>
       </div>
       <div className="mt-login-right">
-        <div className="mt-login-title">{isLogin ? "Welcome back" : "Create account"}</div>
-        <div className="mt-login-subcopy">{isLogin ? "Sign in to continue to the live production tracker." : "Request access first. Admin / Production Manager assigns the final role."}</div>
+        <div className="mt-login-title">{isLogin ? "Welcome back" : "Create / Activate Account"}</div>
+        <div className="mt-login-subcopy">{isLogin ? "Supabase Auth sign-in is required before any production data is loaded." : "Creates Supabase Auth and links an existing production approval by matching work email; otherwise creates a pending request."}</div>
         <label className="mt-login-field-label">Email</label>
         <input className="mt-login-input" value={form.email || ""} onChange={e=>setForm(f=>({ ...f, email:normalizeUserEmail(e.target.value), name:f.name || displayNameFromEmail(e.target.value) }))} placeholder="name@company.com" autoFocus />
         <label className="mt-login-field-label">Password</label>
@@ -10593,17 +10758,15 @@ function LoginDialog({ open, profile, onSave, onClose, force=false }){
           <input className="mt-login-input" value={form.name || ""} onChange={e=>setForm(f=>({ ...f, name:e.target.value }))} placeholder="User name shown in audit history" />
           <div className="mt-login-access-grid">
             <div><label className="mt-login-field-label">Requested role</label><select className="mt-select" style={{width:"100%"}} value={requestedRole} onChange={e=>setForm(f=>({ ...f, requested_role:e.target.value }))}>{PRODUCTION_ROLES.filter(r=>r!=="Super Admin").map(r=><option key={r} value={r}>{r}</option>)}</select></div>
-            <div><label className="mt-login-field-label">Department</label><select className="mt-select" style={{width:"100%"}} value={form.requested_department || form.department || "Production"} onChange={e=>setForm(f=>({ ...f, requested_department:e.target.value, department:e.target.value }))}>{departments.map(d=><option key={d} value={d}>{d}</option>)}</select></div>
+            <div><label className="mt-login-field-label">Department</label><select className="mt-select" style={{width:"100%"}} value={form.requested_department || form.department || "Production"} onChange={e=>setForm(f=>({ ...f, requested_department:e.target.value, department:e.target.value }))}>{departments.map(d=><option key={d}>{d}</option>)}</select></div>
           </div>
         </>}
-        {isLogin && <label className="mt-small" style={{display:"flex", alignItems:"center", gap:8, marginTop:12}}><input type="checkbox" checked={remember} onChange={e=>setRemember(e.target.checked)} /> Keep me signed in</label>}
         {msg && <div className={`mt-login-msg ${statusClass(msg.tone)}`}>{msg.text}</div>}
-        <button className="mt-login-submit" disabled={busy} onClick={submit}>{busy ? "Please wait..." : isLogin ? "Sign in" : "Submit request"}</button>
+        <button className="mt-login-submit" disabled={busy} onClick={submit}>{busy ? "Please wait…" : isLogin ? "Sign in" : "Create / Activate"}</button>
         <div className="mt-login-minor">
-          {isLogin ? <><span>New here?</span><button className="mt-login-link" onClick={()=>{ setMode("request"); setMsg(null); }}>Create account</button></> : <><span>Already approved?</span><button className="mt-login-link" onClick={()=>{ setMode("login"); setMsg(null); }}>Sign in</button></>}
+          {isLogin ? <><span>First V58 login / new user?</span><button className="mt-login-link" onClick={()=>{ setMode("request"); setMsg(null); }}>Create / Activate Account</button></> : <><span>Already activated?</span><button className="mt-login-link" onClick={()=>{ setMode("login"); setMsg(null); }}>Sign in</button></>}
           {!force && <button className="mt-login-link" onClick={onClose}>Cancel</button>}
         </div>
-        {!isLogin && <div className="mt-login-access-panel"><b>Access logic</b><div className="mt-small" style={{marginTop:5}}>Pending users cannot open production screens. Approval is done from Users/Audit by Super Admin, Admin or Production Manager.</div></div>}
       </div>
     </div>
   </div>;
@@ -10667,20 +10830,50 @@ export default function App(){
   const [releaseFocus,setReleaseFocus] = useState(null);
   const [notice,setNotice] = useState(null);
   const [sharedSync,setSharedSync] = useState(()=>hasValidSupabaseEnv() ? { tone:"warn", text:"Shared sync starting…" } : { tone:"late", text:"Supabase not configured" });
-  const [planSaveState,setPlanSaveState] = useState(()=>hasValidSupabaseEnv() ? { tone:"warn", text:"Plan sync starting…" } : { tone:"warn", text:"Plan browser-only" });
+  const [sharedHydrated,setSharedHydrated] = useState(()=>!sharedAuthorityEnabled());
+  const [sharedHydrationError,setSharedHydrationError] = useState("");
+  const [planSaveState,setPlanSaveState] = useState(()=>hasValidSupabaseEnv() ? { tone:"warn", text:"Plan sync starting…" } : { tone:"late", text:"Plan blocked — Supabase/Auth required" });
   const [clearFiltersTick,setClearFiltersTick] = useState(0);
   const [showUpdatePopup,setShowUpdatePopup] = useState(()=>{
     try { return localStorage.getItem("production_app_seen_version") !== APP_VERSION; } catch { return true; }
   });
-  const [userProfile,setUserProfile] = useState(()=>currentUserProfile());
-  const [showLogin,setShowLogin] = useState(()=>{ const p=currentUserProfile(); return !p.name || !emailLooksValid(p.email) || (p.access_status && p.access_status !== "approved"); });
+  const [userProfile,setUserProfile] = useState(()=>defaultUserProfile());
+  const [showLogin,setShowLogin] = useState(true);
+  const [authReady,setAuthReady] = useState(false);
   const [presenceRows,setPresenceRows] = useState([]);
   const presenceChannelRef = useRef(null);
   useEffect(()=>{ setProductionAppBrowserIdentity(); }, []);
-  useEffect(()=>{ safeJsonSave(LOCAL_ROWS_KEY, rows); }, [rows]);
-  useEffect(()=>{ if (userProfile?.name && emailLooksValid(userProfile.email) && (!userProfile.access_status || userProfile.access_status === "approved")) { saveCurrentUserProfile(userProfile); upsertProductionAppUser(userProfile); recordUserSession("app_open", userProfile, { tab }); } }, [userProfile?.name, userProfile?.role, userProfile?.department, userProfile?.access_status]);
-  useEffect(()=>{ safeJsonSave(LOCAL_LEDGER_KEY, ledger); }, [ledger]);
-  useEffect(()=>{ safeJsonSave(LOCAL_PLAN_KEY, planRows); }, [planRows]);
+  useEffect(()=>{
+    if (!isSupabaseConfigured || !supabase || !hasValidSupabaseEnv()) { setAuthReady(true); setShowLogin(true); return; }
+    let cancelled=false;
+    let hydrateTimer=null;
+    async function hydrateAuth(){
+      const res = await loadAuthenticatedProductionProfile();
+      if (cancelled) return;
+      if (res.error) {
+        clearCurrentUserProfile(); setUserProfile(defaultUserProfile()); setShowLogin(true); setAuthReady(true);
+        setNotice({ tone:"late", text:`Supabase Auth/profile load failed: ${res.error.message}` });
+        return;
+      }
+      if (!res.session || !res.profile) {
+        clearCurrentUserProfile(); setUserProfile(defaultUserProfile()); setShowLogin(true); setAuthReady(true); setSharedHydrated(false);
+        return;
+      }
+      const p=res.profile; saveCurrentUserProfile(p); setUserProfile(p); setAuthReady(true);
+      const approved=String(p.access_status||"").toLowerCase()==="approved" && p.is_active!==false;
+      setShowLogin(!approved);
+      if (approved) { touchProductionSession(`Active page: ${tab}`); recordUserSession("app_open",p,{tab,auth:"supabase"}); }
+    }
+    hydrateAuth();
+    const { data:{ subscription } } = supabase.auth.onAuthStateChange(()=>{
+      clearTimeout(hydrateTimer); hydrateTimer=setTimeout(()=>hydrateAuth(),0);
+    });
+    return ()=>{ cancelled=true; clearTimeout(hydrateTimer); subscription?.unsubscribe?.(); };
+  }, []);
+  useEffect(()=>{ if (!sharedAuthorityEnabled()) safeJsonSave(LOCAL_ROWS_KEY, rows); }, [rows]);
+  useEffect(()=>{ if (authReady && userProfile?.name && emailLooksValid(userProfile.email) && String(userProfile.access_status||"").toLowerCase()==="approved" && userProfile.is_active!==false) { saveCurrentUserProfile(userProfile); } }, [authReady,userProfile?.name,userProfile?.role,userProfile?.department,userProfile?.access_status,userProfile?.is_active]);
+  useEffect(()=>{ if (!sharedAuthorityEnabled()) safeJsonSave(LOCAL_LEDGER_KEY, ledger); }, [ledger]);
+  useEffect(()=>{ if (!sharedAuthorityEnabled()) safeJsonSave(LOCAL_PLAN_KEY, planRows); }, [planRows]);
   useEffect(()=>safeJsonSave(uiStorageKey("global_query"), query), [query]);
   useEffect(()=>safeJsonSave(uiStorageKey("global_buyer"), buyer), [buyer]);
   useEffect(()=>safeJsonSave(uiStorageKey("global_order"), order), [order]);
@@ -10694,7 +10887,7 @@ export default function App(){
   }, [tab]);
   useEffect(()=>{
     if (!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved") || !hasValidSupabaseEnv()) return;
-    updateProductionUserAccess(userProfile.email, { login_note:`Active page: ${tab}`, browser_id:productionBrowserId(), last_seen_at:new Date().toISOString() });
+    touchProductionSession(`Active page: ${tab}`);
   }, [tab, userProfile?.email, userProfile?.access_status]);
   useEffect(()=>{
     if (!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved") || !isSupabaseConfigured || !supabase || !hasValidSupabaseEnv()) return;
@@ -10724,7 +10917,7 @@ export default function App(){
     const channel = presenceChannelRef.current;
     if (!channel || !userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")) return;
     channel.track(buildProductionPresencePayload(userProfile, tab, drawer, dashboardDrill));
-    updateProductionUserAccess(userProfile.email, { login_note:`Active page: ${productionPresenceContext(tab, drawer, dashboardDrill)}`, browser_id:productionBrowserId(), last_seen_at:new Date().toISOString() });
+    touchProductionSession(`Active page: ${productionPresenceContext(tab, drawer, dashboardDrill)}`);
   }, [tab, drawer?.row?.id, drawer?.stage, dashboardDrill?.title, userProfile?.email, userProfile?.access_status]);
   const sharedLedgerRows = useMemo(()=>applySharedLedgerTotalsToRows(rows, ledger), [rows, ledger]);
   const conservationCount = useMemo(()=>conservationViolationRows(sharedLedgerRows).length, [sharedLedgerRows]);
@@ -10752,18 +10945,18 @@ export default function App(){
   async function savePlanRowShared(planRow, ctx={}){
     const row = normalizePlanRowForState(planRow);
     const validation = planValidationSnapshot(row, calcRows, planRows, ledger);
-    if (!hasValidSupabaseEnv()) { setPlanSaveState({ tone:"warn", text:"Plan saved locally only — Supabase missing" }); return { skipped:true }; }
+    if (!hasValidSupabaseEnv()) { setPlanSaveState({ tone:"late", text:"Plan NOT saved — Supabase missing" }); return { error:{ message:"Supabase is required for shared planning." } }; }
     setPlanSaveState({ tone:"warn", text:"Saving plan…" });
     const result = await robustUpsertPlanRowsToSupabase([{ ...row, validation_status:validation.level, validation_message:validation.message }], calcRows, planRows, ledger);
     if (result?.error) { setPlanSaveState({ tone:"late", text:`Plan not shared: ${result.error.message}` }); return result; }
-    if (result?.warning || result?.skipped) { setPlanSaveState({ tone:"warn", text:"Plan saved locally only" }); return result; }
+    if (result?.warning || result?.skipped) { setPlanSaveState({ tone:"late", text:"Plan NOT confirmed by Supabase" }); return { ...result, error:result?.error || { message:result?.warning || "Supabase did not confirm plan save" } }; }
     setPlanSaveState({ tone:validation.tone === "late" ? "warn" : "ok", text:`Plan shared · ${validation.level}` });
     recordProductionAudit("plan_upsert", { table_name:"production_plan_rows", order_no:row.order_no, style_no:row.style_no || row.style_input, colour:row.colour, component:row.component, stage:row.dept, entry_type:"plan", entry_date:row.plan_date, qty:row.planned_qty, source:"Planning", metadata:{ line:row.line, validation, ctx } });
     return result;
   }
   async function deletePlanCellShared(planRow, ctx={}){
     const row = normalizePlanRowForState(planRow);
-    if (!hasValidSupabaseEnv()) { setPlanSaveState({ tone:"warn", text:"Plan cleared locally only — Supabase missing" }); return { skipped:true }; }
+    if (!hasValidSupabaseEnv()) { setPlanSaveState({ tone:"late", text:"Plan NOT cleared — Supabase missing" }); return { error:{ message:"Supabase is required for shared planning." } }; }
     setPlanSaveState({ tone:"warn", text:"Clearing plan…" });
     const result = await fetchDeletePlanRowFromSupabase(row);
     if (result?.error) { setPlanSaveState({ tone:"late", text:`Plan clear not shared: ${result.error.message}` }); return result; }
@@ -10777,52 +10970,60 @@ export default function App(){
     setShowUpdatePopup(false);
   }
   async function pullSharedData(silent=true, reason="manual"){
+    const approved = authReady && userProfile?.name && emailLooksValid(userProfile?.email) && String(userProfile?.access_status||"").toLowerCase()==="approved" && userProfile?.is_active!==false;
+    if (!approved) {
+      const msg="Supabase Auth + approved production profile required before production data can load.";
+      setSharedHydrated(false); setSharedHydrationError(msg); setSharedSync({tone:"late",text:"Auth required"});
+      return { error:{ message:msg } };
+    }
     if(!isSupabaseConfigured || !supabase || !hasValidSupabaseEnv()) {
       const msg = supabaseConfigWarning();
+      setSharedHydrated(false); setSharedHydrationError(msg);
       if (!silent) setNotice({tone:"warn", text:msg});
       setSharedSync({tone:"late", text:"Shared sync OFF — Supabase config issue"});
       return { error:{ message:msg } };
     }
     try {
-      const {data,error} = await supabase.from("production_orders").select("*").limit(1000).order("created_at",{ascending:false});
-      if(error){
-        if (!silent) setNotice({tone:"late", text:error.message});
-        setSharedSync({tone:"late", text:`Shared pull failed: ${error.message}`});
-        return { error };
+      // Fetch a complete coherent server snapshot first. Do not mutate React state
+      // until production_orders + production_entries have both succeeded.
+      const [settingsResult, ordersRes, entriesRes, plansRes] = await Promise.all([
+        pullSharedProductionSettingsSnapshot(),
+        fetchAllSupabaseRows("production_orders", {orderBy:"created_at", ascending:false, pageSize:1000}),
+        fetchAllSupabaseRows("production_entries", {orderBy:"entry_date", ascending:false, pageSize:1000}),
+        fetchAllSupabaseRows("production_plan_rows", {orderBy:"plan_date", ascending:false, pageSize:1000}),
+      ]);
+      if (settingsResult?.error || ordersRes?.error || entriesRes?.error) {
+        const msg = [settingsResult?.error?.message && `settings: ${settingsResult.error.message}`, ordersRes?.error?.message && `orders: ${ordersRes.error.message}`, entriesRes?.error?.message && `entries: ${entriesRes.error.message}`].filter(Boolean).join(" | ");
+        setSharedHydrationError(msg);
+        if (!sharedHydrated) setSharedHydrated(false);
+        if (!silent) setNotice({tone:"late", text:`Shared snapshot rejected: ${msg}. Previous known-good state kept.`});
+        setSharedSync({tone:"late", text:"Shared snapshot failed — previous state kept"});
+        return { error:{ message:msg } };
       }
-      const {data:entryData,error:entryError} = await supabase.from("production_entries").select("*").limit(10000).order("entry_date",{ascending:false});
-      if(entryError){
-        setRows(filterDeletedStyles((data || []).map(supabaseToOrder)));
-        if (!silent) setNotice({tone:"warn", text:`Pulled orders, but entries failed: ${entryError.message}`});
-        setSharedSync({tone:"warn", text:`Orders shared · entries pull failed`});
-        return { error:entryError };
-      }
-      let planData = null, planError = null;
-      try {
-        const planRes = await supabase.from("production_plan_rows").select("*").limit(5000).order("plan_date",{ascending:false});
-        planData = planRes.data; planError = planRes.error;
-      } catch(e) { planError = { message:e?.message || String(e) }; }
-      setRows(filterDeletedStyles((data || []).map(supabaseToOrder)));
-      setLedger(entryData || []);
-      if (!planError) {
-        setPlanRows((planData || []).map(supabaseToPlanRow));
-        setPlanSaveState({ tone:"ok", text:`Plan shared · ${planData?.length || 0} rows` });
-      } else {
-        setPlanSaveState({ tone:"warn", text:"Plan local only — run V6 SQL" });
-      }
+      const data=ordersRes.data || [], entryData=entriesRes.data || [];
+      const planError=plansRes?.error || null;
+      const planData=planError ? [] : (plansRes.data || []);
+      if (settingsResult?.changed) setSettingsTick(t=>t+1);
+      setRows(filterDeletedStyles(data.map(supabaseToOrder)));
+      setLedger(entryData.map(supabaseToLedgerEntry));
+      setPlanRows(planData.map(supabaseToPlanRow));
+      setSharedHydrated(true); setSharedHydrationError("");
+      setPlanSaveState(planError ? { tone:"late", text:`Plan unavailable: ${planError.message}` } : { tone:"ok", text:`Plan shared · ${planData.length} rows` });
       const stamp = new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" });
-      setSharedSync({tone:planError?"warn":"ok", text:`Shared live · ${data?.length || 0} orders · ${entryData?.length || 0} entries · ${planError?"plan SQL pending":`${planData?.length || 0} plans`} · ${stamp}`});
-      if (!silent) setNotice({ tone:planError?"warn":"ok", text:`Pulled shared Supabase data: ${data?.length || 0} orders, ${entryData?.length || 0} entries${planError ? "; planning table not ready — run V6 SQL" : `, ${planData?.length || 0} plan rows`}. Reason: ${reason}.` });
-      return { error:null, orders:data || [], entries:entryData || [], plans:planData || [] };
+      setSharedSync({tone:planError?"warn":"ok", text:`Shared live · ${data.length} orders · ${entryData.length} entries · ${planError?"plan unavailable":`${planData.length} plans`} · ${stamp}`});
+      if (!silent) setNotice({ tone:planError?"warn":"ok", text:`Pulled complete shared snapshot: ${data.length} orders, ${entryData.length} entries${planError ? `; planning unavailable (${planError.message})` : `, ${planData.length} plan rows`}. Reason: ${reason}.` });
+      return { error:null, orders:data, entries:entryData, plans:planData, planError };
     } catch(e) {
       const msg = e?.message || "Shared pull failed";
+      setSharedHydrationError(msg);
       if (!silent) setNotice({tone:"late", text:msg});
-      setSharedSync({tone:"late", text:msg});
+      setSharedSync({tone:"late", text:"Shared snapshot failed — previous state kept"});
       return { error:{ message:msg } };
     }
   }
   useEffect(()=>{
-    if(!isSupabaseConfigured || !supabase || !hasValidSupabaseEnv()) return;
+    const approved = authReady && userProfile?.name && emailLooksValid(userProfile?.email) && String(userProfile?.access_status||"").toLowerCase()==="approved" && userProfile?.is_active!==false;
+    if(!approved || !isSupabaseConfigured || !supabase || !hasValidSupabaseEnv()) return;
     let cancelled = false;
     let debounceTimer = null;
     function requestPull(reason="realtime"){
@@ -10856,7 +11057,7 @@ export default function App(){
       document.removeEventListener("visibilitychange", onVisible);
       if (channel && supabase?.removeChannel) supabase.removeChannel(channel);
     };
-  }, []);
+  }, [authReady,userProfile?.email,userProfile?.role,userProfile?.access_status,userProfile?.is_active]);
   async function recalculateStageQtyFromLedger(){
     const perm = requireCurrentPermission("production.manage_settings", "recalculate production totals from ledger");
     if (perm) { setNotice({ tone:"late", text:perm.error.message }); return; }
@@ -10881,7 +11082,7 @@ Continue?`);
     setNotice({ tone:"warn", text:`Recalculating ${stats.rowsToSave.length} stage_qty snapshot row(s) from ledger…` });
     const result = await robustUpsertOrdersToSupabase(stats.rowsToSave);
     if (result?.error) { setNotice({ tone:"late", text:`Ledger recalculation failed: ${result.error.message}` }); return; }
-    if (result?.warning || result?.skipped) { setNotice({ tone:"warn", text:result.warning || "Ledger recalculation stayed browser-only because Supabase is unavailable." }); return; }
+    if (result?.warning || result?.skipped) { setNotice({ tone:"late", text:result.warning || "Ledger recalculation was NOT saved because Supabase is unavailable." }); return; }
     setRows(stats.derivedRows);
     setSharedSync({ tone:"ok", text:`Ledger recalculated · ${stats.rowsToSave.length} snapshots saved` });
     setNotice({ tone:"ok", text:`Recalculated stage_qty from ledger for ${stats.rowsToSave.length} style/component row(s). ${stats.changedRows.length} snapshot(s) changed; ${stats.untouchedNoLedgerCount} row(s) without ledger were left untouched. ${supabaseSaveLabel(result)}` });
@@ -10893,7 +11094,7 @@ Continue?`);
   }
   function handleSharedSave(result, label="Shared save"){
     if (result?.error) { setSharedSync({ tone:"late", text:`${label} not shared: ${result.error.message}` }); return; }
-    if (result?.warning || result?.skipped) { setSharedSync({ tone:"warn", text:`${label}: browser-only until Supabase is fixed` }); return; }
+    if (result?.warning || result?.skipped) { setSharedSync({ tone:"late", text:`${label}: NOT saved — Supabase/Auth confirmation required` }); return; }
     setSharedSync({ tone:"ok", text:`${label} saved to Supabase · refreshing shared data…` });
     setTimeout(()=>pullSharedData(true, `${label} after-save refresh`), 700);
   }
@@ -10908,6 +11109,11 @@ Continue?`);
     const date = String(payload.date || today()).slice(0,10);
     const reason = String(payload.reason || "Production file released to Cutting").trim();
     if (!row || !qty || qty <= 0) { setNotice({ tone:"late", text:"Release qty must be more than 0." }); return; }
+    const exactOrderSizeTotal = explicitOrderSizeQtyTotal(row);
+    if (!exactOrderSizeTotal || Math.abs(exactOrderSizeTotal - n(row.order_qty)) > 0.001) {
+      setNotice({ tone:"late", text:`Release blocked: exact order size breakup must equal Order Qty before Cutting release. Order ${fmt(row.order_qty)} · explicit sizes ${fmt(exactOrderSizeTotal)}. Do not auto-invent a size ratio for live production.` });
+      return;
+    }
     if (qty > n(row.order_qty) * (1 + cuttingToleranceFrac()) && !payload.managerOverride) {
       setNotice({ tone:"late", text:`Release qty ${fmt(qty)} is above order qty ${fmt(row.order_qty)} + cutting tolerance ${PROD_SETTINGS.cuttingTolerancePct}%. Use manager override in the release modal if this old style is approved.` });
       return;
@@ -10920,15 +11126,19 @@ Continue?`);
       cutting_short_close_qty: cuttingShortCloseQty(baseRow) + shortCloseAddQty,
       cutting_short_close_reason: String(payload.shortCloseReason || "Management approved: remaining balance will not be released/cut").trim(),
     } : {};
-    const updatedBase = { ...baseRow, file_released_qty:qty, file_released_date:date, ...shortCloseExtra };
-    const updatedForSave = { ...calcRow, file_released_qty:qty, file_released_date:date, ...shortCloseExtra, stages: shortCloseAddQty > 0 ? { ...(calcRow.stages||{}), cutting:{ ...blankStage(), ...(calcRow.stages?.cutting||{}), short_close:shortCloseExtra.cutting_short_close_qty } } : calcRow.stages };
-    setRows(prev=>prev.map(r=>styleCompositeKey(r)===key ? { ...r, file_released_qty:qty, file_released_date:date, ...shortCloseExtra, stages: updatedForSave.stages } : r));
-    setReleaseFocus(null);
+    const releaseSizeQty = exactProportionalAllocation(qty, orderSizeQtyMap(baseRow), sizesFor(baseRow));
+    const releaseTolerancePct = Math.max(0,n(PROD_SETTINGS.cuttingTolerancePct));
+    const updatedBase = { ...baseRow, file_released_qty:qty, file_released_date:date, file_release_size_qty:releaseSizeQty, cutting_tolerance_pct_at_release:releaseTolerancePct, ...shortCloseExtra };
+    const updatedForSave = { ...calcRow, file_released_qty:qty, file_released_date:date, file_release_size_qty:releaseSizeQty, cutting_tolerance_pct_at_release:releaseTolerancePct, ...shortCloseExtra, stages: shortCloseAddQty > 0 ? { ...(calcRow.stages||{}), cutting:{ ...blankStage(), ...(calcRow.stages?.cutting||{}), short_close:shortCloseExtra.cutting_short_close_qty } } : calcRow.stages };
     setNotice({ tone:"warn", text:`Saving production file release for ${row.style_no} · ${fmt(qty)} pcs…` });
     const result = await robustUpsertOrdersToSupabase([updatedForSave]);
-    if (result?.error) { setNotice({ tone:"late", text:`Release saved locally, Supabase failed: ${result.error.message}` }); return; }
-    if (result?.warning || result?.skipped) { setNotice({ tone:"warn", text:`Release saved locally only: ${result.warning || "Supabase skipped"}` }); return; }
-    recordProductionAudit("production_file_release", { table_name:"production_orders", order_no:row.order_no, style_no:row.style_no, colour:row.colour, component:row.component, entry_type:"production_file_release", entry_date:date, qty, source:payload.source || releaseFocus?.source || "Release modal", metadata:{ reason, manager_override:!!payload.managerOverride, previous_qty:fileReleaseQty(baseRow), previous_date:fileReleaseDate(baseRow), released_size_qty:fileReleaseSizeQtyMap(updatedBase), short_close_qty:shortCloseAddQty, short_close_reason:shortCloseExtra.cutting_short_close_reason || "" } });
+    if (result?.error || result?.warning || result?.skipped) {
+      setNotice({ tone:"late", text:`Release NOT saved: ${result?.error?.message || result?.warning || "Supabase did not confirm"}. Local production truth was not changed.` });
+      return;
+    }
+    setRows(prev=>prev.map(r=>styleCompositeKey(r)===key ? { ...r, file_released_qty:qty, file_released_date:date, file_release_size_qty:releaseSizeQty, cutting_tolerance_pct_at_release:releaseTolerancePct, ...shortCloseExtra, stages: updatedForSave.stages } : r));
+    setReleaseFocus(null);
+    recordProductionAudit("production_file_release", { table_name:"production_orders", order_no:row.order_no, style_no:row.style_no, colour:row.colour, component:row.component, entry_type:"production_file_release", entry_date:date, qty, source:payload.source || releaseFocus?.source || "Release modal", metadata:{ reason, manager_override:!!payload.managerOverride, previous_qty:fileReleaseQty(baseRow), previous_date:fileReleaseDate(baseRow), released_size_qty:fileReleaseSizeQtyMap(updatedBase), cutting_tolerance_pct_at_release:releaseTolerancePct, short_close_qty:shortCloseAddQty, short_close_reason:shortCloseExtra.cutting_short_close_reason || "" } });
     setNotice({ tone:"ok", text:`Production file released: ${row.style_no} · ${fmt(qty)} pcs · ${date}. Cutting feed is now active.${shortCloseAddQty ? ` Remaining ${fmt(shortCloseAddQty)} pcs short-closed.` : ""}` });
     handleSharedSave(result, "Production file release");
   }
@@ -11034,11 +11244,12 @@ Continue?`);
   useEffect(()=>{ if (userProfile?.name && !canOpenTab(tab)) setTab("dashboard"); }, [userProfile?.name, userProfile?.role, tab]);
   async function logoutUser(){
     await recordUserSession("logout", userProfile, { note:"User clicked logout" });
+    try { await supabase?.auth?.signOut?.(); } catch {}
     clearCurrentUserProfile();
     const blank = defaultUserProfile();
-    setUserProfile(blank);
+    setUserProfile(blank); setRows([]); setLedger([]); setPlanRows([]); setSharedHydrated(false);
     setShowLogin(true);
-    setNotice({ tone:"warn", text:"Logged out. Login is required before production entry/edit actions." });
+    setNotice({ tone:"warn", text:"Signed out of Supabase Auth. Login is required before production data can load." });
   }
   const tabs = [
     ["dashboard","Dashboard",BarChart3], ["manager","Manager",ShieldCheck], ["planning","Planning",ClipboardList], ["wip", conservationCount ? `Live WIP ⚠${conservationCount}` : "Live WIP", Warehouse], ["entry","DPR Entry",ClipboardList], ["register","Register",FileSpreadsheet], ["review","Review",ShieldCheck], ["owners","Who to Chase",Users], ["monthly","Monthly",FileSpreadsheet], ["styles","Styles",Shirt], ["routes","Routes",Filter], ["photos","Photos",ImageIcon], ["reports","Reports",FileSpreadsheet], ["users","Users/Audit",UserCheck], ["settings","Settings",Settings]
@@ -11046,15 +11257,16 @@ Continue?`);
   return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
     <style>{FONT + CSS}</style>
     <LoginDialog open={showLogin} force={!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
-    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>Entry dates can now be corrected without changing quantity.</b></div><div className="mt-small">Use Change date in DPR Date View, Dept View or Style View. The app preserves size breakup, department, activity and line, while keeping an audit reversal/repost in Register. The exact size-header upload fix remains included.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
-    <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Review · Reports. Supabase-first autosave · email login · audit/cell history · Excel-like exports.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className="mt-chip mt-info">{presenceSummaryText(presenceRows)}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${navCollapsed?"active":"ghost"}`} onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand left navigation"><Layers size={14}/>{navCollapsed?"Expand tabs":"Collapse tabs"}</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={seedSupabase} title="Recovery only: pushes current browser rows to Supabase if they were saved before Supabase was connected. Normal Add/Edit/DPR/Register saves are Supabase-first."><Upload size={14}/>Recovery Sync</button>}{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={recalculateStageQtyFromLedger} title="Admin recovery: rebuilds production_orders.stage_qty from production_entries ledger. Rows without ledger are left unchanged."><RefreshCw size={14}/>Recalc Totals</button>}<button className="mt-btn" onClick={testSupabaseConnection} title="Checks Supabase read, test save, read-back and verified delete"><ShieldCheck size={14}/>Test Supabase</button>{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div></div><PresenceStrip peers={presenceRows}/></div>
+    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>Architecture hardening — Batches 1 + 2 combined.</b></div><div className="mt-small">Supabase is authoritative and authenticated: no browser-only production saves, full pagination, atomic/idempotent DPR posting, Supabase Auth, RLS/server-owned permissions, shared settings, active-master guards, and exact release size snapshots.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
+    <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Review · Reports. Supabase-authoritative · Supabase Auth + RLS · atomic DPR · audit/cell history · Excel-like exports.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className="mt-chip mt-info">{presenceSummaryText(presenceRows)}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${navCollapsed?"active":"ghost"}`} onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand left navigation"><Layers size={14}/>{navCollapsed?"Expand tabs":"Collapse tabs"}</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={recalculateStageQtyFromLedger} title="Admin recovery: rebuilds production_orders.stage_qty from production_entries ledger. Rows without ledger are left unchanged."><RefreshCw size={14}/>Recalc Totals</button>}{currentUserCan("production.manage_settings") && <button className="mt-btn" onClick={testSupabaseConnection} title="Admin-only authenticated Supabase read/write/RLS test"><ShieldCheck size={14}/>Test Supabase</button>}{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div></div><PresenceStrip peers={presenceRows}/></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
-      <div className={`mt-layout ${navCollapsed?"nav-collapsed":""}`}>
+      {sharedAuthorityEnabled() && !sharedHydrated ? <div className="mt-card" style={{marginBottom:12}}><div className="mt-section"><h3 className="mt-panel-title">Waiting for authoritative Supabase production snapshot</h3><div className="mt-panel-sub">Production screens and entry are blocked until orders + complete ledger load together. Browser cache/demo quantities are intentionally not used as fallback.</div>{sharedHydrationError ? <div className="mt-locked-note" style={{marginTop:10}}>{sharedHydrationError}</div> : null}<button className="mt-btn primary" style={{marginTop:10}} onClick={()=>pullSharedData(false,"hydration retry")}><RefreshCw size={14}/>Retry shared load</button></div></div> : null}
+      {(!sharedAuthorityEnabled() || sharedHydrated) && <div className={`mt-layout ${navCollapsed?"nav-collapsed":""}`}>
         <aside className="mt-side-nav no-print"><div className="mt-side-head"><span className="mt-side-title">Pages</span><button className="mt-btn ghost" onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand tabs"><Layers size={14}/></button></div><div className="mt-side-scroll">{tabs.map(([k,label,Icon])=>{ const allowed = canOpenTab(k); return <button key={k} className={`mt-side-tab ${tab===k?"active":""}`} disabled={!allowed} title={allowed ? label : `Blocked: ${tabPermission(k)}`} onClick={()=>allowed && setTab(k)}><Icon size={15}/><span className="mt-side-label">{label}</span>{!allowed ? <span className="mt-side-lock">🔒</span> : null}</button>; })}</div></aside>
         <main className="mt-main-area">
       <PageFilters tab={tab} query={query} setQuery={setQuery} buyer={buyer} setBuyer={setBuyer} buyers={buyers} order={order} setOrder={setOrder} orders={orders} visibleRows={visibleRows}/>
-      <div className="mt-keepalive-note slim no-print"><span className="mt-chip mt-info">Remembered tab/draft</span><span className="mt-small">This browser remembers your tab/drafts. Saved production data is shared through Supabase and refreshes by realtime/polling.</span></div>
+      <div className="mt-keepalive-note slim no-print"><span className="mt-chip mt-info">Remembered tab/draft</span><span className="mt-small">This browser remembers UI only. Production orders, ledger and plans are never restored from browser cache in shared mode; Supabase is authoritative.</span></div>
       <div className="mt-tab-panel" style={{display:tab==="dashboard"?"block":"none"}} aria-hidden={tab!=="dashboard"}><Dashboard rows={visibleRows} ledger={ledger} planRows={planRows} onDrill={setDashboardDrill} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="manager"?"block":"none"}} aria-hidden={tab!=="manager"}><ManagerActionCenter rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} ledger={ledger} onPlanUpsert={savePlanRowShared}/></div>
       <div className="mt-tab-panel" style={{display:tab==="planning"?"block":"none"}} aria-hidden={tab!=="planning"}><PlanningView rows={visibleRows} planRows={planRows} setPlanRows={setPlanRows} setRows={setRows} ledger={ledger} onPlanUpsert={savePlanRowShared} onPlanDelete={deletePlanCellShared} planSaveState={planSaveState}/></div>
@@ -11069,9 +11281,9 @@ Continue?`);
       <div className="mt-tab-panel" style={{display:tab==="photos"?"block":"none"}} aria-hidden={tab!=="photos"}><PhotoManager rows={visibleRows} setRows={setRows} clearTick={clearFiltersTick}/></div>
       <div className="mt-tab-panel" style={{display:tab==="reports"?"block":"none"}} aria-hidden={tab!=="reports"}>{currentUserCan("production.export") ? <Reports rows={visibleRows} ledger={ledger}/> : <PermissionGate permission="production.export" label="Reports"/>}</div>
       <div className="mt-tab-panel" style={{display:tab==="users"?"block":"none"}} aria-hidden={tab!=="users"}>{currentUserCan("production.audit_view") ? <UserAuditView profile={userProfile} presenceRows={presenceRows} onSwitchUser={()=>setShowLogin(true)} onLogout={logoutUser}/> : <PermissionGate permission="production.audit_view" label="Users / Audit"/>}</div>
-      <div className="mt-tab-panel" style={{display:tab==="settings"?"block":"none"}} aria-hidden={tab!=="settings"}>{currentUserCan("production.manage_settings") ? <SettingsView onChanged={()=>setSettingsTick(t=>t+1)}/> : <PermissionGate permission="production.manage_settings" label="Settings"/>}</div>
+      <div className="mt-tab-panel" style={{display:tab==="settings"?"block":"none"}} aria-hidden={tab!=="settings"}>{currentUserCan("production.manage_settings") ? <SettingsView key={`settings-${settingsTick}`} onChanged={()=>setSettingsTick(t=>t+1)}/> : <PermissionGate permission="production.manage_settings" label="Settings"/>}</div>
         </main>
-      </div>
+      </div>}
     </div>
     {releaseFocus && <ProductionFileReleaseModal row={releaseFocus.row} source={releaseFocus.source} onClose={()=>setReleaseFocus(null)} onSave={(payload)=>saveProductionFileRelease(releaseFocus.row, payload)} />}
     {drawer && liveDrawerRow && <DetailDrawer row={liveDrawerRow} rows={calcRows} setRows={setRows} ledger={ledger} setLedger={setLedger} stageKey={drawer.stage} onClose={()=>setDrawer(null)} onOpenRegister={openRegisterFromWip} onOpenStyle={openStyleFromWip} onRelease={openReleaseFromAnyScreen} onSharedSave={handleSharedSave}/>} 
