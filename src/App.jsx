@@ -28,8 +28,8 @@ import {
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const APP_VERSION = "V59_FRESH_ACCESS_GOVERNANCE";
-const APP_COMMIT_MESSAGE = "Fresh access governance: one-time Super Admin bootstrap, Super Admin appoints Admin, Admin approves operational users, Production Manager no longer manages accounts, and production data remains untouched.";
+const APP_VERSION = "V60_SUPERADMIN_PASSWORD_GOVERNANCE";
+const APP_COMMIT_MESSAGE = "Security governance: first login bootstraps Super Admin; Super Admin can promote additional Super Admins; password reset is Supabase recovery; resetting another Super Admin requires delegated Password Security Guardian permission; Admin approves operational users only.";
 
 
 const PRODUCTION_APP_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -1027,7 +1027,7 @@ function normalizeUserEmail(email){ return String(email || "").trim().toLowerCas
 function emailLooksValid(email){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeUserEmail(email)); }
 function displayNameFromEmail(email){ return normalizeUserEmail(email).split("@")[0].replace(/[._-]+/g," ").replace(/\b\w/g,m=>m.toUpperCase()); }
 function defaultUserProfile(){
-  return { name:"", email:"", role:"Data Operator", department:"Production", permissions:[], access_status:"pending", password_hash:"", requested_role:"Data Operator", requested_department:"Production", is_active:false, auth_user_id:"" };
+  return { name:"", email:"", role:"Data Operator", department:"Production", permissions:[], access_status:"pending", password_hash:"", requested_role:"Data Operator", requested_department:"Production", is_active:false, auth_user_id:"", can_reset_superadmin_password:false };
 }
 function currentUserProfile(){
   try {
@@ -1190,6 +1190,7 @@ function profileFromDbUser(user, authUser=null){
     access_status:user.access_status || (user.is_active ? "approved" : "pending"),
     is_active:user.is_active !== false,
     permissions:Array.isArray(user.permissions) ? user.permissions : [],
+    can_reset_superadmin_password:!!user.can_reset_superadmin_password,
   };
 }
 async function claimProductionProfile({ displayName="", requestedRole="Data Operator", requestedDepartment="Production" }={}){
@@ -1202,8 +1203,9 @@ async function claimProductionProfile({ displayName="", requestedRole="Data Oper
     p_app_version:APP_VERSION,
   });
   if (error) return { error };
-  // V59 bootstrap is server-controlled and one-time. Calling it is harmless for
-  // every other account: the RPC simply returns bootstrapped:false.
+  // V59 first-login bootstrap is server-controlled and one-time. The first
+  // authenticated caller after the access reset becomes Super Admin. The DB
+  // singleton is row-locked, so simultaneous first logins cannot both win.
   let profileRow = data;
   try {
     const boot = await supabase.rpc("bootstrap_production_super_admin");
@@ -1287,6 +1289,32 @@ async function updateProductionUserAccess(email, patch){
     p_email:normalizeUserEmail(email), p_role:role, p_department:department, p_access_status:accessStatus, p_is_active:isActive
   });
   return error ? { error } : { error:null, data };
+}
+async function setSuperAdminPasswordResetPermission(email, allowed){
+  if (!isSupabaseConfigured || !supabase) return { error:{ message:"Supabase unavailable" } };
+  const { data, error } = await supabase.rpc("set_production_superadmin_reset_permission", {
+    p_email:normalizeUserEmail(email), p_allowed:!!allowed
+  });
+  return error ? { error } : { error:null, data };
+}
+async function sendAdminPasswordReset(email){
+  if (!isSupabaseConfigured || !supabase) return { error:{ message:"Supabase unavailable" } };
+  const clean = normalizeUserEmail(email);
+  const gate = await supabase.rpc("authorize_production_password_reset", { p_email:clean });
+  if (gate.error) return { error:gate.error };
+  const redirectTo = typeof window !== "undefined" ? `${window.location.origin}${window.location.pathname || "/"}` : undefined;
+  const { error } = await supabase.auth.resetPasswordForEmail(clean, redirectTo ? { redirectTo } : undefined);
+  if (error) return { error };
+  await recordProductionAudit("password_reset_requested", { table_name:"production_app_users", source:"Users/Audit", metadata:{ email:clean, target_role:gate.data?.target_role || "", special_permission_required:!!gate.data?.requires_special_permission } });
+  return { error:null, data:gate.data };
+}
+async function sendOwnPasswordReset(email){
+  if (!isSupabaseConfigured || !supabase) return { error:{ message:"Supabase unavailable" } };
+  const clean = normalizeUserEmail(email);
+  if (!emailLooksValid(clean)) return { error:{ message:"Enter a valid work email first." } };
+  const redirectTo = typeof window !== "undefined" ? `${window.location.origin}${window.location.pathname || "/"}` : undefined;
+  const { error } = await supabase.auth.resetPasswordForEmail(clean, redirectTo ? { redirectTo } : undefined);
+  return error ? { error } : { error:null };
 }
 function defaultEntryDate(ledger=[]){
   // Factory reality: production is normally entered next day. Use latest activity date if present,
@@ -10669,11 +10697,12 @@ function PermissionGate({ permission, children, label }){
   return <div className="mt-card"><div className="mt-section"><span className="mt-chip mt-late"><Lock size={12}/>Permission blocked</span><div className="mt-panel-sub" style={{marginTop:8}}>{currentUserName()} ({currentUserRole()}) cannot open {label || "this screen"}. Required permission: <b>{permission}</b>.</div></div></div>;
 }
 function LoginDialog({ open, profile, onSave, onClose, force=false }){
-  const [mode,setMode] = useState("login");
-  const [form,setForm] = useState(()=>({ ...defaultUserProfile(), ...profile, email:normalizeUserEmail(profile?.email || ""), password:"", requested_role:profile?.requested_role || "Data Operator", requested_department:profile?.requested_department || profile?.department || "Production" }));
+  const [mode,setMode] = useState(()=>{ try { return sessionStorage.getItem("production_password_recovery") === "1" ? "recover" : "login"; } catch { return "login"; } });
+  const [form,setForm] = useState(()=>({ ...defaultUserProfile(), ...profile, email:normalizeUserEmail(profile?.email || ""), password:"", password_confirm:"", requested_role:profile?.requested_role || "Data Operator", requested_department:profile?.requested_department || profile?.department || "Production" }));
   const [msg,setMsg] = useState(null);
   const [busy,setBusy] = useState(false);
-  useEffect(()=>setForm({ ...defaultUserProfile(), ...profile, email:normalizeUserEmail(profile?.email || ""), password:"", requested_role:profile?.requested_role || "Data Operator", requested_department:profile?.requested_department || profile?.department || "Production" }), [profile?.name, profile?.email, profile?.role, profile?.department, profile?.access_status]);
+  useEffect(()=>setForm({ ...defaultUserProfile(), ...profile, email:normalizeUserEmail(profile?.email || ""), password:"", password_confirm:"", requested_role:profile?.requested_role || "Data Operator", requested_department:profile?.requested_department || profile?.department || "Production" }), [profile?.name, profile?.email, profile?.role, profile?.department, profile?.access_status]);
+  useEffect(()=>{ if (!open) return; try { if (sessionStorage.getItem("production_password_recovery") === "1") setMode("recover"); } catch {} }, [open]);
   if (!open) return null;
   const departments = ["Production","Cutting","Printing","Embroidery","Stitching","Checking","Packing","Dispatch","Management","Merchandising","Admin"];
   const requestedRole = form.requested_role || "Data Operator";
@@ -10686,7 +10715,7 @@ function LoginDialog({ open, profile, onSave, onClose, force=false }){
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password:String(form.password || "") });
       if (error) {
-        setMsg({tone:"warn", text:`Sign in failed: ${error.message}. If this is your first login after the V58 security upgrade, use Create / Activate Account once with the SAME work email.`});
+        setMsg({tone:"warn", text:`Sign in failed: ${error.message}. If this is your first login after the access reset, use Create / Activate Account once. The first authenticated account becomes Super Admin automatically.`});
         return;
       }
       const claim = await claimProductionProfile({
@@ -10697,7 +10726,7 @@ function LoginDialog({ open, profile, onSave, onClose, force=false }){
       if (claim.error) { setMsg({tone:"late", text:`Auth succeeded but production profile could not be linked: ${claim.error.message}`}); return; }
       const clean = claim.data;
       saveCurrentUserProfile(clean);
-      await recordUserSession("login", clean, { force, auth:"supabase", note:"V58 Supabase Auth login" });
+      await recordUserSession("login", clean, { force, auth:"supabase", note:"V59 Supabase Auth login" });
       const status = String(clean.access_status || "pending").toLowerCase();
       if (status !== "approved" || clean.is_active === false) {
         setMsg({tone:"warn", text:`Supabase login is valid, but production access is ${status}. Super Admin / Admin must approve your role in Users/Audit.`});
@@ -10728,15 +10757,42 @@ function LoginDialog({ open, profile, onSave, onClose, force=false }){
       saveCurrentUserProfile(clean);
       const status = String(clean.access_status || "pending").toLowerCase();
       if (status === "approved" && clean.is_active !== false) {
-        await recordUserSession("login", clean, { auth:"supabase", note:"V58 account activation linked existing approval" });
+        await recordUserSession("login", clean, { auth:"supabase", note:"V59 account activation / first-login bootstrap" });
         onSave?.(clean);
       } else {
         setMsg({tone:"ok", text:"Supabase Auth account is active and the production access request is saved. Super Admin / Admin must approve the requested role."});
       }
     } finally { setBusy(false); }
   }
+  async function forgotPassword(){
+    const email = normalizeUserEmail(form.email);
+    setBusy(true); setMsg({tone:"info", text:"Sending secure Supabase password recovery email…"});
+    try {
+      const res = await sendOwnPasswordReset(email);
+      setMsg(res.error ? {tone:"warn", text:`Password reset failed: ${res.error.message}`} : {tone:"ok", text:"Password reset email sent. Open the secure link in that email, then set your new password here."});
+    } finally { setBusy(false); }
+  }
+  async function completeRecovery(){
+    const password=String(form.password || "");
+    const confirm=String(form.password_confirm || "");
+    if (password.length < 6) { setMsg({tone:"warn", text:"New password must be at least 6 characters."}); return; }
+    if (password !== confirm) { setMsg({tone:"warn", text:"New password and confirmation do not match."}); return; }
+    setBusy(true); setMsg({tone:"info", text:"Updating Supabase Auth password…"});
+    try {
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) { setMsg({tone:"warn", text:`Password update failed: ${error.message}`}); return; }
+      try { sessionStorage.removeItem("production_password_recovery"); } catch {}
+      const linked = await loadAuthenticatedProductionProfile();
+      if (linked.error || !linked.profile) { setMsg({tone:"warn", text:`Password changed, but production profile reload failed: ${linked.error?.message || "profile unavailable"}. Sign in with the new password.`}); setMode("login"); return; }
+      const clean=linked.profile; saveCurrentUserProfile(clean);
+      setMsg({tone:"ok", text:"Password changed successfully."});
+      if (String(clean.access_status||"").toLowerCase()==="approved" && clean.is_active!==false) onSave?.(clean);
+      else setMode("login");
+    } finally { setBusy(false); }
+  }
+  const isRecovery = mode === "recover";
   const isLogin = mode === "login";
-  const submit = isLogin ? doLogin : requestAccess;
+  const submit = isRecovery ? completeRecovery : isLogin ? doLogin : requestAccess;
   return <div className="mt-login-page no-print">
     <div className="mt-login-card">
       <div className="mt-login-left">
@@ -10751,16 +10807,17 @@ function LoginDialog({ open, profile, onSave, onClose, force=false }){
             <div className="mt-login-feature"><b>RLS</b><span>Server permissions</span></div>
           </div>
         </div>
-        <div className="mt-login-note"><b>V59 fresh access:</b> the designated bootstrap email becomes the single Super Admin once. Everyone else creates an account and waits for Super Admin/Admin approval.</div>
+        <div className="mt-login-note"><b>V60 access:</b> the first authenticated account after reset becomes Super Admin + Password Security Guardian. A Super Admin may promote another Super Admin. Password resets use secure Supabase recovery email; resetting another Super Admin requires the special Guardian permission.</div>
       </div>
       <div className="mt-login-right">
-        <div className="mt-login-title">{isLogin ? "Welcome back" : "Create / Activate Account"}</div>
-        <div className="mt-login-subcopy">{isLogin ? "Supabase Auth sign-in is required before any production data is loaded." : "Creates Supabase Auth and links an existing production approval by matching work email; otherwise creates a pending request."}</div>
-        <label className="mt-login-field-label">Email</label>
-        <input className="mt-login-input" value={form.email || ""} onChange={e=>setForm(f=>({ ...f, email:normalizeUserEmail(e.target.value), name:f.name || displayNameFromEmail(e.target.value) }))} placeholder="name@company.com" autoFocus />
-        <label className="mt-login-field-label">Password</label>
+        <div className="mt-login-title">{isRecovery ? "Set New Password" : isLogin ? "Welcome back" : "Create / Activate Account"}</div>
+        <div className="mt-login-subcopy">{isRecovery ? "Secure Supabase recovery session. Choose the new password for this account." : isLogin ? "Supabase Auth sign-in is required before any production data is loaded." : "Creates Supabase Auth and links an existing production approval by matching work email; otherwise creates a pending request."}</div>
+        {!isRecovery && <><label className="mt-login-field-label">Email</label>
+        <input className="mt-login-input" value={form.email || ""} onChange={e=>setForm(f=>({ ...f, email:normalizeUserEmail(e.target.value), name:f.name || displayNameFromEmail(e.target.value) }))} placeholder="name@company.com" autoFocus /></>}
+        <label className="mt-login-field-label">{isRecovery ? "New Password" : "Password"}</label>
         <input className="mt-login-input" type="password" value={form.password || ""} onChange={e=>setForm(f=>({ ...f, password:e.target.value }))} placeholder="••••••••" onKeyDown={e=>{ if(e.key === "Enter") submit(); }} />
-        {!isLogin && <>
+        {isRecovery && <><label className="mt-login-field-label">Confirm New Password</label><input className="mt-login-input" type="password" value={form.password_confirm || ""} onChange={e=>setForm(f=>({ ...f, password_confirm:e.target.value }))} placeholder="••••••••" onKeyDown={e=>{ if(e.key === "Enter") submit(); }} /></>}
+        {!isLogin && !isRecovery && <>
           <label className="mt-login-field-label">Display name</label>
           <input className="mt-login-input" value={form.name || ""} onChange={e=>setForm(f=>({ ...f, name:e.target.value }))} placeholder="User name shown in audit history" />
           <div className="mt-login-access-grid">
@@ -10769,10 +10826,10 @@ function LoginDialog({ open, profile, onSave, onClose, force=false }){
           </div>
         </>}
         {msg && <div className={`mt-login-msg ${statusClass(msg.tone)}`}>{msg.text}</div>}
-        <button className="mt-login-submit" disabled={busy} onClick={submit}>{busy ? "Please wait…" : isLogin ? "Sign in" : "Create / Activate"}</button>
+        <button className="mt-login-submit" disabled={busy} onClick={submit}>{busy ? "Please wait…" : isRecovery ? "Set New Password" : isLogin ? "Sign in" : "Create / Activate"}</button>
         <div className="mt-login-minor">
-          {isLogin ? <><span>New / reset user?</span><button className="mt-login-link" onClick={()=>{ setMode("request"); setMsg(null); }}>Create / Activate Account</button></> : <><span>Already activated?</span><button className="mt-login-link" onClick={()=>{ setMode("login"); setMsg(null); }}>Sign in</button></>}
-          {!force && <button className="mt-login-link" onClick={onClose}>Cancel</button>}
+          {isRecovery ? <span>Recovery link verified by Supabase Auth.</span> : isLogin ? <><button className="mt-login-link" onClick={forgotPassword}>Forgot password</button><span>New user?</span><button className="mt-login-link" onClick={()=>{ setMode("request"); setMsg(null); }}>Create / Activate Account</button></> : <><span>Already activated?</span><button className="mt-login-link" onClick={()=>{ setMode("login"); setMsg(null); }}>Sign in</button></>}
+          {!force && !isRecovery && <button className="mt-login-link" onClick={onClose}>Cancel</button>}
         </div>
       </div>
     </div>
@@ -10798,8 +10855,10 @@ function UserAuditView({ profile, onSwitchUser, onLogout, presenceRows=[] }){
   const perms = ROLE_PERMISSIONS[profile.role] || [];
   const localHistory = safeJsonLoad(uiStorageKey("tab_history"), []);
   const canManage = ["Super Admin","Admin"].includes(profile.role) && currentUserCan("production.manage_users");
-  const approvableRoles = profile.role === "Super Admin"
-    ? PRODUCTION_ROLES.filter(r=>r!=="Super Admin")
+  const isSuperAdmin = profile.role === "Super Admin";
+  const canResetSuperAdmins = isSuperAdmin && !!profile.can_reset_superadmin_password;
+  const approvableRoles = isSuperAdmin
+    ? PRODUCTION_ROLES
     : PRODUCTION_ROLES.filter(r=>!["Super Admin","Admin"].includes(r));
   const pendingUsers = (users || []).filter(u=>String(u.access_status || (u.is_active === false ? "pending" : "approved")).toLowerCase() !== "approved");
   async function approveUser(u, role){
@@ -10816,9 +10875,37 @@ function UserAuditView({ profile, onSwitchUser, onLogout, presenceRows=[] }){
     await recordProductionAudit("reject_user", { table_name:"production_app_users", source:"Users/Audit", metadata:{ email:u.email } });
     refresh();
   }
-  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Users / Login Requests / Permissions / History</h3><div className="mt-panel-sub">Fresh access flow: users create Supabase Auth accounts and remain pending. Super Admin can appoint Admin; Super Admin/Admin approve operational roles. Production Manager cannot manage accounts.</div></div><div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-chip mt-info"><UserCheck size={12}/>{profile.name || "Not logged in"}</span><span className="mt-chip mt-muted">{profile.role}</span><span className="mt-chip mt-muted">{profile.department || "—"}</span><button className="mt-btn" onClick={refresh} disabled={loading}><RefreshCw size={14}/>Refresh History</button><button className="mt-btn ghost" onClick={onSwitchUser}><Users size={14}/>Switch User</button><button className="mt-btn ghost" onClick={onLogout}><LogOut size={14}/>Logout</button>{msg && <span className={`mt-chip ${statusClass(msg.tone)}`}>{msg.text}</span>}</div></div><div className="mt-section"><h3 className="mt-panel-title">Current Role Permissions</h3><div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>{PRODUCTION_PERMISSIONS.map(([key,label])=><span key={key} className={`mt-chip ${isFullAccessRole(profile.role) || perms.includes(key) ? "mt-ok" : "mt-muted"}`}>{label}</span>)}</div><div className="mt-small" style={{marginTop:8}}>Last local tab history: {localHistory.length ? localHistory.join(" → ") : "No tab history yet"}</div></div>
-    <div className="mt-section"><h3 className="mt-panel-title">Pending login requests</h3><div className="mt-panel-sub">Approve user role here. Pending users cannot open production screens.</div><div className="mt-table-wrap"><table className="mt-table"><thead><tr><th>User</th><th>Email</th><th>Requested Role</th><th>Department</th><th>Status</th><th>Approve As</th><th>Action</th></tr></thead><tbody>{pendingUsers.length ? pendingUsers.map(u=>{ const role=u.requested_role || "Data Operator"; return <tr key={u.email}><td>{u.display_name || u.user_name || displayNameFromEmail(u.email)}</td><td>{u.email}</td><td>{role}</td><td>{u.requested_department || u.department}</td><td><span className="mt-chip mt-warn">{u.access_status || "pending"}</span></td><td><select className="mt-select" defaultValue={role} onChange={e=>u.__approveRole=e.target.value}>{approvableRoles.map(r=><option key={r} value={r}>{r}</option>)}</select></td><td><button className="mt-btn" disabled={!canManage} onClick={()=>approveUser(u, u.__approveRole || role)}>Approve</button><button className="mt-btn ghost" disabled={!canManage} onClick={()=>rejectUser(u)}>Reject</button></td></tr>; }) : <tr><td colSpan="7">No pending requests.</td></tr>}</tbody></table></div></div>
-    <SimpleTable title="Live presence — who is where now" sub="Supabase realtime presence. Shows current page/context, selected style/stage/drawer where available." rows={presenceRows.map(p=>({ User:p.User, Role:p.Role, Page:p.Page, Context:p.Context, Order:p.Order, Style:p.Style, Stage:p.Stage, Email:p.Email, Browser:p.Browser, Seen:p.Seen }))} empty="No live peers yet. Presence appears when multiple approved users keep the app open." exportName="production_live_presence"/><div style={{height:12}}/><SimpleTable title="Active / recent users" sub="From production_app_users. Shows approved users, requested users and recent browser access." rows={(users||[]).map(u=>({ User:u.display_name || u.user_name, Role:u.role, Requested_Role:u.requested_role, Department:u.department || u.requested_department, Email:u.email, Status:u.access_status || (u.is_active ? "approved" : "pending"), Current_Page:u.login_note || "—", Last_Seen:u.last_seen_at || u.created_at, Browser:u.browser_id }))} empty="No user rows yet. Run SQL patch and submit/approve one user." exportName="production_active_users"/><div style={{height:12}}/><SimpleTable title="Audit history — detailed" sub="Latest saves/corrections/sessions. Date column is production activity date where available; Time is when user actually typed/saved it." rows={(audit||[]).map(a=>({ Time:a.created_at, Activity_Date:a.entry_date || String(a.created_at||"").slice(0,10), User:a.user_name, Role:a.user_role, Action:a.action || a.event_type, Table:a.table_name, Order:a.order_no, Style:a.style_no, Colour:a.colour, Component:a.component, Dept:stageLabel(a.stage || ""), Activity:a.entry_type, Qty:a.qty, Source:a.source }))} empty="No audit rows yet or SQL patch not run." exportName="production_audit_history"/></div>;
+  async function changeUserRole(u, role){
+    if (!canManage) { setMsg({tone:"warn", text:"You cannot change user roles."}); return; }
+    const ok=window.confirm(`Change ${u.email} from ${u.role || "Pending"} to ${role}?${role === "Super Admin" ? "\n\nThis grants full Production administration. Password-reset Guardian permission is NOT granted automatically." : ""}`);
+    if (!ok) return;
+    const res=await updateProductionUserAccess(u.email,{ role, department:role==="Super Admin"?"Admin":(u.department || u.requested_department || "Production"), access_status:"approved", is_active:true });
+    setMsg(res.error ? {tone:"warn", text:`Role change failed: ${res.error.message}`} : {tone:"ok", text:`${u.email} is now ${role}.`});
+    if (!res.error) await recordProductionAudit("user_role_change", { table_name:"production_app_users", source:"Users/Audit", metadata:{ email:u.email, old_role:u.role, new_role:role } });
+    refresh();
+  }
+  async function resetUserPassword(u){
+    if (!isSuperAdmin) { setMsg({tone:"warn", text:"Only Super Admin can initiate another user's password reset."}); return; }
+    const targetIsSA=String(u.role||"")==="Super Admin";
+    if (targetIsSA && !canResetSuperAdmins) { setMsg({tone:"warn", text:"Special Password Security Guardian permission is required to reset another Super Admin password."}); return; }
+    const ok=window.confirm(`Send a secure password-reset email to ${u.email}?${targetIsSA ? "\n\nThis is a Super Admin account." : ""}`);
+    if (!ok) return;
+    const res=await sendAdminPasswordReset(u.email);
+    setMsg(res.error ? {tone:"warn", text:`Password reset failed: ${res.error.message}`} : {tone:"ok", text:`Password reset email sent to ${u.email}. The user chooses their own new password from the secure link.`});
+  }
+  async function setGuardian(u, allowed){
+    if (!canResetSuperAdmins) { setMsg({tone:"warn", text:"Only a Password Security Guardian can grant/revoke this special permission."}); return; }
+    const ok=window.confirm(`${allowed ? "Grant" : "Revoke"} Password Security Guardian permission for ${u.email}?`);
+    if (!ok) return;
+    const res=await setSuperAdminPasswordResetPermission(u.email,allowed);
+    setMsg(res.error ? {tone:"warn", text:`Guardian change failed: ${res.error.message}`} : {tone:"ok", text:`Guardian permission ${allowed ? "granted to" : "revoked from"} ${u.email}.`});
+    if (!res.error) await recordProductionAudit("superadmin_password_guardian_change", { table_name:"production_app_users", source:"Users/Audit", metadata:{ email:u.email, allowed } });
+    refresh();
+  }
+  return <div className="mt-card"><div className="mt-section"><h3 className="mt-panel-title">Users / Login Requests / Permissions / History</h3><div className="mt-panel-sub">V60 governance: first login is Super Admin. Super Admin can promote another Super Admin; Admin approves operational roles only. Any Super Admin can reset normal-user passwords. Resetting another Super Admin requires Password Security Guardian permission.</div></div><div className="mt-section no-print"><div className="mt-toolbar"><span className="mt-chip mt-info"><UserCheck size={12}/>{profile.name || "Not logged in"}</span><span className="mt-chip mt-muted">{profile.role}</span><span className="mt-chip mt-muted">{profile.department || "—"}</span>{isSuperAdmin && <span className={`mt-chip ${canResetSuperAdmins?"mt-ok":"mt-warn"}`}>{canResetSuperAdmins?"Password Security Guardian":"No Super-Admin reset permission"}</span>}<button className="mt-btn" onClick={refresh} disabled={loading}><RefreshCw size={14}/>Refresh History</button><button className="mt-btn ghost" onClick={onSwitchUser}><Users size={14}/>Switch User</button><button className="mt-btn ghost" onClick={onLogout}><LogOut size={14}/>Logout</button>{msg && <span className={`mt-chip ${statusClass(msg.tone)}`}>{msg.text}</span>}</div></div><div className="mt-section"><h3 className="mt-panel-title">Current Role Permissions</h3><div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>{PRODUCTION_PERMISSIONS.map(([key,label])=><span key={key} className={`mt-chip ${isFullAccessRole(profile.role) || perms.includes(key) ? "mt-ok" : "mt-muted"}`}>{label}</span>)}</div><div className="mt-small" style={{marginTop:8}}>Last local tab history: {localHistory.length ? localHistory.join(" → ") : "No tab history yet"}</div></div>
+    <div className="mt-section"><h3 className="mt-panel-title">Pending login requests</h3><div className="mt-panel-sub">Super Admin can approve any role including Super Admin. Admin can approve operational roles only.</div><div className="mt-table-wrap"><table className="mt-table"><thead><tr><th>User</th><th>Email</th><th>Requested Role</th><th>Department</th><th>Status</th><th>Approve As</th><th>Action</th></tr></thead><tbody>{pendingUsers.length ? pendingUsers.map(u=>{ const role=u.requested_role || "Data Operator"; return <tr key={u.email}><td>{u.display_name || u.user_name || displayNameFromEmail(u.email)}</td><td>{u.email}</td><td>{role}</td><td>{u.requested_department || u.department}</td><td><span className="mt-chip mt-warn">{u.access_status || "pending"}</span></td><td><select className="mt-select" defaultValue={approvableRoles.includes(role)?role:approvableRoles[0]} onChange={e=>u.__approveRole=e.target.value}>{approvableRoles.map(r=><option key={r} value={r}>{r}</option>)}</select></td><td><button className="mt-btn" disabled={!canManage} onClick={()=>approveUser(u, u.__approveRole || (approvableRoles.includes(role)?role:approvableRoles[0]))}>Approve</button><button className="mt-btn ghost" disabled={!canManage} onClick={()=>rejectUser(u)}>Reject</button></td></tr>; }) : <tr><td colSpan="7">No pending requests.</td></tr>}</tbody></table></div></div>
+    <div className="mt-section"><h3 className="mt-panel-title">User governance</h3><div className="mt-panel-sub">Role changes and password recovery are server-gated. A Super Admin promoted here has full access but does not automatically receive permission to reset another Super Admin password.</div><div className="mt-table-wrap"><table className="mt-table"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Status</th><th>Change Role</th><th>Password</th><th>Super Admin Password Guardian</th></tr></thead><tbody>{(users||[]).filter(u=>String(u.access_status||"").toLowerCase()==="approved").map(u=>{ const targetRole=u.role || "Data Operator"; const adminBlocked=profile.role==="Admin" && ["Admin","Super Admin"].includes(targetRole); const roleOptions=isSuperAdmin?PRODUCTION_ROLES:PRODUCTION_ROLES.filter(r=>!["Admin","Super Admin"].includes(r)); const targetIsSA=targetRole==="Super Admin"; const resetBlocked=!isSuperAdmin || normalizeUserEmail(u.email)===normalizeUserEmail(profile.email) || (targetIsSA && !canResetSuperAdmins); return <tr key={`gov-${u.email}`}><td>{u.display_name || u.user_name || displayNameFromEmail(u.email)}</td><td>{u.email}</td><td><span className={`mt-chip ${targetIsSA?"mt-purple":targetRole==="Admin"?"mt-info":"mt-muted"}`}>{targetRole}</span></td><td>{u.is_active===false?"Inactive":"Approved"}</td><td><select className="mt-select" value={targetRole} disabled={!canManage || adminBlocked} onChange={e=>changeUserRole(u,e.target.value)}>{roleOptions.map(r=><option key={r} value={r}>{r}</option>)}</select></td><td><button className="mt-btn ghost" disabled={resetBlocked} title={targetIsSA && !canResetSuperAdmins?"Password Security Guardian permission required":normalizeUserEmail(u.email)===normalizeUserEmail(profile.email)?"Use Forgot password for your own account":"Send secure reset email"} onClick={()=>resetUserPassword(u)}>Reset Password</button></td><td>{targetIsSA ? <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span className={`mt-chip ${u.can_reset_superadmin_password?"mt-ok":"mt-muted"}`}>{u.can_reset_superadmin_password?"Guardian":"Not Guardian"}</span>{canResetSuperAdmins && <button className="mt-btn ghost" onClick={()=>setGuardian(u,!u.can_reset_superadmin_password)}>{u.can_reset_superadmin_password?"Revoke":"Grant"}</button>}</div> : <span className="mt-small">—</span>}</td></tr>; })}</tbody></table></div></div>
+    <SimpleTable title="Live presence — who is where now" sub="Supabase realtime presence. Shows current page/context, selected style/stage/drawer where available." rows={presenceRows.map(p=>({ User:p.User, Role:p.Role, Page:p.Page, Context:p.Context, Order:p.Order, Style:p.Style, Stage:p.Stage, Email:p.Email, Browser:p.Browser, Seen:p.Seen }))} empty="No live peers yet. Presence appears when multiple approved users keep the app open." exportName="production_live_presence"/><div style={{height:12}}/><SimpleTable title="Active / recent users" sub="From production_app_users. Shows approved users, requested users and recent browser access." rows={(users||[]).map(u=>({ User:u.display_name || u.user_name, Role:u.role, Requested_Role:u.requested_role, Department:u.department || u.requested_department, Email:u.email, Status:u.access_status || (u.is_active ? "approved" : "pending"), Password_Guardian:u.role === "Super Admin" ? (u.can_reset_superadmin_password ? "Yes" : "No") : "—", Current_Page:u.login_note || "—", Last_Seen:u.last_seen_at || u.created_at, Browser:u.browser_id }))} empty="No user rows yet. Run SQL patch and submit/approve one user." exportName="production_active_users"/><div style={{height:12}}/><SimpleTable title="Audit history — detailed" sub="Latest saves/corrections/sessions. Date column is production activity date where available; Time is when user actually typed/saved it." rows={(audit||[]).map(a=>({ Time:a.created_at, Activity_Date:a.entry_date || String(a.created_at||"").slice(0,10), User:a.user_name, Role:a.user_role, Action:a.action || a.event_type, Table:a.table_name, Order:a.order_no, Style:a.style_no, Colour:a.colour, Component:a.component, Dept:stageLabel(a.stage || ""), Activity:a.entry_type, Qty:a.qty, Source:a.source }))} empty="No audit rows yet or SQL patch not run." exportName="production_audit_history"/></div>;
 }
 
 export default function App(){
@@ -10871,11 +10958,13 @@ export default function App(){
       }
       const p=res.profile; saveCurrentUserProfile(p); setUserProfile(p); setAuthReady(true);
       const approved=String(p.access_status||"").toLowerCase()==="approved" && p.is_active!==false;
-      setShowLogin(!approved);
-      if (approved) { touchProductionSession(`Active page: ${tab}`); recordUserSession("app_open",p,{tab,auth:"supabase"}); }
+      let recoveryPending=false; try { recoveryPending=sessionStorage.getItem("production_password_recovery") === "1"; } catch {}
+      setShowLogin(recoveryPending || !approved);
+      if (approved && !recoveryPending) { touchProductionSession(`Active page: ${tab}`); recordUserSession("app_open",p,{tab,auth:"supabase"}); }
     }
     hydrateAuth();
-    const { data:{ subscription } } = supabase.auth.onAuthStateChange(()=>{
+    const { data:{ subscription } } = supabase.auth.onAuthStateChange((event)=>{
+      if (event === "PASSWORD_RECOVERY") { try { sessionStorage.setItem("production_password_recovery","1"); } catch {} setShowLogin(true); }
       clearTimeout(hydrateTimer); hydrateTimer=setTimeout(()=>hydrateAuth(),0);
     });
     return ()=>{ cancelled=true; clearTimeout(hydrateTimer); subscription?.unsubscribe?.(); };
@@ -11267,7 +11356,7 @@ Continue?`);
   return <div className={`mt-app ${cleanMode?"clean-mode":""}`} data-theme="paper" data-settings-tick={settingsTick}>
     <style>{FONT + CSS}</style>
     <LoginDialog open={showLogin} force={!userProfile?.name || !emailLooksValid(userProfile?.email) || (userProfile?.access_status && userProfile.access_status !== "approved")} profile={userProfile} onSave={(p)=>{ setUserProfile(p); setShowLogin(false); setNotice({tone:"ok", text:`Logged in as ${p.name} · ${p.role}`}); }} onClose={()=>setShowLogin(false)}/>
-    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>Architecture hardening — Batches 1 + 2 combined.</b></div><div className="mt-small">Supabase is authoritative and authenticated: no browser-only production saves, full pagination, atomic/idempotent DPR posting, Supabase Auth, RLS/server-owned permissions, shared settings, active-master guards, and exact release size snapshots.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
+    {showUpdatePopup && <div className="mt-update-backdrop no-print"><div className="mt-update-popup"><div className="head"><span>Update available</span><span className="mt-chip mt-info">{APP_VERSION}</span></div><div className="body"><div><b>V60 security governance.</b></div><div className="mt-small">First-login Super Admin bootstrap, delegated Super Admin promotion, secure Supabase password recovery, and special Password Security Guardian permission for resetting another Super Admin account. Existing production architecture hardening remains included.</div><div className="mt-speed-note"><b>Commit:</b> {APP_COMMIT_MESSAGE}</div></div><div className="actions"><button className="mt-btn ghost" onClick={()=>window.location.reload()}><RefreshCw size={14}/>Refresh now</button><button className="mt-btn primary" onClick={markVersionSeen}><CheckCircle2 size={14}/>Got it</button></div></div></div>}
     <div className="mt-top"><div className="mt-shell"><div className="mt-header"><div><div className="mt-title">Production DPR & WIP Control <span style={{color:"var(--accent)"}}>{APP_VERSION}</span></div><div className="mt-sub">Live WIP · DPR Entry · Register · Planning · Review · Reports. Supabase-authoritative · Supabase Auth + RLS · atomic DPR · audit/cell history · Excel-like exports.</div></div><div className="mt-actions"><span className={`mt-chip ${statusClass(sharedSync.tone)}`}>{sharedSync.text}</span><span className="mt-chip mt-info">{presenceSummaryText(presenceRows)}</span><span className={`mt-chip ${userProfile?.name && emailLooksValid(userProfile?.email) ? "mt-ok" : "mt-late"}`}><UserCheck size={12}/>{userProfile?.email || userProfile?.name || "Login required"} · {userProfile?.role || "No role"}</span><button className="mt-btn ghost" onClick={()=>setShowLogin(true)}><Users size={14}/>User</button><button className={`mt-btn ${navCollapsed?"active":"ghost"}`} onClick={()=>setNavCollapsed(v=>!v)} title="Collapse / expand left navigation"><Layers size={14}/>{navCollapsed?"Expand tabs":"Collapse tabs"}</button><button className={`mt-btn ${cleanMode?"active":"ghost"}`} onClick={()=>setCleanMode(v=>!v)} title="Clean mode hides helper text and keeps screens precise">Clean mode</button><button className="mt-btn" onClick={clearAllScreenFilters}><X size={14}/>Clear Filters</button><button className="mt-btn" onClick={pullSupabase}><RefreshCw size={14}/>Refresh Shared Data</button>{currentUserCan("production.manage_settings") && <button className="mt-btn ghost" onClick={recalculateStageQtyFromLedger} title="Admin recovery: rebuilds production_orders.stage_qty from production_entries ledger. Rows without ledger are left unchanged."><RefreshCw size={14}/>Recalc Totals</button>}{currentUserCan("production.manage_settings") && <button className="mt-btn" onClick={testSupabaseConnection} title="Admin-only authenticated Supabase read/write/RLS test"><ShieldCheck size={14}/>Test Supabase</button>}{currentUserCan("production.export") && <button className="mt-btn" onClick={exportAll}><Download size={14}/>Export</button>}</div></div></div><PresenceStrip peers={presenceRows}/></div>
     <div className="mt-shell mt-page">
       {notice && <div className={`mt-card no-print`} style={{marginBottom:12}}><div className="mt-section"><span className={`mt-chip ${statusClass(notice.tone)}`}>{notice.text}</span> <button className="mt-btn ghost" onClick={()=>setNotice(null)} style={{float:"right"}}>Dismiss</button></div></div>}
